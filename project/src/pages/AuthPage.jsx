@@ -22,16 +22,42 @@ export default function AuthPage() {
       const { error: err } = await supabase.auth.signInWithPassword({ email, password });
       if (err) setError(err.message);
     } else {
-      const { data, error: err } = await supabase.auth.signUp({ email, password });
+      const cleanEmail = email.trim();
+      const cleanName = name.trim();
+      const { data, error: err } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/`,
+          data: {
+            full_name: cleanName,
+            role: 'dispatcher',
+          },
+        },
+      });
       if (err) { setError(err.message); setLoading(false); return; }
 
-      if (data.user) {
-        await supabase.from('profiles').upsert({
+      if (data.user && data.session) {
+        const { error: profileErr } = await supabase.from('profiles').upsert({
           id: data.user.id,
-          email,
-          full_name: name,
+          email: cleanEmail,
+          full_name: cleanName,
           role: 'dispatcher',
         });
+
+        if (profileErr) {
+          setError('Your account was created, but profile setup needs one more try after sign-in.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (data.user && !data.session) {
+        setInfo('Account created. Check your email for the confirmation link, then sign in here.');
+        setMode('login');
+        setPassword('');
+      } else {
+        setInfo('Account created successfully. You can sign in now.');
       }
     }
     setLoading(false);
