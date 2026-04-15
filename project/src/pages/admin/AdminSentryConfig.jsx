@@ -77,6 +77,7 @@ export default function AdminSentryConfig() {
   const { sentryConfig, setSentryConfig } = useApp();
 
   const [form, setForm] = useState({
+    id: null,
     base_url: 'https://dsp-integration.test.sentryms.com',
     auth_type: 'basic',
     username: '',
@@ -103,6 +104,7 @@ export default function AdminSentryConfig() {
     if (sentryConfig) {
       setForm(prev => ({
         ...prev,
+        id: sentryConfig.id || null,
         base_url: sentryConfig.base_url || 'https://dsp-integration.test.sentryms.com',
         auth_type: sentryConfig.auth_type || 'basic',
         username: sentryConfig.username || '',
@@ -162,6 +164,8 @@ export default function AdminSentryConfig() {
   async function handleSave(e) {
     e.preventDefault();
     setSaving(true);
+    setSaved(false);
+    setTestResult(null);
 
     sentryApi.configure({
       baseUrl: form.base_url,
@@ -173,12 +177,39 @@ export default function AdminSentryConfig() {
       features: buildFeaturesForClient(),
     });
 
-    const { data } = await supabase.from('sentry_config').upsert({
+    const payload = {
       ...form,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'id' }).select().maybeSingle();
+    };
 
-    if (data) setSentryConfig(data);
+    const saveQuery = form.id
+      ? supabase
+          .from('sentry_config')
+          .update(payload)
+          .eq('id', form.id)
+          .select()
+          .maybeSingle()
+      : supabase
+          .from('sentry_config')
+          .insert(payload)
+          .select()
+          .maybeSingle();
+
+    const { data, error } = await saveQuery;
+
+    if (error) {
+      setSaving(false);
+      setTestResult({
+        authenticated: false,
+        error: `Save failed: ${error.message}`,
+      });
+      return;
+    }
+
+    if (data) {
+      setSentryConfig(data);
+      setForm(prev => ({ ...prev, id: data.id || prev.id }));
+    }
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
