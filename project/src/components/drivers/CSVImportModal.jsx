@@ -227,8 +227,8 @@ export default function CSVImportModal({ onClose }) {
   }[s] || '–');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
-      <div className="w-full max-w-lg rounded-2xl animate-slide-up overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+    <div className="fixed inset-0 z-50 overflow-y-auto p-4 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
+      <div className="mx-auto flex w-full max-w-lg flex-col rounded-2xl animate-slide-up overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '90vh' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
           <p className="font-700 text-sm" style={{ fontWeight: 700 }}>Import Drivers</p>
           <div className="flex items-center gap-2">
@@ -245,7 +245,7 @@ export default function CSVImportModal({ onClose }) {
           </div>
         </div>
 
-        <div className="p-5">
+        <div className="flex-1 overflow-y-auto p-5">
           {results ? (
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3">

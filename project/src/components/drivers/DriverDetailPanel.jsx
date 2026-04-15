@@ -20,6 +20,7 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
   const [payType, setPayType] = useState('hourly');
   const [payRateSaving, setPayRateSaving] = useState(false);
   const [payRateSaved, setPayRateSaved] = useState(false);
+  const [payRateError, setPayRateError] = useState('');
 
   useEffect(() => {
     if (!driver?.id) return;
@@ -28,16 +29,24 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
     setPayType(driver.pay_rate_type || 'hourly');
     setEditingPay(false);
     setPayRateSaved(false);
+    setPayRateError('');
   }, [driver?.id]);
 
   async function savePayRate() {
     if (!driver?.id) return;
     setPayRateSaving(true);
+    setPayRateError('');
     const { error } = await supabase.from('drivers').update({
       pay_rate: parseFloat(payRate) || 0,
       pay_rate_type: payType,
     }).eq('id', driver.id);
-    if (error) logFailure('DriverDetailPanel:savePayRate', error);
+    if (error) {
+      logFailure('DriverDetailPanel:savePayRate', error);
+      setPayRateSaving(false);
+      setPayRateSaved(false);
+      setPayRateError(error.message || 'Failed to save pay rate.');
+      return;
+    }
     setPayRateSaving(false);
     setPayRateSaved(true);
     setEditingPay(false);
@@ -268,6 +277,9 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
                 Cancel
               </button>
             </div>
+            {payRateError && (
+              <p className="text-xs mt-2" style={{ color: '#ff4757' }}>{payRateError}</p>
+            )}
           </div>
         )}
 

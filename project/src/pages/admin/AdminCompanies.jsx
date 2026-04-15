@@ -140,8 +140,8 @@ export default function AdminCompanies() {
       </div>
 
       {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.75)' }}>
-          <div className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(201,168,76,0.3)' }}>
+        <div className="fixed inset-0 z-50 overflow-y-auto p-4 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.75)' }}>
+          <div className="mx-auto w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(201,168,76,0.3)', maxHeight: '90vh' }}>
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
               <p className="font-700 text-sm" style={{ fontWeight: 700, color: '#c9a84c' }}>Review: {selected.company_name}</p>
               <button onClick={() => setSelected(null)} className="btn-ghost w-7 h-7 flex items-center justify-center rounded-lg text-xs">✕</button>

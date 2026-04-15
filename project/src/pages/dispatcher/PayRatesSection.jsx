@@ -8,9 +8,12 @@ export default function PayRatesSection() {
   const [rates, setRates] = useState({});
   const [saving, setSaving] = useState({});
   const [saved, setSaved] = useState({});
+  const [errors, setErrors] = useState({});
   const [bulkRate, setBulkRate] = useState('');
   const [bulkType, setBulkType] = useState('hourly');
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState('');
+  const [bulkError, setBulkError] = useState('');
 
   useEffect(() => {
     const initial = {};
@@ -28,10 +31,20 @@ export default function PayRatesSection() {
     const r = rates[driverId];
     if (!r) return;
     setSaving(prev => ({ ...prev, [driverId]: true }));
-    await supabase.from('drivers').update({
+    setErrors(prev => ({ ...prev, [driverId]: '' }));
+
+    const { error } = await supabase.from('drivers').update({
       pay_rate: parseFloat(r.pay_rate) || 0,
       pay_rate_type: r.pay_rate_type,
     }).eq('id', driverId);
+
+    if (error) {
+      setSaving(prev => ({ ...prev, [driverId]: false }));
+      setSaved(prev => ({ ...prev, [driverId]: false }));
+      setErrors(prev => ({ ...prev, [driverId]: error.message || 'Failed to save rate.' }));
+      return;
+    }
+
     setSaving(prev => ({ ...prev, [driverId]: false }));
     setSaved(prev => ({ ...prev, [driverId]: true }));
     setTimeout(() => setSaved(prev => ({ ...prev, [driverId]: false })), 2000);
@@ -41,12 +54,23 @@ export default function PayRatesSection() {
   async function applyBulk() {
     if (!bulkRate) return;
     setBulkSaving(true);
-    await supabase.from('drivers').update({
+    setBulkMessage('');
+    setBulkError('');
+
+    const { error } = await supabase.from('drivers').update({
       pay_rate: parseFloat(bulkRate),
       pay_rate_type: bulkType,
     }).neq('id', '00000000-0000-0000-0000-000000000000');
+
+    if (error) {
+      setBulkSaving(false);
+      setBulkError(error.message || 'Failed to apply bulk rate.');
+      return;
+    }
+
     await loadDrivers();
     setBulkSaving(false);
+    setBulkMessage(`Applied $${parseFloat(bulkRate).toFixed(2)}/${bulkType === 'per_trip' ? 'trip' : 'hr'} to all drivers.`);
   }
 
   return (
@@ -93,6 +117,12 @@ export default function PayRatesSection() {
             {bulkSaving ? 'Applying...' : 'Apply to All'}
           </button>
         </div>
+        {bulkError && (
+          <p className="text-xs mt-3" style={{ color: '#ff4757' }}>{bulkError}</p>
+        )}
+        {bulkMessage && !bulkError && (
+          <p className="text-xs mt-3" style={{ color: '#00e5a0' }}>{bulkMessage}</p>
+        )}
       </div>
 
       {drivers.length === 0 ? (
@@ -159,19 +189,24 @@ export default function PayRatesSection() {
                       </div>
                     </td>
                     <td style={{ padding: '8px 12px' }}>
-                      <button
-                        onClick={() => saveDriver(driver.id)}
-                        disabled={saving[driver.id]}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
-                        style={{
-                          background: saved[driver.id] ? 'rgba(0,229,160,0.1)' : 'rgba(201,168,76,0.1)',
-                          border: `1px solid ${saved[driver.id] ? 'rgba(0,229,160,0.2)' : 'rgba(201,168,76,0.2)'}`,
-                          color: saved[driver.id] ? '#00e5a0' : '#c9a84c',
-                        }}
-                      >
-                        {saved[driver.id] ? <Check className="w-3 h-3" /> : <Save className="w-3 h-3" />}
-                        {saved[driver.id] ? 'Saved' : saving[driver.id] ? '...' : 'Save'}
-                      </button>
+                      <div className="space-y-1.5">
+                        <button
+                          onClick={() => saveDriver(driver.id)}
+                          disabled={saving[driver.id]}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
+                          style={{
+                            background: saved[driver.id] ? 'rgba(0,229,160,0.1)' : 'rgba(201,168,76,0.1)',
+                            border: `1px solid ${saved[driver.id] ? 'rgba(0,229,160,0.2)' : 'rgba(201,168,76,0.2)'}`,
+                            color: saved[driver.id] ? '#00e5a0' : '#c9a84c',
+                          }}
+                        >
+                          {saved[driver.id] ? <Check className="w-3 h-3" /> : <Save className="w-3 h-3" />}
+                          {saved[driver.id] ? 'Saved' : saving[driver.id] ? 'Saving...' : 'Save'}
+                        </button>
+                        {errors[driver.id] && (
+                          <p className="text-xs" style={{ color: '#ff4757', maxWidth: 180 }}>{errors[driver.id]}</p>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

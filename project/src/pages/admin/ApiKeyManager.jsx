@@ -66,8 +66,8 @@ function NewKeyModal({ orgId, onCreated, onClose }) {
 
   if (newKeyPlain) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
-        <div className="rounded-2xl p-6 w-full max-w-md" style={{ background: '#0d1117', border: '1px solid rgba(0,229,160,0.2)' }}>
+      <div className="fixed inset-0 z-50 overflow-y-auto px-4 py-6 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
+        <div className="mx-auto w-full max-w-md rounded-2xl p-6" style={{ background: '#0d1117', border: '1px solid rgba(0,229,160,0.2)' }}>
           <div className="flex items-center gap-3 mb-4">
             <CheckCircle className="w-5 h-5" style={{ color: '#00e5a0' }} />
             <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>API Key Created</p>
@@ -96,15 +96,15 @@ function NewKeyModal({ orgId, onCreated, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
-      <div className="rounded-2xl w-full max-w-md overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+    <div className="fixed inset-0 z-50 overflow-y-auto px-4 py-6 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
+      <div className="mx-auto flex w-full max-w-md flex-col overflow-hidden rounded-2xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '90vh' }}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
           <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Create API Key</p>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg btn-ghost">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div className="p-5 space-y-4">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
           <div>
             <label className="block text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.5)' }}>Key Name</label>
             <input

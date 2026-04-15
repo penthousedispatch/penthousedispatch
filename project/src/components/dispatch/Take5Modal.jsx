@@ -23,8 +23,8 @@ export default function Take5Modal({ driver, trips, onClose, onAssign }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden animate-slide-up" style={{ background: '#0d1117', border: '1px solid rgba(201,168,76,0.3)' }}>
+    <div className="fixed inset-0 z-50 overflow-y-auto p-4 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}>
+      <div className="mx-auto flex w-full max-w-md flex-col rounded-2xl overflow-hidden animate-slide-up" style={{ background: '#0d1117', border: '1px solid rgba(201,168,76,0.3)', maxHeight: '90vh' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.15)' }}>
@@ -40,7 +40,7 @@ export default function Take5Modal({ driver, trips, onClose, onAssign }) {
           </button>
         </div>
 
-        <div className="p-4 space-y-2">
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {top5.map((trip, i) => {
             const isDone = done.includes(trip.id);
             const isCurrent = confirmed && i === currentIdx && !isDone;

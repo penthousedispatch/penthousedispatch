@@ -430,15 +430,15 @@ export default function AdminPayroll() {
       </div>
 
       {showPartnerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
-          <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)' }}>
+        <div className="fixed inset-0 z-50 overflow-y-auto px-4 py-6 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
+          <div className="mx-auto flex w-full max-w-md flex-col overflow-hidden rounded-2xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)', maxHeight: '90vh' }}>
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
               <p className="font-700 text-sm" style={{ color: '#e5e7eb', fontWeight: 700 }}>{editPartner ? 'Edit Partner' : 'Add Payout Partner'}</p>
               <button onClick={() => { setShowPartnerModal(false); setEditPartner(null); }} className="w-7 h-7 flex items-center justify-center rounded-lg" style={{ background: 'rgba(255,255,255,0.06)' }}>
                 <X className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.5)' }} />
               </button>
             </div>
-            <div className="p-5 space-y-3">
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
               {[
                 { key: 'name', label: 'Company Name', placeholder: 'e.g. ADP, Gusto, Paychex' },
                 { key: 'contact_email', label: 'Contact Email', placeholder: 'billing@partner.com' },
