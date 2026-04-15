@@ -286,9 +286,7 @@ export default function DispatcherDashboard() {
 
           <a
             href="/driver"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
             title="Open Driver App"
             style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0', fontWeight: 600, textDecoration: 'none' }}
           >

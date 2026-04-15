@@ -21,6 +21,8 @@ const BOT_DEFS = [
     defaultInterval: 60,
     intervalUnit: 'seconds',
     defaultAllowedActions: ['pull_trips', 'refresh_data'],
+    defaultAutonomyLevel: 'act',
+    defaultRiskThreshold: 'low',
     availableActions: [
       { key: 'pull_trips', label: 'Pull trips from marketplace' },
       { key: 'refresh_data', label: 'Refresh local data cache' },
@@ -36,7 +38,9 @@ const BOT_DEFS = [
     color: '#c9a84c',
     defaultInterval: 5,
     intervalUnit: 'minutes',
-    defaultAllowedActions: ['dry_run_schedule', 'alert_admin'],
+    defaultAllowedActions: ['dry_run_schedule', 'auto_assign', 'alert_admin'],
+    defaultAutonomyLevel: 'act',
+    defaultRiskThreshold: 'medium',
     availableActions: [
       { key: 'dry_run_schedule', label: 'Run schedule (dry-run, no assignments)' },
       { key: 'auto_assign', label: 'Auto-assign trips to drivers' },
@@ -52,7 +56,9 @@ const BOT_DEFS = [
     color: '#0ea5e9',
     defaultInterval: 2,
     intervalUnit: 'minutes',
-    defaultAllowedActions: ['check_health', 'alert_admin'],
+    defaultAllowedActions: ['check_health', 'alert_admin', 'restart_connections'],
+    defaultAutonomyLevel: 'act',
+    defaultRiskThreshold: 'medium',
     availableActions: [
       { key: 'check_health', label: 'Check system health' },
       { key: 'alert_admin', label: 'Alert admin on issues' },
@@ -68,7 +74,9 @@ const BOT_DEFS = [
     color: '#f59e0b',
     defaultInterval: 10,
     intervalUnit: 'minutes',
-    defaultAllowedActions: ['scan_policies', 'alert_admin'],
+    defaultAllowedActions: ['scan_policies', 'flag_anomalies', 'cancel_duplicates', 'alert_admin'],
+    defaultAutonomyLevel: 'suggest',
+    defaultRiskThreshold: 'medium',
     availableActions: [
       { key: 'scan_policies', label: 'Scan for policy violations' },
       { key: 'alert_admin', label: 'Alert admin on violations' },
@@ -77,6 +85,20 @@ const BOT_DEFS = [
     ],
   },
 ];
+
+function getDefaultBotConfig(def, orgId) {
+  return {
+    org_id: orgId,
+    bot_id: def.id,
+    bot_name: def.name,
+    autonomy_level: def.defaultAutonomyLevel || 'observe',
+    risk_threshold: def.defaultRiskThreshold || 'low',
+    allowed_actions: def.defaultAllowedActions,
+    payout_protection: true,
+    kill_switch: false,
+    updated_at: new Date().toISOString(),
+  };
+}
 
 const RISK_LEVELS = [
   { key: 'low', label: 'Low', color: '#00e5a0', desc: 'Only monitor and alert — no automatic actions' },
@@ -465,7 +487,7 @@ function PendingActionsPanel({ pendingActions, onApprove, onReject }) {
 }
 
 export default function BotTeamPanel() {
-  const { org, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadTrips } = useApp();
+  const { org, profile, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadDrivers, loadTrips } = useApp();
   const [botEnabled, setBotEnabled] = useState({
     sentry_bot: false,
     scheduler_bot: false,
@@ -527,13 +549,18 @@ export default function BotTeamPanel() {
 
   async function loadBotConfigs() {
     const { data } = await supabase.from('bot_config').select('*').eq('org_id', org.id);
-    if (data) {
-      const map = {};
-      data.forEach(c => { map[c.bot_id] = c; });
-      setBotConfigs(map);
-      const anyKill = data.some(c => c.kill_switch);
-      setGlobalKillSwitch(anyKill);
+    const map = {};
+    (data || []).forEach(c => { map[c.bot_id] = c; });
+
+    const missing = BOT_DEFS.filter(def => !map[def.id]).map(def => getDefaultBotConfig(def, org.id));
+    if (missing.length > 0) {
+      await supabase.from('bot_config').upsert(missing, { onConflict: 'org_id,bot_id' });
+      missing.forEach(config => { map[config.bot_id] = config; });
     }
+
+    setBotConfigs(map);
+    const anyKill = Object.values(map).some(c => c.kill_switch);
+    setGlobalKillSwitch(anyKill);
   }
 
   async function loadPendingActions() {
@@ -552,10 +579,11 @@ export default function BotTeamPanel() {
       org_id: org.id,
       bot_id: botId,
       bot_name: botDef.name,
-      autonomy_level: config.autonomy_level || 'observe',
-      risk_threshold: config.risk_threshold || 'low',
+      autonomy_level: config.autonomy_level || botDef.defaultAutonomyLevel || 'observe',
+      risk_threshold: config.risk_threshold || botDef.defaultRiskThreshold || 'low',
       allowed_actions: config.allowed_actions || botDef.defaultAllowedActions,
       payout_protection: true,
+      kill_switch: config.kill_switch ?? false,
       updated_at: new Date().toISOString(),
     };
     await supabase.from('bot_config').upsert(payload, { onConflict: 'org_id,bot_id' });
@@ -575,26 +603,150 @@ export default function BotTeamPanel() {
     });
   }
 
-  async function escalateBotAction(botId, botName, triggerReason, actionType, riskLevel) {
+  async function escalateBotAction(botId, botName, triggerReason, actionType, riskLevel, actionPayload = {}) {
     await supabase.from('pending_bot_actions').insert({
       org_id: org.id,
       bot_id: botId,
       bot_name: botName,
       trigger_reason: triggerReason,
       action_type: actionType,
+      action_payload: actionPayload,
       risk_level: riskLevel,
       status: 'pending',
     });
     await loadPendingActions();
   }
 
+  async function cancelDuplicateAssignments(tripIds = []) {
+    if (!tripIds.length) return { cancelled: 0 };
+    const { data: dupAssignments } = await supabase
+      .from('trip_assignments')
+      .select('id, trip_id, status, notes, assigned_at')
+      .in('trip_id', tripIds)
+      .not('status', 'in', '("completed","cancelled","rejected")')
+      .order('assigned_at', { ascending: true });
+
+    const rowsToCancel = [];
+    const seenTripIds = new Set();
+    (dupAssignments || []).forEach(assignment => {
+      if (!seenTripIds.has(assignment.trip_id)) {
+        seenTripIds.add(assignment.trip_id);
+        return;
+      }
+      rowsToCancel.push(assignment);
+    });
+
+    for (const assignment of rowsToCancel) {
+      await supabase
+        .from('trip_assignments')
+        .update({
+          status: 'cancelled',
+          notes: [assignment.notes, 'SECURITY_BOT_CANCELLED_DUPLICATE'].filter(Boolean).join(' | '),
+        })
+        .eq('id', assignment.id);
+    }
+
+    return { cancelled: rowsToCancel.length };
+  }
+
+  async function flagAssignmentsForDrivers(driverIds = [], note = 'SECURITY_BOT_FLAGGED') {
+    if (!driverIds.length) return { flagged: 0 };
+    const { data: activeAssignments } = await supabase
+      .from('trip_assignments')
+      .select('id, notes')
+      .in('driver_id', driverIds)
+      .not('status', 'in', '("completed","cancelled","rejected")');
+
+    for (const assignment of activeAssignments || []) {
+      await supabase
+        .from('trip_assignments')
+        .update({
+          notes: [assignment.notes, note].filter(Boolean).join(' | '),
+        })
+        .eq('id', assignment.id);
+    }
+
+    return { flagged: (activeAssignments || []).length };
+  }
+
+  async function executePendingAction(action) {
+    const payload = action.action_payload || {};
+
+    switch (action.action_type) {
+      case 'pull_trips':
+      case 'refresh_data': {
+        const result = await refreshTripsFromSentry();
+        await loadTrips();
+        return { summary: `Pulled ${result?.count || 0} trips` };
+      }
+      case 'check_health': {
+        const result = await checkSentryHealth();
+        return { summary: result?.authenticated ? 'Sentry health check passed' : (result?.error || 'Health check failed') };
+      }
+      case 'restart_connections': {
+        await Promise.all([loadDrivers(), loadTrips(), loadAssignments(), checkSentryHealth()]);
+        return { summary: 'Reloaded drivers, trips, assignments, and Sentry health' };
+      }
+      case 'auto_assign': {
+        const cfg = {
+          ...(schedulerConfig || {}),
+          ...(payload.configSnapshot || {}),
+          auto_assign: true,
+        };
+        const result = await runAutoScheduler({
+          drivers,
+          trips,
+          assignments,
+          config: cfg,
+          orgId: org?.id,
+          dryRun: false,
+        });
+        await Promise.all([loadAssignments(), loadTrips()]);
+        return { summary: `Auto-assigned ${result.totalAssigned} trips` };
+      }
+      case 'cancel_duplicates': {
+        const result = await cancelDuplicateAssignments(payload.trip_ids || []);
+        await loadAssignments();
+        return { summary: `Cancelled ${result.cancelled} duplicate assignments` };
+      }
+      case 'flag_anomalies': {
+        const result = await flagAssignmentsForDrivers(payload.driver_ids || [], payload.note || 'SECURITY_BOT_FLAGGED');
+        await loadAssignments();
+        return { summary: `Flagged ${result.flagged} assignments for review` };
+      }
+      default:
+        return { summary: `No executor registered for ${action.action_type}` };
+    }
+  }
+
   async function handleApprove(actionId) {
-    await supabase.from('pending_bot_actions').update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', actionId);
+    const { data: action } = await supabase
+      .from('pending_bot_actions')
+      .select('*')
+      .eq('id', actionId)
+      .maybeSingle();
+
+    if (!action) return;
+
+    const execution = await executePendingAction(action);
+
+    await supabase.from('pending_bot_actions').update({
+      status: 'approved',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: profile?.id || null,
+      review_note: execution.summary || '',
+    }).eq('id', actionId);
+
+    await logBotAction(action.bot_id, action.bot_name, `Approved by admin: ${action.trigger_reason}`, action.action_type, action.risk_level, 'executed', execution.summary || '');
     loadPendingActions();
   }
 
   async function handleReject(actionId) {
-    await supabase.from('pending_bot_actions').update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', actionId);
+    await supabase.from('pending_bot_actions').update({
+      status: 'rejected',
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: profile?.id || null,
+    }).eq('id', actionId);
     loadPendingActions();
   }
 
@@ -610,8 +762,8 @@ export default function BotTeamPanel() {
         bot_id: def.id,
         bot_name: def.name,
         kill_switch: next,
-        autonomy_level: botConfigs[def.id]?.autonomy_level || 'observe',
-        risk_threshold: botConfigs[def.id]?.risk_threshold || 'low',
+        autonomy_level: botConfigs[def.id]?.autonomy_level || def.defaultAutonomyLevel || 'observe',
+        risk_threshold: botConfigs[def.id]?.risk_threshold || def.defaultRiskThreshold || 'low',
         allowed_actions: botConfigs[def.id]?.allowed_actions || def.defaultAllowedActions,
         payout_protection: true,
         updated_at: new Date().toISOString(),
@@ -621,7 +773,7 @@ export default function BotTeamPanel() {
   }
 
   async function runSentryBot() {
-    const config = botConfigs['sentry_bot'];
+    const config = botConfigs['sentry_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'sentry_bot'), org?.id);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const result = await refreshTripsFromSentry();
     if (result?.error) {
@@ -633,7 +785,7 @@ export default function BotTeamPanel() {
   }
 
   async function runSchedulerBot() {
-    const config = botConfigs['scheduler_bot'];
+    const config = botConfigs['scheduler_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'scheduler_bot'), org?.id);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const cfg = schedulerConfig || {
       revenue_target_per_hour: 60,
@@ -648,31 +800,67 @@ export default function BotTeamPanel() {
     };
     const autonomy = config?.autonomy_level || 'observe';
     const riskThreshold = config?.risk_threshold || 'low';
-    const canAutoAssign = cfg.auto_assign && autonomy === 'act' && riskThreshold !== 'low';
+    const allowedActions = config?.allowed_actions || [];
+    const canAutoAssign =
+      cfg.auto_assign &&
+      autonomy === 'act' &&
+      riskThreshold !== 'low' &&
+      allowedActions.includes('auto_assign');
 
-    if (!canAutoAssign && cfg.auto_assign && autonomy === 'suggest') {
-      await escalateBotAction('scheduler_bot', 'SchedulerBot', 'Auto-assign is enabled but autonomy is set to suggest', 'auto_assign', 'medium');
+    if (!canAutoAssign && cfg.auto_assign && autonomy === 'suggest' && allowedActions.includes('auto_assign')) {
+      await escalateBotAction('scheduler_bot', 'SchedulerBot', 'Auto-assign is enabled but autonomy is set to suggest', 'auto_assign', 'medium', { configSnapshot: cfg });
     }
 
-    const result = await runAutoScheduler({ drivers, trips, assignments, config: { ...cfg, auto_assign: false }, orgId: org?.id, dryRun: true });
-    await logBotAction('scheduler_bot', 'SchedulerBot', 'Scheduled run', 'dry_run_schedule', 'low', 'executed', `${result.totalAssigned} trips analyzed`);
-    if (canAutoAssign) { await loadAssignments(); await loadTrips(); }
+    const result = await runAutoScheduler({
+      drivers,
+      trips,
+      assignments,
+      config: { ...cfg, auto_assign: canAutoAssign },
+      orgId: org?.id,
+      dryRun: !canAutoAssign,
+    });
+    await logBotAction(
+      'scheduler_bot',
+      'SchedulerBot',
+      'Scheduled run',
+      canAutoAssign ? 'auto_assign' : 'dry_run_schedule',
+      canAutoAssign ? 'medium' : 'low',
+      'executed',
+      canAutoAssign ? `${result.totalAssigned} trips auto-assigned` : `${result.totalAssigned} trips analyzed`
+    );
+    if (canAutoAssign) {
+      await loadAssignments();
+      await loadTrips();
+    }
     return {
-      summary: `Analyzed ${result.totalAssigned} trips across ${result.driversProcessed} drivers — $${result.totalRevenue?.toFixed(2)} projected (dry-run)`,
+      summary: canAutoAssign
+        ? `Assigned ${result.totalAssigned} trips across ${result.driversProcessed} drivers — $${result.totalRevenue?.toFixed(2)} projected`
+        : `Analyzed ${result.totalAssigned} trips across ${result.driversProcessed} drivers — $${result.totalRevenue?.toFixed(2)} projected (dry-run)`,
       error: result.issues?.length > 0 ? result.issues[0] : null,
     };
   }
 
   async function runHealthBot() {
-    const config = botConfigs['health_bot'];
+    const config = botConfigs['health_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'health_bot'), org?.id);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const result = await checkSentryHealth();
     const issues = [];
+    const allowedActions = config?.allowed_actions || [];
+    const autonomy = config?.autonomy_level || 'observe';
+    const riskThreshold = config?.risk_threshold || 'low';
     if (!result.authenticated) issues.push('Sentry API auth failed');
     const activeDrivers = drivers.filter(d => d.status === 'online' || d.status === 'on_trip').length;
     if (activeDrivers === 0 && drivers.length > 0) issues.push('No drivers online');
     if (issues.length > 0) {
       await logBotAction('health_bot', 'HealthBot', 'System health check', 'check_health', 'medium', 'escalated', issues.join('; '));
+      if (allowedActions.includes('restart_connections')) {
+        if (autonomy === 'act' && riskThreshold !== 'low') {
+          await Promise.all([loadDrivers(), loadTrips(), loadAssignments(), checkSentryHealth()]);
+          await logBotAction('health_bot', 'HealthBot', 'Automatic recovery', 'restart_connections', 'medium', 'executed', 'Reloaded stale connections and core data');
+        } else if (autonomy === 'suggest') {
+          await escalateBotAction('health_bot', 'HealthBot', issues.join('; '), 'restart_connections', 'medium', { issues });
+        }
+      }
     }
     return {
       summary: `Sentry ${result.authenticated ? 'connected' : 'disconnected'} (${result.latencyMs || '?'}ms) · ${activeDrivers} drivers active · ${trips.length} trips loaded`,
@@ -681,11 +869,15 @@ export default function BotTeamPanel() {
   }
 
   async function runSecurityBot() {
-    const config = botConfigs['security_bot'];
+    const config = botConfigs['security_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'security_bot'), org?.id);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const issues = [];
+    const actionsTaken = [];
+    const allowedActions = config?.allowed_actions || [];
+    const autonomy = config?.autonomy_level || 'observe';
+    const riskThreshold = config?.risk_threshold || 'low';
     const assignedTripIds = assignments.filter(a => !['completed', 'cancelled', 'rejected'].includes(a.status)).map(a => a.trip_id);
-    const duplicates = assignedTripIds.filter((id, i) => assignedTripIds.indexOf(id) !== i);
+    const duplicates = [...new Set(assignedTripIds.filter((id, i) => assignedTripIds.indexOf(id) !== i))];
     if (duplicates.length > 0) issues.push(`${duplicates.length} duplicate trip assignments detected`);
 
     const highValueTrips = assignments.filter(a => parseFloat(a.delivery_price) > 200 && a.status === 'pending');
@@ -697,15 +889,44 @@ export default function BotTeamPanel() {
     );
     if (offlineWithTrips.length > 0) {
       issues.push(`${offlineWithTrips.length} offline drivers have active trip assignments`);
-      const riskThreshold = config?.risk_threshold || 'low';
-      if (riskThreshold !== 'high') {
-        await escalateBotAction('security_bot', 'SecurityBot', `${offlineWithTrips.length} offline drivers have active assignments`, 'flag_anomalies', 'high');
+    }
+
+    if (duplicates.length > 0 && allowedActions.includes('cancel_duplicates')) {
+      if (autonomy === 'act' && riskThreshold !== 'low') {
+        const result = await cancelDuplicateAssignments(duplicates);
+        if (result.cancelled > 0) actionsTaken.push(`cancelled ${result.cancelled} duplicate assignments`);
+      } else if (autonomy === 'suggest') {
+        await escalateBotAction('security_bot', 'SecurityBot', `${duplicates.length} duplicate trip assignments detected`, 'cancel_duplicates', 'high', { trip_ids: duplicates });
       }
     }
 
-    await logBotAction('security_bot', 'SecurityBot', 'Policy scan', 'scan_policies', 'low', issues.length > 0 ? 'escalated' : 'executed', issues.join('; ') || 'No anomalies');
+    if (offlineWithTrips.length > 0 && allowedActions.includes('flag_anomalies')) {
+      const driverIds = offlineWithTrips.map(driver => driver.id);
+      if (autonomy === 'act' && riskThreshold === 'high') {
+        const result = await flagAssignmentsForDrivers(driverIds, 'SECURITY_BOT_OFFLINE_DRIVER_ASSIGNED');
+        if (result.flagged > 0) actionsTaken.push(`flagged ${result.flagged} offline-driver assignments`);
+      } else {
+        await escalateBotAction('security_bot', 'SecurityBot', `${offlineWithTrips.length} offline drivers have active assignments`, 'flag_anomalies', 'high', {
+          driver_ids: driverIds,
+          note: 'SECURITY_BOT_OFFLINE_DRIVER_ASSIGNED',
+        });
+      }
+    }
+
+    await logBotAction(
+      'security_bot',
+      'SecurityBot',
+      'Policy scan',
+      'scan_policies',
+      'low',
+      issues.length > 0 ? 'escalated' : 'executed',
+      [issues.join('; '), actionsTaken.join('; ')].filter(Boolean).join(' | ') || 'No anomalies'
+    );
+    if (actionsTaken.length > 0) await loadAssignments();
     return {
-      summary: issues.length > 0 ? `Issues: ${issues.join(' | ')}` : `All policies OK — ${assignments.length} assignments checked, no anomalies`,
+      summary: issues.length > 0
+        ? `Issues: ${issues.join(' | ')}${actionsTaken.length ? ` · Actions: ${actionsTaken.join(' | ')}` : ''}`
+        : `All policies OK — ${assignments.length} assignments checked, no anomalies`,
       error: issues.length > 0 ? issues[0] : null,
     };
   }

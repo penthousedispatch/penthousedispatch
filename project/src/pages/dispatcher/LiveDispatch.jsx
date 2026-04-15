@@ -389,6 +389,13 @@ export default function LiveDispatch() {
             assignments={assignments}
             availableTrips={scoredTrips}
             onClose={() => setSelectedDriver(null)}
+            onDriverUpdated={async () => {
+              const refreshedDrivers = await loadDrivers();
+              const refreshedDriver = refreshedDrivers.find(driver => driver.id === selectedDriver.id);
+              if (refreshedDriver) {
+                setSelectedDriver(refreshedDriver);
+              }
+            }}
             onAssignTrip={(trip) => {
               assignTrip(trip, selectedDriver);
             }}

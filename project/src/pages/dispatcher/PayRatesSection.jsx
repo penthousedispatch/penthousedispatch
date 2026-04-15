@@ -33,15 +33,23 @@ export default function PayRatesSection() {
     setSaving(prev => ({ ...prev, [driverId]: true }));
     setErrors(prev => ({ ...prev, [driverId]: '' }));
 
-    const { error } = await supabase.from('drivers').update({
-      pay_rate: parseFloat(r.pay_rate) || 0,
-      pay_rate_type: r.pay_rate_type,
-    }).eq('id', driverId);
+    const { data, error } = await supabase
+      .from('drivers')
+      .update({
+        pay_rate: parseFloat(r.pay_rate) || 0,
+        pay_rate_type: r.pay_rate_type,
+      })
+      .eq('id', driverId)
+      .select('id, pay_rate, pay_rate_type')
+      .maybeSingle();
 
-    if (error) {
+    if (error || !data) {
       setSaving(prev => ({ ...prev, [driverId]: false }));
       setSaved(prev => ({ ...prev, [driverId]: false }));
-      setErrors(prev => ({ ...prev, [driverId]: error.message || 'Failed to save rate.' }));
+      setErrors(prev => ({
+        ...prev,
+        [driverId]: error?.message || 'No driver row was updated. Check your permissions and try again.',
+      }));
       return;
     }
 
@@ -57,14 +65,18 @@ export default function PayRatesSection() {
     setBulkMessage('');
     setBulkError('');
 
-    const { error } = await supabase.from('drivers').update({
-      pay_rate: parseFloat(bulkRate),
-      pay_rate_type: bulkType,
-    }).neq('id', '00000000-0000-0000-0000-000000000000');
+    const { data, error } = await supabase
+      .from('drivers')
+      .update({
+        pay_rate: parseFloat(bulkRate),
+        pay_rate_type: bulkType,
+      })
+      .neq('id', '00000000-0000-0000-0000-000000000000')
+      .select('id');
 
-    if (error) {
+    if (error || !data?.length) {
       setBulkSaving(false);
-      setBulkError(error.message || 'Failed to apply bulk rate.');
+      setBulkError(error?.message || 'No driver rows were updated. Check your permissions and try again.');
       return;
     }
 

@@ -18,6 +18,7 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
   const [editingPay, setEditingPay] = useState(false);
   const [payRate, setPayRate] = useState('');
   const [payType, setPayType] = useState('hourly');
+  const [displayPay, setDisplayPay] = useState({ pay_rate: '', pay_rate_type: 'hourly' });
   const [payRateSaving, setPayRateSaving] = useState(false);
   const [payRateSaved, setPayRateSaved] = useState(false);
   const [payRateError, setPayRateError] = useState('');
@@ -27,6 +28,7 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
     loadDriverData();
     setPayRate(driver.pay_rate ?? '');
     setPayType(driver.pay_rate_type || 'hourly');
+    setDisplayPay({ pay_rate: driver.pay_rate ?? '', pay_rate_type: driver.pay_rate_type || 'hourly' });
     setEditingPay(false);
     setPayRateSaved(false);
     setPayRateError('');
@@ -36,19 +38,26 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
     if (!driver?.id) return;
     setPayRateSaving(true);
     setPayRateError('');
-    const { error } = await supabase.from('drivers').update({
-      pay_rate: parseFloat(payRate) || 0,
-      pay_rate_type: payType,
-    }).eq('id', driver.id);
-    if (error) {
-      logFailure('DriverDetailPanel:savePayRate', error);
+    const normalizedRate = parseFloat(payRate) || 0;
+    const { data, error } = await supabase
+      .from('drivers')
+      .update({
+        pay_rate: normalizedRate,
+        pay_rate_type: payType,
+      })
+      .eq('id', driver.id)
+      .select('id, pay_rate, pay_rate_type')
+      .maybeSingle();
+    if (error || !data) {
+      logFailure('DriverDetailPanel:savePayRate', error || new Error('No driver row was updated'));
       setPayRateSaving(false);
       setPayRateSaved(false);
-      setPayRateError(error.message || 'Failed to save pay rate.');
+      setPayRateError(error?.message || 'No driver row was updated. Check your permissions and try again.');
       return;
     }
     setPayRateSaving(false);
     setPayRateSaved(true);
+    setDisplayPay({ pay_rate: data.pay_rate, pay_rate_type: data.pay_rate_type });
     setEditingPay(false);
     setTimeout(() => setPayRateSaved(false), 3000);
     if (onDriverUpdated) onDriverUpdated();
@@ -218,8 +227,8 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
               {payRateSaved ? <Check className="w-3 h-3" /> : <Edit2 className="w-3 h-3" />}
               {payRateSaved
                 ? `Saved $${parseFloat(payRate).toFixed(2)}/${payType === 'per_trip' ? 'trip' : 'hr'}`
-                : driver.pay_rate
-                  ? `$${parseFloat(driver.pay_rate).toFixed(2)}/${driver.pay_rate_type === 'per_trip' ? 'trip' : 'hr'}`
+                : displayPay.pay_rate !== ''
+                  ? `$${parseFloat(displayPay.pay_rate).toFixed(2)}/${displayPay.pay_rate_type === 'per_trip' ? 'trip' : 'hr'}`
                   : 'Set pay rate'}
             </button>
           </div>

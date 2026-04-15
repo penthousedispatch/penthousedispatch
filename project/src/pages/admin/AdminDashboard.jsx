@@ -3,7 +3,7 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
-  Sun, Moon, Globe, Key, Car, FlaskConical
+  Sun, Moon, Globe, Key, Car, FlaskConical, Bot, MessageSquare
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
@@ -24,6 +24,11 @@ import ApiKeyManager from './ApiKeyManager';
 import TenantManager from './TenantManager';
 import TestModeSandbox from './TestModeSandbox';
 import LiveDispatch from '../dispatcher/LiveDispatch';
+import AdminChatbot from '../dispatcher/AdminChatbot';
+import AutoSchedulerPanel from '../dispatcher/AutoSchedulerPanel';
+import BotTeamPanel from '../dispatcher/BotTeamPanel';
+import AISettingsPanel from '../dispatcher/AISettingsPanel';
+import SettingsPanel from '../dispatcher/SettingsPanel';
 import SupervisorBadge from '../../components/supervisor/SupervisorBadge';
 
 function ThemeToggle({ showLabel = false }) {
@@ -58,6 +63,11 @@ export default function AdminDashboard() {
     { path: '/admin/sentry', label: 'Sentry', icon: Settings },
     { path: '/admin/sentry-guide', label: 'Setup Guide', icon: BookOpen },
     { path: '/admin/testing', label: 'Testing', icon: Cpu },
+    { path: '/admin/chatbot', label: 'Chat AI', icon: MessageSquare },
+    { path: '/admin/auto-scheduler', label: 'Auto-Scheduler', icon: Zap },
+    { path: '/admin/bots', label: 'Bot Team', icon: Bot },
+    { path: '/admin/ai', label: 'AI Settings', icon: ShieldCheck },
+    { path: '/admin/settings', label: 'Ops Settings', icon: Settings },
     { path: '/admin/users', label: 'Users', icon: Users },
     { path: '/admin/logs', label: 'Logs', icon: FileText },
     { path: '/admin/security', label: 'Security', icon: Shield },
@@ -121,9 +131,7 @@ export default function AdminDashboard() {
           </div>
           <a
             href="/driver"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
             title="Open Driver App"
             style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0', fontWeight: 600, textDecoration: 'none' }}
           >
@@ -211,6 +219,11 @@ export default function AdminDashboard() {
           <Route path="/admin/sentry" element={<AdminSentryConfig />} />
           <Route path="/admin/sentry-guide" element={<AdminSentryGuide />} />
           <Route path="/admin/testing" element={<AdminTestingCenter />} />
+          <Route path="/admin/chatbot" element={<AdminChatbot />} />
+          <Route path="/admin/auto-scheduler" element={<AutoSchedulerPanel />} />
+          <Route path="/admin/bots" element={<BotTeamPanel />} />
+          <Route path="/admin/ai" element={<AISettingsPanel />} />
+          <Route path="/admin/settings" element={<SettingsPanel />} />
           <Route path="/admin/users" element={<AdminUsers />} />
           <Route path="/admin/logs" element={<AdminAuditLogs />} />
           <Route path="/admin/security/*" element={<AdminSecurity />} />

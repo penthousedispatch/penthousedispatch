@@ -4,6 +4,7 @@ import {
   Car, MapPin, Clock, Zap, Users, Route, BarChart2, X, Trash2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { runAutoScheduler } from '../../utils/autoScheduler';
 
 const NYC_BOROUGHS = [
   { name: 'Manhattan', zip: '10001', coords: { lat: 40.7549, lng: -73.9840 } },
@@ -214,8 +215,32 @@ export default function TestModeSandbox() {
           .maybeSingle();
 
         if (existing) {
+          const { error: existingDriverErr } = await supabase
+            .from('drivers')
+            .update({
+              status: td.status,
+              company_id: testCompany.id,
+              is_active: true,
+              pay_rate: (18 + i * 2).toString(),
+              pay_rate_type: 'hourly',
+              current_lat: borough.coords.lat + (Math.random() - 0.5) * 0.05,
+              current_lng: borough.coords.lng + (Math.random() - 0.5) * 0.05,
+              home_address: `${td.borough}, New York`,
+              working_today: td.status !== 'offline',
+              layer1_pct: 100,
+              layer2_status: 'approved_internal',
+              layer3_status: 'ready',
+              driver_number: `TST-${String(i + 1).padStart(3, '0')}`,
+              hire_date: '2024-01-01',
+              rating: (4.5 + Math.random() * 0.5).toFixed(1),
+            })
+            .eq('id', existing.id);
+          if (existingDriverErr) {
+            addLog(`Failed to refresh ${td.full_name}: ${existingDriverErr.message}`, 'error');
+            continue;
+          }
           seededDriverIds.push(existing.id);
-          addLog(`${td.full_name} already exists — skipping`, 'warn');
+          addLog(`${td.full_name} already exists — refreshed sandbox profile`, 'warn');
           continue;
         }
 
@@ -357,23 +382,85 @@ export default function TestModeSandbox() {
     const availableDrivers = testDrivers.filter(d => d.status === 'online' || d.status === 'on_trip');
 
     addLog(`Found ${pendingTrips.length} unassigned trips and ${availableDrivers.length} available drivers`, 'info');
+    if (pendingTrips.length === 0 || availableDrivers.length === 0) {
+      addLog('No pending trips or no available drivers — nothing to schedule', 'warn');
+      setSchedulerRunning(false);
+      return;
+    }
+
+    const schedulerTrips = pendingTrips.map(trip => ({
+      sentry_trip_id: trip.trip_id,
+      status: 'available',
+      pu_address: trip.pu_address,
+      do_address: trip.do_address,
+      pu_time: trip.scheduled_pickup_time,
+      mileage: trip.mileage,
+      delivery_price: trip.delivery_price,
+      notes: trip.notes,
+    }));
+
+    const currentAssignments = testTrips
+      .filter(trip => trip.driver_id && !['completed', 'cancelled', 'rejected'].includes(trip.status))
+      .map(trip => ({
+        trip_id: trip.trip_id,
+        driver_id: trip.driver_id,
+        status: trip.status,
+      }));
+
+    const scheduleResult = await runAutoScheduler({
+      drivers: availableDrivers,
+      trips: schedulerTrips,
+      assignments: currentAssignments,
+      config: {
+        enabled: true,
+        auto_assign: false,
+        revenue_target_per_hour: 60,
+        driver_pay_per_hour: 35,
+        max_trip_distance_miles: 25,
+        proximity_weight: 7,
+        mileage_weight: 5,
+        price_weight: 8,
+        short_trip_max_miles: 4,
+        short_trip_bonus_weight: 9,
+        chaining_weight: 8,
+        shared_ride_bonus_weight: 6,
+        buffer_mins: 15,
+        traffic_buffer_pct: 20,
+        shift_hours: '7am-5pm',
+      },
+      orgId: session.test_org_id,
+      dryRun: true,
+    });
 
     let assigned = 0;
-    for (const trip of pendingTrips.slice(0, availableDrivers.length)) {
-      const driverIdx = assigned % availableDrivers.length;
-      const driver = availableDrivers[driverIdx];
-      const { error } = await supabase
-        .from('trip_assignments')
-        .update({ driver_id: driver.id, driver_name: driver.full_name, status: 'pending', assigned_at: new Date().toISOString() })
-        .eq('id', trip.id)
-        .like('notes', `${getSandboxMarker(session.test_company_id)}%`);
-      if (!error) {
-        assigned++;
-        addLog(`Assigned trip ${trip.trip_id?.slice(-8)} to ${driver.full_name}`, 'success');
+    for (const plan of scheduleResult.results || []) {
+      for (const trip of plan.trips || []) {
+        const { error } = await supabase
+          .from('trip_assignments')
+          .update({
+            driver_id: plan.driver.id,
+            driver_name: plan.driver.full_name,
+            status: 'pending',
+            assigned_at: new Date().toISOString(),
+            scheduled_order: trip.scheduled_order || null,
+            travel_time_mins: trip._meta?.driveTimeFromPrev ?? null,
+          })
+          .eq('trip_id', trip.sentry_trip_id)
+          .like('notes', `${getSandboxMarker(session.test_company_id)}%`);
+
+        if (!error) {
+          assigned++;
+          addLog(`Assigned trip ${trip.sentry_trip_id?.slice(-8)} to ${plan.driver.full_name}`, 'success');
+        } else {
+          addLog(`Failed to assign ${trip.sentry_trip_id?.slice(-8)}: ${error.message}`, 'error');
+        }
       }
     }
 
-    addLog(`AI scheduler complete: ${assigned} trips auto-assigned`, assigned > 0 ? 'success' : 'warn');
+    addLog(
+      `AI scheduler complete: ${assigned} trips auto-assigned${scheduleResult.sharedRideOpportunities ? ` · ${scheduleResult.sharedRideOpportunities} shared-ride candidates found` : ''}`,
+      assigned > 0 ? 'success' : 'warn'
+    );
     await loadTestData(session.test_company_id);
     setSchedulerRunning(false);
   }
