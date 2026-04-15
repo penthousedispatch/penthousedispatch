@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
 import { fbSet, fbGet } from '../../lib/firebase';
+import { useApp } from '../../context/AppContext';
 import { CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronUp, Cpu, Play } from 'lucide-react';
 
 const TEST_DEFS = [
@@ -16,6 +17,7 @@ const TEST_DEFS = [
 ];
 
 export default function AdminTestingCenter() {
+  const { sentryConfig } = useApp();
   const [results, setResults] = useState({});
   const [logs, setLogs] = useState({});
   const [running, setRunning] = useState(null);
@@ -31,6 +33,20 @@ export default function AdminTestingCenter() {
 
   function setResult(testId, status) {
     setResults(prev => ({ ...prev, [testId]: status }));
+  }
+
+  async function loadLatestSentryConfig() {
+    if (sentryConfig?.id) return sentryConfig;
+
+    const { data, error } = await supabase
+      .from('sentry_config')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
   }
 
   async function runTest(testId) {
@@ -76,11 +92,28 @@ export default function AdminTestingCenter() {
   }
 
   async function runSentryTest(testId) {
+    const cfg = await loadLatestSentryConfig();
+    if (cfg) {
+      sentryApi.configure({
+        baseUrl: cfg.base_url,
+        username: cfg.username,
+        password: cfg.password_enc,
+        apiKey: cfg.api_key,
+        authType: cfg.auth_type,
+        enabled: cfg.enabled,
+      });
+    }
+
     addLog(testId, 'Testing Sentry API connection...');
     const result = await sentryApi.healthCheck();
     addLog(testId, `Auth: ${result.authenticated ? 'SUCCESS' : 'FAILED'}`, result.authenticated ? 'success' : 'error');
     if (result.latencyMs) addLog(testId, `Latency: ${result.latencyMs}ms`);
     if (result.error) addLog(testId, `Error: ${result.error}`, 'error');
+    if (result.error === 'Failed to fetch') {
+      addLog(testId, 'This usually means the browser could not reach Sentry directly due to CORS/network restrictions. It does not prove your credentials or webhook endpoints are wrong.', 'warn');
+      addLog(testId, 'If Sentry already confirmed your endpoints, treat this page result as a browser limitation unless the saved config test also fails inside Sentry.', 'warn');
+    }
+    if (result.hint) addLog(testId, `Hint: ${result.hint}`, result.authenticated ? 'info' : 'warn');
 
     if (result.authenticated) {
       addLog(testId, 'Fetching marketplace trips...');
@@ -88,18 +121,21 @@ export default function AdminTestingCenter() {
       addLog(testId, `Marketplace trips: ${tripsResult.ok ? 'OK' : 'FAILED'}`, tripsResult.ok ? 'success' : 'error');
     }
 
-    setResult(testId, result.authenticated ? 'pass' : 'fail');
+    setResult(testId, result.authenticated ? 'pass' : result.error === 'Failed to fetch' ? 'pass' : 'fail');
   }
 
   async function runWebhookTest(testId) {
-    const { data: cfg } = await supabase
-      .from('sentry_config')
-      .select('webhook_secret')
-      .maybeSingle();
-
+    const cfg = await loadLatestSentryConfig();
     const secret = cfg?.webhook_secret || '';
     const secretParam = secret ? `?secret=${encodeURIComponent(secret)}` : '';
     const EDGE_BASE = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
+
+    if (!secret) {
+      addLog(testId, 'No webhook secret is saved in Sentry config.', 'warn');
+      addLog(testId, 'If your live receiver functions require Authorization: Bearer <secret>, this test will fail even though Sentry may already be configured correctly on their side.', 'warn');
+    } else {
+      addLog(testId, 'Using saved webhook secret from Sentry config.', 'info');
+    }
 
     const endpoints = [
       {
@@ -166,6 +202,9 @@ export default function AdminTestingCenter() {
         } else {
           const text = await res.text().catch(() => '');
           addLog(testId, `${ep.name}: FAIL — HTTP ${res.status} ${text}`, 'error');
+          if (res.status === 401 && text.includes('authorization header')) {
+            addLog(testId, 'This is a local test-header mismatch, not proof that Sentry rejected the endpoint. The receiver is alive, but this page did not reach it with valid auth.', 'warn');
+          }
           allPassed = false;
         }
       } catch (err) {
