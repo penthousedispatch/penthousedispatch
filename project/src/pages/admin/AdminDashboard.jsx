@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Routes, Route, NavLink, Link } from 'react-router-dom';
 import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
@@ -129,15 +129,15 @@ export default function AdminDashboard() {
               <span style={{ color: 'rgba(255,255,255,0.5)' }}>Sentry {sentryStatus.ok ? 'Live' : 'Offline'}</span>
             </div>
           </div>
-          <a
-            href="/driver"
+          <Link
+            to="/driver"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
             title="Open Driver App"
             style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0', fontWeight: 600, textDecoration: 'none' }}
           >
             <Car className="w-3.5 h-3.5" />
             Driver App
-          </a>
+          </Link>
           <ThemeToggle />
           <button
             onClick={() => supabase.auth.signOut()}
@@ -185,17 +185,15 @@ export default function AdminDashboard() {
               </NavLink>
             ))}
             <div className="mt-auto px-4 py-4 border-t space-y-2" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
-              <a
-                href="/driver"
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                to="/driver"
                 className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm transition-all"
                 style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.15)', color: '#00e5a0', textDecoration: 'none', fontWeight: 600 }}
                 onClick={() => setMobileNav(false)}
               >
                 <Car className="w-4 h-4" />
                 Open Driver App
-              </a>
+              </Link>
               <button
                 onClick={() => supabase.auth.signOut()}
                 className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm transition-all"

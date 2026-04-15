@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Routes, Route, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
 import {
   Radio, Calendar, LayoutGrid, Settings, DollarSign,
   LogOut, Bot, Navigation, Trophy, Activity, Banknote,
@@ -156,17 +156,15 @@ function MobileDrawer({ open, onClose }) {
           })}
         </div>
         <div className="p-4 space-y-2" style={{ borderTop: '1px solid var(--border)' }}>
-          <a
-            href="/driver"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            to="/driver"
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm"
             style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.15)', color: '#00e5a0', textDecoration: 'none', fontWeight: 600 }}
             onClick={onClose}
           >
             <Car className="w-4 h-4" />
             Open Driver App
-          </a>
+          </Link>
           <button
             onClick={() => supabase.auth.signOut()}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl btn-ghost text-sm"
@@ -284,15 +282,15 @@ export default function DispatcherDashboard() {
             </div>
           </div>
 
-          <a
-            href="/driver"
+          <Link
+            to="/driver"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
             title="Open Driver App"
             style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0', fontWeight: 600, textDecoration: 'none' }}
           >
             <Car className="w-3.5 h-3.5" />
             Driver App
-          </a>
+          </Link>
           <ThemeToggle />
 
           <button
