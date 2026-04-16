@@ -179,6 +179,7 @@ export default function AdminSentryConfig() {
 
     const payload = {
       ...form,
+      webhook_secret: (form.webhook_secret || '').trim(),
       updated_at: new Date().toISOString(),
     };
 
@@ -206,10 +207,18 @@ export default function AdminSentryConfig() {
       return;
     }
 
-    if (data) {
-      setSentryConfig(data);
-      setForm(prev => ({ ...prev, id: data.id || prev.id }));
-    }
+    const persisted = data || {
+      ...(sentryConfig || {}),
+      ...payload,
+      id: data?.id || form.id || sentryConfig?.id || null,
+    };
+
+    setSentryConfig(persisted);
+    setForm(prev => ({
+      ...prev,
+      id: persisted.id || prev.id,
+      webhook_secret: persisted.webhook_secret || '',
+    }));
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
