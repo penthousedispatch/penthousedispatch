@@ -26,6 +26,18 @@ export function AppProvider({ children }) {
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
 
+  async function fetchLatestSentryConfig() {
+    const { data, error } = await supabase
+      .from('sentry_config')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
+  }
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (error) logFailure('getSession', error);
@@ -87,8 +99,10 @@ export function AppProvider({ children }) {
           await loadAssignments();
         }
 
-        const { data: cfg, error: cfgErr } = await supabase.from('sentry_config').select('*').maybeSingle();
-        if (cfgErr) logFailure('loadUserData:sentry_config', cfgErr);
+        const cfg = await fetchLatestSentryConfig().catch((cfgErr) => {
+          logFailure('loadUserData:sentry_config', cfgErr);
+          return null;
+        });
         if (cfg) {
           setSentryConfig(cfg);
           sentryApi.configure({
@@ -461,7 +475,10 @@ export function AppProvider({ children }) {
         scheduleLiveRefresh('profile', () => loadUserData(user), 500);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sentry_config' }, async () => {
-        const { data: cfg } = await supabase.from('sentry_config').select('*').maybeSingle();
+        const cfg = await fetchLatestSentryConfig().catch((error) => {
+          logFailure('realtime:sentry_config', error);
+          return null;
+        });
         if (cfg) setSentryConfig(cfg);
       })
       .subscribe();

@@ -1,36 +1,40 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
 import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
   Sun, Moon, Globe, Key, Car, FlaskConical, Bot, MessageSquare,
-  ChevronDown, Menu, X
+  ChevronDown, Menu, X, RadioTower
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { useTheme } from '../../context/ThemeContext';
-import AdminCompanies from './AdminCompanies';
-import AdminBilling from './AdminBilling';
-import AdminIncentives from './AdminIncentives';
-import AdminSentryConfig from './AdminSentryConfig';
-import AdminSentryGuide from './AdminSentryGuide';
-import AdminTestingCenter from './AdminTestingCenter';
-import AdminAuditLogs from './AdminAuditLogs';
-import AdminUsers from './AdminUsers';
-import AdminSecurity from './AdminSecurity';
-import AdminIntegrations from './AdminIntegrations';
-import AdminPayroll from './AdminPayroll';
-import IntegrationHub from './IntegrationHub';
-import ApiKeyManager from './ApiKeyManager';
-import TenantManager from './TenantManager';
-import TestModeSandbox from './TestModeSandbox';
-import LiveDispatch from '../dispatcher/LiveDispatch';
-import AdminChatbot from '../dispatcher/AdminChatbot';
-import AutoSchedulerPanel from '../dispatcher/AutoSchedulerPanel';
-import BotTeamPanel from '../dispatcher/BotTeamPanel';
-import AISettingsPanel from '../dispatcher/AISettingsPanel';
-import SettingsPanel from '../dispatcher/SettingsPanel';
 import SupervisorBadge from '../../components/supervisor/SupervisorBadge';
+import { BUILD_INFO } from '../../lib/buildInfo';
+
+const AdminCompanies = lazy(() => import('./AdminCompanies'));
+const AdminBilling = lazy(() => import('./AdminBilling'));
+const AdminIncentives = lazy(() => import('./AdminIncentives'));
+const AdminSentryConfig = lazy(() => import('./AdminSentryConfig'));
+const AdminSentryGuide = lazy(() => import('./AdminSentryGuide'));
+const AdminTestingCenter = lazy(() => import('./AdminTestingCenter'));
+const AdminAuditLogs = lazy(() => import('./AdminAuditLogs'));
+const AdminUsers = lazy(() => import('./AdminUsers'));
+const AdminSecurity = lazy(() => import('./AdminSecurity'));
+const AdminIntegrations = lazy(() => import('./AdminIntegrations'));
+const AdminPayroll = lazy(() => import('./AdminPayroll'));
+const IntegrationHub = lazy(() => import('./IntegrationHub'));
+const ApiKeyManager = lazy(() => import('./ApiKeyManager'));
+const TenantManager = lazy(() => import('./TenantManager'));
+const TestModeSandbox = lazy(() => import('./TestModeSandbox'));
+const LiveDispatch = lazy(() => import('../dispatcher/LiveDispatch'));
+const AdminChatbot = lazy(() => import('../dispatcher/AdminChatbot'));
+const AutoSchedulerPanel = lazy(() => import('../dispatcher/AutoSchedulerPanel'));
+const BotTeamPanel = lazy(() => import('../dispatcher/BotTeamPanel'));
+const AISettingsPanel = lazy(() => import('../dispatcher/AISettingsPanel'));
+const SettingsPanel = lazy(() => import('../dispatcher/SettingsPanel'));
+const AdminOpsCenter = lazy(() => import('./AdminOpsCenter'));
+const PermissionsMatrix = lazy(() => import('./PermissionsMatrix'));
 
 function ThemeToggle({ showLabel = false }) {
   const { theme, toggle } = useTheme();
@@ -52,6 +56,7 @@ function ThemeToggle({ showLabel = false }) {
 }
 
 const PRIMARY_TABS = [
+  { path: '/admin/ops', label: 'Ops Center', icon: RadioTower },
   { path: '/', label: 'Dispatch', icon: LayoutGrid, exact: true },
   { path: '/admin/billing', label: 'Billing', icon: DollarSign },
   { path: '/admin/sentry', label: 'Sentry', icon: Settings },
@@ -74,6 +79,7 @@ const MORE_TABS = [
   { path: '/admin/integrations', label: 'Legacy Sandbox', icon: Layers },
   { path: '/admin/hub', label: 'Hub', icon: Globe },
   { path: '/admin/api-keys', label: 'API Keys', icon: Key },
+  { path: '/admin/permissions', label: 'Permissions', icon: ShieldCheck },
   { path: '/admin/tenants', label: 'Tenants', icon: ShieldCheck },
   { path: '/admin/sandbox', label: 'Test Mode', icon: FlaskConical },
 ];
@@ -243,6 +249,13 @@ export default function AdminDashboard() {
         </nav>
 
         <div className="flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-2 px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <span className="text-[10px] uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.4)' }}>Build</span>
+            <span className="text-[11px] font-semibold" style={{ color: '#c9a84c' }}>v{BUILD_INFO.version}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'rgba(255,255,255,0.7)', background: 'rgba(255,255,255,0.06)' }}>
+              {BUILD_INFO.releaseTag}
+            </span>
+          </div>
           <div className="hidden sm:flex items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full" style={{ background: '#c9a84c', boxShadow: '0 0 6px rgba(201,168,76,0.5)' }} />
@@ -295,30 +308,34 @@ export default function AdminDashboard() {
       <MobileDrawer open={mobileNav} onClose={() => setMobileNav(false)} />
 
       <main className="flex-1 overflow-hidden">
-        <Routes>
-          <Route path="/" element={<LiveDispatch />} />
-          <Route path="/admin/companies" element={<AdminCompanies />} />
-          <Route path="/admin/billing" element={<AdminBilling />} />
-          <Route path="/admin/payroll" element={<AdminPayroll />} />
-          <Route path="/admin/incentives" element={<AdminIncentives />} />
-          <Route path="/admin/sentry" element={<AdminSentryConfig />} />
-          <Route path="/admin/sentry-guide" element={<AdminSentryGuide />} />
-          <Route path="/admin/testing" element={<AdminTestingCenter />} />
-          <Route path="/admin/chatbot" element={<AdminChatbot />} />
-          <Route path="/admin/auto-scheduler" element={<AutoSchedulerPanel />} />
-          <Route path="/admin/bots" element={<BotTeamPanel />} />
-          <Route path="/admin/ai" element={<AISettingsPanel />} />
-          <Route path="/admin/settings" element={<SettingsPanel />} />
-          <Route path="/admin/users" element={<AdminUsers />} />
-          <Route path="/admin/logs" element={<AdminAuditLogs />} />
-          <Route path="/admin/security/*" element={<AdminSecurity />} />
-          <Route path="/admin/integrations" element={<AdminIntegrations />} />
-          <Route path="/admin/hub" element={<IntegrationHub />} />
-          <Route path="/admin/api-keys" element={<ApiKeyManager />} />
-          <Route path="/admin/tenants" element={<TenantManager />} />
-          <Route path="/admin/sandbox" element={<TestModeSandbox />} />
-          <Route path="/*" element={<LiveDispatch />} />
-        </Routes>
+        <Suspense fallback={<div className="h-full flex items-center justify-center" style={{ color: 'rgba(255,255,255,0.45)' }}>Loading admin module...</div>}>
+          <Routes>
+            <Route path="/" element={<LiveDispatch />} />
+            <Route path="/admin/ops" element={<AdminOpsCenter />} />
+            <Route path="/admin/companies" element={<AdminCompanies />} />
+            <Route path="/admin/billing" element={<AdminBilling />} />
+            <Route path="/admin/payroll" element={<AdminPayroll />} />
+            <Route path="/admin/incentives" element={<AdminIncentives />} />
+            <Route path="/admin/sentry" element={<AdminSentryConfig />} />
+            <Route path="/admin/sentry-guide" element={<AdminSentryGuide />} />
+            <Route path="/admin/testing" element={<AdminTestingCenter />} />
+            <Route path="/admin/chatbot" element={<AdminChatbot />} />
+            <Route path="/admin/auto-scheduler" element={<AutoSchedulerPanel />} />
+            <Route path="/admin/bots" element={<BotTeamPanel />} />
+            <Route path="/admin/ai" element={<AISettingsPanel />} />
+            <Route path="/admin/settings" element={<SettingsPanel />} />
+            <Route path="/admin/users" element={<AdminUsers />} />
+            <Route path="/admin/logs" element={<AdminAuditLogs />} />
+            <Route path="/admin/security/*" element={<AdminSecurity />} />
+            <Route path="/admin/integrations" element={<AdminIntegrations />} />
+            <Route path="/admin/hub" element={<IntegrationHub />} />
+            <Route path="/admin/api-keys" element={<ApiKeyManager />} />
+            <Route path="/admin/permissions" element={<PermissionsMatrix />} />
+            <Route path="/admin/tenants" element={<TenantManager />} />
+            <Route path="/admin/sandbox" element={<TestModeSandbox />} />
+            <Route path="/*" element={<LiveDispatch />} />
+          </Routes>
+        </Suspense>
       </main>
 
       <SupervisorBadge />

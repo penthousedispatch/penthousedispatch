@@ -41,6 +41,13 @@ const TRIP_TEMPLATES = [
   { pu: '2535 Richmond Ave, Staten Island, NY 10314', do: '350 Jay St, Brooklyn, NY 11201', miles: 18.7, price: 86 },
 ];
 
+const SCENARIOS = {
+  full: { label: 'Full Coverage', templates: TRIP_TEMPLATES },
+  morning_rush: { label: 'Morning Rush', templates: TRIP_TEMPLATES.slice(0, 5) },
+  airport_day: { label: 'Airport Day', templates: TRIP_TEMPLATES.filter(t => /Airport|JFK|LaGuardia/i.test(`${t.pu} ${t.do}`)) },
+  long_haul: { label: 'Long Haul', templates: TRIP_TEMPLATES.filter(t => t.miles >= 14) },
+};
+
 function getSandboxMarker(companyId) {
   return `TEST_MODE_SANDBOX:${companyId}`;
 }
@@ -78,6 +85,8 @@ export default function TestModeSandbox() {
       .from('test_sandbox_sessions')
       .select('*')
       .eq('user_id', user.id)
+      .order('reset_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
     setSession(data);
     setLoading(false);
@@ -116,7 +125,46 @@ export default function TestModeSandbox() {
     setLogs(prev => [...prev, { msg, level, color: colors[level], ts: new Date().toLocaleTimeString() }]);
   }
 
-  async function activateTestMode() {
+  async function seedTripsForTemplates(companyId, driverIds, templates, scenarioLabel = 'Full Coverage') {
+    const today = new Date();
+    today.setHours(6, 0, 0, 0);
+    let successfulTrips = 0;
+    const sandboxMarker = getSandboxMarker(companyId);
+
+    for (const [i, tt] of templates.entries()) {
+      const tripTime = new Date(today.getTime() + i * 70 * 60000);
+      const driverIdx = i % driverIds.length;
+      const driverId = driverIds[driverIdx];
+      const driver = TEST_DRIVERS[driverIdx];
+      const preassigned = i < Math.min(4, templates.length);
+
+      const { error: tripErr } = await supabase.from('trip_assignments').insert({
+        trip_id: `TST-${Date.now()}-${scenarioLabel}-${i}`,
+        driver_id: preassigned ? driverId : null,
+        driver_name: preassigned ? (driver?.full_name || 'Test Driver') : '',
+        status: i < 3 ? 'completed' : i === 3 ? 'in_progress' : 'pending',
+        pu_address: tt.pu,
+        do_address: tt.do,
+        mileage: tt.miles,
+        delivery_price: tt.price,
+        scheduled_pickup_time: tripTime.toISOString(),
+        notes: `${sandboxMarker}|${scenarioLabel}|synthetic_trip_${i + 1}`,
+        scheduled_order: i + 1,
+        travel_time_mins: Math.round(tt.miles * 3.5),
+        assigned_at: new Date().toISOString(),
+      });
+
+      if (tripErr) {
+        addLog(`Failed to seed trip ${i + 1}: ${tripErr.message}`, 'error');
+      } else {
+        successfulTrips++;
+      }
+    }
+
+    return successfulTrips;
+  }
+
+  async function activateTestMode(selectedTemplates = SCENARIOS.full.templates, scenarioLabel = SCENARIOS.full.label) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { addLog('Not authenticated', 'error'); return; }
 
@@ -278,42 +326,9 @@ export default function TestModeSandbox() {
 
       if (seededDriverIds.length === 0) throw new Error('No drivers were seeded — cannot create trips');
 
-      addLog(`Seeding ${TRIP_TEMPLATES.length} test trips...`, 'info');
-      const today = new Date();
-      today.setHours(6, 0, 0, 0);
-      let successfulTrips = 0;
-      const sandboxMarker = getSandboxMarker(testCompany.id);
-
-      for (const [i, tt] of TRIP_TEMPLATES.entries()) {
-        const tripTime = new Date(today.getTime() + i * 70 * 60000);
-        const driverIdx = i % seededDriverIds.length;
-        const driverId = seededDriverIds[driverIdx];
-        const driver = TEST_DRIVERS[driverIdx];
-        const preassigned = i < 4;
-
-        const { error: tripErr } = await supabase.from('trip_assignments').insert({
-          trip_id: `TST-${Date.now()}-${i}`,
-          driver_id: preassigned ? driverId : null,
-          driver_name: preassigned ? (driver?.full_name || 'Test Driver') : '',
-          status: i < 3 ? 'completed' : i === 3 ? 'in_progress' : 'pending',
-          pu_address: tt.pu,
-          do_address: tt.do,
-          mileage: tt.miles,
-          delivery_price: tt.price,
-          scheduled_pickup_time: tripTime.toISOString(),
-          notes: `${sandboxMarker}|synthetic_trip_${i + 1}`,
-          scheduled_order: i + 1,
-          travel_time_mins: Math.round(tt.miles * 3.5),
-          assigned_at: new Date().toISOString(),
-        });
-
-        if (tripErr) {
-          addLog(`Failed to seed trip ${i + 1}: ${tripErr.message}`, 'error');
-        } else {
-          successfulTrips++;
-        }
-      }
-      addLog(`${successfulTrips}/${TRIP_TEMPLATES.length} trips seeded`, successfulTrips === TRIP_TEMPLATES.length ? 'success' : 'warn');
+      addLog(`Seeding ${selectedTemplates.length} test trips for ${scenarioLabel}...`, 'info');
+      const successfulTrips = await seedTripsForTemplates(testCompany.id, seededDriverIds, selectedTemplates, scenarioLabel.toLowerCase().replace(/\s+/g, '_'));
+      addLog(`${successfulTrips}/${selectedTemplates.length} trips seeded`, successfulTrips === selectedTemplates.length ? 'success' : 'warn');
 
       const sessionData = {
         user_id: user.id,
@@ -361,6 +376,24 @@ export default function TestModeSandbox() {
     setTestTrips([]);
     setSeeding(false);
     await activateTestMode();
+  }
+
+  async function seedScenario(key) {
+    if (!session?.test_company_id) return;
+    const scenario = SCENARIOS[key];
+    if (!scenario) return;
+
+    setSeeding(true);
+    addLog(`Resetting sandbox trips for scenario: ${scenario.label}`, 'info');
+    const marker = getSandboxMarker(session.test_company_id);
+    await supabase.from('trip_assignments').delete().like('notes', `${marker}%`);
+
+    const { data: companyDrivers } = await supabase.from('drivers').select('id').eq('company_id', session.test_company_id);
+    const driverIds = (companyDrivers || []).map(d => d.id).filter(Boolean);
+    const count = await seedTripsForTemplates(session.test_company_id, driverIds, scenario.templates, key);
+    addLog(`Scenario ready: ${count} trips seeded for ${scenario.label}`, count > 0 ? 'success' : 'warn');
+    await loadTestData(session.test_company_id);
+    setSeeding(false);
   }
 
   async function deactivateTestMode() {
@@ -607,6 +640,33 @@ export default function TestModeSandbox() {
             </div>
           )}
         </div>
+
+        {isActive && (
+          <div className="rounded-2xl p-5 space-y-3" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div>
+              <p className="text-sm font-700" style={{ fontWeight: 700 }}>Scenario Buttons</p>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>One-click sandbox states so you can test routing, airport demand, and longer mileage days without rebuilding the whole dataset.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(SCENARIOS).map(([key, scenario]) => (
+                <button
+                  key={key}
+                  onClick={() => seedScenario(key)}
+                  disabled={seeding}
+                  className="px-3 py-2 rounded-xl text-xs transition-all"
+                  style={{
+                    background: 'rgba(201,168,76,0.08)',
+                    border: '1px solid rgba(201,168,76,0.2)',
+                    color: '#c9a84c',
+                    fontWeight: 600,
+                  }}
+                >
+                  {scenario.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {isActive && testDrivers.length > 0 && (
           <div className="rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>

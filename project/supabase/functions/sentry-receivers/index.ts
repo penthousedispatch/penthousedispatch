@@ -26,6 +26,8 @@ Deno.serve(async (req: Request) => {
     const { data: cfg } = await supabase
       .from('sentry_config')
       .select('webhook_secret, enabled')
+      .order('updated_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     const providedSecret = secret || bearerToken;

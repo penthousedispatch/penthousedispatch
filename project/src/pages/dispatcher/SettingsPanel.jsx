@@ -43,7 +43,12 @@ export default function SettingsPanel() {
   }, [activeSection]);
 
   async function loadSettings() {
-    const { data: cfg, error } = await supabase.from('sentry_config').select('*').maybeSingle();
+    const { data: cfg, error } = await supabase
+      .from('sentry_config')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
     if (error) handleSupabaseError(error, 'SettingsPanel:loadSettings', { silent: true });
     if (cfg) setSentryForm(prev => ({ ...prev, ...cfg }));
   }
@@ -65,7 +70,12 @@ export default function SettingsPanel() {
       .select();
 
     if (upsertErr) {
-      const { data: existing } = await supabase.from('sentry_config').select('id').maybeSingle();
+      const { data: existing } = await supabase
+        .from('sentry_config')
+        .select('id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
       let saveError;
       if (existing) {
         const { error } = await supabase.from('sentry_config').update(payload).eq('id', existing.id);

@@ -381,6 +381,25 @@ export default function AdminSentryConfig() {
               <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Sentry Auth Header</p>
             </div>
             <div className="space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={form.webhook_secret}
+                  onChange={e => setForm({ ...form, webhook_secret: e.target.value })}
+                  className="flex-1 font-mono text-xs"
+                  placeholder="Paste or generate your bearer webhook secret"
+                  style={{ fontSize: 12 }}
+                />
+                <button
+                  type="button"
+                  onClick={generateSecret}
+                  disabled={generatingSecret}
+                  className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs flex-shrink-0"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  Generate
+                </button>
+              </div>
               <HeaderRow label="Authorization Header" value={`Bearer ${form.webhook_secret || 'YOUR_WEBHOOK_SECRET'}`} />
               <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
                 Send this header to Sentry for both receiver and provider endpoints. Query-string secret support is still available, but header auth is cleaner for production.
@@ -430,37 +449,6 @@ export default function AdminSentryConfig() {
                   <Toggle field={f.key} />
                 </div>
               ))}
-            </div>
-          </div>
-
-          {/* Webhook Secret */}
-          <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
-            <div className="flex items-center gap-2 mb-1">
-              <Key className="w-4 h-4" style={{ color: '#c9a84c' }} />
-              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bearer Webhook Secret</p>
-            </div>
-            <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.25)', fontSize: 11 }}>
-              Generate or paste the secret Sentry should send in the header:
-              <span style={{ color: '#c9a84c' }}> Authorization: Bearer &lt;secret&gt;</span>
-            </p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={form.webhook_secret}
-                onChange={e => setForm({ ...form, webhook_secret: e.target.value })}
-                className="flex-1 font-mono text-xs"
-                placeholder="Paste or generate your bearer webhook secret"
-                style={{ fontSize: 12 }}
-              />
-              <button
-                type="button"
-                onClick={generateSecret}
-                disabled={generatingSecret}
-                className="btn-ghost flex items-center gap-1.5 px-3 py-2 text-xs flex-shrink-0"
-              >
-                <Zap className="w-3.5 h-3.5" />
-                Generate
-              </button>
             </div>
           </div>
 

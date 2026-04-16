@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
 import { fbSet, fbGet } from '../../lib/firebase';
 import { useApp } from '../../context/AppContext';
-import { CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronUp, Cpu, Play } from 'lucide-react';
+import { CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronUp, Cpu, Play, FlaskConical, RotateCcw, RadioTower } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const TEST_DEFS = [
   { id: 'ui', label: 'UI Test', desc: 'Verify all major UI components render correctly' },
@@ -23,6 +24,8 @@ export default function AdminTestingCenter() {
   const [running, setRunning] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [runningAll, setRunningAll] = useState(false);
+  const [sandboxStatus, setSandboxStatus] = useState({ active: false, companyId: null, resetAt: '' });
+  const [recentWebhookLogs, setRecentWebhookLogs] = useState([]);
 
   function addLog(testId, msg, level = 'info') {
     setLogs(prev => ({
@@ -35,9 +38,35 @@ export default function AdminTestingCenter() {
     setResults(prev => ({ ...prev, [testId]: status }));
   }
 
-  async function loadLatestSentryConfig() {
-    if (sentryConfig?.id) return sentryConfig;
+  useEffect(() => {
+    loadOpsHelpers();
+  }, []);
 
+  async function loadOpsHelpers() {
+    const [sandboxRes, webhookRes] = await Promise.all([
+      supabase
+        .from('test_sandbox_sessions')
+        .select('is_active, test_company_id, reset_at')
+        .eq('is_active', true)
+        .order('reset_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('webhook_logs')
+        .select('id, endpoint, raw_payload, received_at, processed')
+        .order('received_at', { ascending: false })
+        .limit(5),
+    ]);
+
+    setSandboxStatus({
+      active: !!sandboxRes.data?.is_active,
+      companyId: sandboxRes.data?.test_company_id || null,
+      resetAt: sandboxRes.data?.reset_at || '',
+    });
+    setRecentWebhookLogs(webhookRes.data || []);
+  }
+
+  async function loadLatestSentryConfig() {
     const { data, error } = await supabase
       .from('sentry_config')
       .select('*')
@@ -213,6 +242,25 @@ export default function AdminTestingCenter() {
       }
     }
     setResult(testId, allPassed ? 'pass' : 'fail');
+  }
+
+  async function replayWebhook(log) {
+    const cfg = await loadLatestSentryConfig();
+    const secret = cfg?.webhook_secret || '';
+    const EDGE_BASE = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
+    const url = `${EDGE_BASE}/sentry-receivers/${log.endpoint}${secret ? `?secret=${encodeURIComponent(secret)}` : ''}`;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+      },
+      body: JSON.stringify(log.raw_payload || {}),
+    });
+
+    await loadOpsHelpers();
+    return res.ok;
   }
 
   async function runTripFlowTest(testId) {
@@ -398,6 +446,59 @@ export default function AdminTestingCenter() {
             {runningAll ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             Run All Tests
           </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center gap-2 mb-2">
+              <FlaskConical className="w-4 h-4" style={{ color: '#c9a84c' }} />
+              <p className="text-sm font-600" style={{ fontWeight: 600 }}>Sandbox Quick Actions</p>
+            </div>
+            <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.45)' }}>
+              {sandboxStatus.active
+                ? `Sandbox active${sandboxStatus.resetAt ? ` since ${new Date(sandboxStatus.resetAt).toLocaleString()}` : ''}`
+                : 'Sandbox is not active right now.'}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Link to="/admin/sandbox" className="btn-gold px-3 py-2 text-xs flex items-center gap-2">
+                <FlaskConical className="w-3 h-3" />
+                Open Sandbox Tools
+              </Link>
+              <button onClick={loadOpsHelpers} className="btn-ghost px-3 py-2 text-xs flex items-center gap-2">
+                <RotateCcw className="w-3 h-3" />
+                Refresh Status
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center gap-2 mb-2">
+              <RadioTower className="w-4 h-4" style={{ color: '#c9a84c' }} />
+              <p className="text-sm font-600" style={{ fontWeight: 600 }}>Webhook Replay</p>
+            </div>
+            <div className="space-y-2">
+              {recentWebhookLogs.length === 0 ? (
+                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>No recent webhook traffic logged yet.</p>
+              ) : recentWebhookLogs.map(log => (
+                <div key={log.id} className="flex items-center gap-2 justify-between rounded-lg px-3 py-2" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                  <div className="min-w-0">
+                    <p className="text-xs font-mono" style={{ color: '#c9a84c' }}>{log.endpoint}</p>
+                    <p className="text-[11px] truncate" style={{ color: 'rgba(255,255,255,0.4)' }}>{new Date(log.received_at).toLocaleString()}</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const ok = await replayWebhook(log);
+                      addLog('webhook', `Replay ${log.endpoint}: ${ok ? 'PASS' : 'FAIL'}`, ok ? 'success' : 'error');
+                      setExpanded(prev => ({ ...prev, webhook: true }));
+                    }}
+                    className="btn-ghost px-3 py-1.5 text-xs"
+                  >
+                    Replay
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="space-y-3">
