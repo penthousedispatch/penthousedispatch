@@ -378,7 +378,7 @@ export default function AdminSentryConfig() {
           <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
             <div className="flex items-center gap-2 mb-4">
               <Webhook className="w-4 h-4" style={{ color: '#c9a84c' }} />
-              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bearer Webhook Secret</p>
+              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Webhook Security</p>
             </div>
             <div className="space-y-3">
               <div>
@@ -386,7 +386,7 @@ export default function AdminSentryConfig() {
                   Bearer Webhook Secret
                 </label>
                 <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.35)' }}>
-                  Save the exact secret Sentry will send in the <span className="font-mono">Authorization: Bearer ...</span> header.
+                  Generate a secret and append it to your inbound auth flow. Save the exact secret Sentry will send in the <span className="font-mono">Authorization: Bearer ...</span> header.
                 </p>
               </div>
               <div className="flex gap-2">
