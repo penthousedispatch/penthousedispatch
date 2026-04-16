@@ -378,9 +378,17 @@ export default function AdminSentryConfig() {
           <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
             <div className="flex items-center gap-2 mb-4">
               <Webhook className="w-4 h-4" style={{ color: '#c9a84c' }} />
-              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Sentry Auth Header</p>
+              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bearer Webhook Secret</p>
             </div>
             <div className="space-y-3">
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  Bearer Webhook Secret
+                </label>
+                <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                  Save the exact secret Sentry will send in the <span className="font-mono">Authorization: Bearer ...</span> header.
+                </p>
+              </div>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -400,7 +408,7 @@ export default function AdminSentryConfig() {
                   Generate
                 </button>
               </div>
-              <HeaderRow label="Authorization Header" value={`Bearer ${form.webhook_secret || 'YOUR_WEBHOOK_SECRET'}`} />
+              <HeaderRow label="Authorization Header Preview" value={`Bearer ${form.webhook_secret || 'YOUR_WEBHOOK_SECRET'}`} />
               <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
                 Send this header to Sentry for both receiver and provider endpoints. Query-string secret support is still available, but header auth is cleaner for production.
               </p>
