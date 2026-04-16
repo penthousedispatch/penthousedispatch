@@ -84,8 +84,20 @@ export function SecurityProvider({ children }) {
     await supabase.from('security_threats').update({
       status,
       updated_at: new Date().toISOString(),
-      resolved_at: (status === 'resolved' || status === 'mitigated') ? new Date().toISOString() : null,
+      resolved_at: (status === 'resolved' || status === 'mitigated' || status === 'false_positive') ? new Date().toISOString() : null,
     }).eq('id', id);
+
+    if (['resolved', 'mitigated', 'false_positive'].includes(status)) {
+      await supabase
+        .from('security_alerts')
+        .update({
+          acknowledged: true,
+          acknowledged_at: new Date().toISOString(),
+        })
+        .eq('threat_id', id)
+        .eq('acknowledged', false);
+    }
+
     await loadAll();
   }
 

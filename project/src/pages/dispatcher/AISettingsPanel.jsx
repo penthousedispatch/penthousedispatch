@@ -6,15 +6,17 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
-import { testAIConnection } from '../../utils/aiMotivation';
+import { getBotMemory, saveBotMemory, testAIConnection } from '../../utils/aiMotivation';
 
 const PROVIDERS = [
   { id: 'disabled', label: 'Disabled', icon: '🚫', desc: 'No AI features' },
   { id: 'openai', label: 'OpenAI', icon: '🤖', desc: 'GPT-4o, GPT-4o-mini, GPT-3.5' },
+  { id: 'anthropic', label: 'Anthropic', icon: '🧠', desc: 'Claude models for review and second-opinion analysis' },
   { id: 'gemini', label: 'Google Gemini', icon: '✨', desc: 'Gemini 1.5 Flash, Pro' },
 ];
 
 const OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'];
+const ANTHROPIC_MODELS = ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'];
 const GEMINI_MODELS = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
 
 const CONTEXT_LABELS = {
@@ -60,6 +62,24 @@ const BOT_SERVICES = [
     icon: Shield,
     color: '#f59e0b',
   },
+  {
+    id: 'codex_bot',
+    field: 'codex_bot_enabled',
+    name: 'CodexBot',
+    role: 'Fix & Investigation Worker',
+    desc: 'Uses OpenAI to investigate operational issues and recommend safe corrective actions',
+    icon: Bot,
+    color: '#7dd3fc',
+  },
+  {
+    id: 'claude_bot',
+    field: 'claude_bot_enabled',
+    name: 'ClaudeBot',
+    role: 'Reviewer & Second Opinion',
+    desc: 'Uses Anthropic to review threats, pending actions, and provide risk-focused second opinions',
+    icon: Bot,
+    color: '#c084fc',
+  },
 ];
 
 const DEFAULT_FORM = {
@@ -74,7 +94,26 @@ const DEFAULT_FORM = {
   scheduler_bot_enabled: true,
   health_bot_enabled: true,
   security_bot_enabled: true,
+  codex_bot_enabled: false,
+  claude_bot_enabled: false,
   all_bots_paused: false,
+};
+
+const DEFAULT_BOT_PROVIDER_CONFIGS = {
+  codex_bot: {
+    provider: 'openai',
+    api_key: '',
+    model: 'gpt-4o-mini',
+    temperature: 0.2,
+    max_tokens: 500,
+  },
+  claude_bot: {
+    provider: 'anthropic',
+    api_key: '',
+    model: 'claude-3-5-sonnet-latest',
+    temperature: 0.2,
+    max_tokens: 500,
+  },
 };
 
 function Toggle({ value, onChange, color = '#c9a84c', disabled = false }) {
@@ -100,7 +139,9 @@ function Toggle({ value, onChange, color = '#c9a84c', disabled = false }) {
 export default function AISettingsPanel() {
   const { org } = useApp();
   const [form, setForm] = useState(DEFAULT_FORM);
+  const [botProviderConfigs, setBotProviderConfigs] = useState(DEFAULT_BOT_PROVIDER_CONFIGS);
   const [showKey, setShowKey] = useState(false);
+  const [showBotKeys, setShowBotKeys] = useState({ codex_bot: false, claude_bot: false });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -132,9 +173,40 @@ export default function AISettingsPanel() {
         scheduler_bot_enabled: data.scheduler_bot_enabled ?? true,
         health_bot_enabled: data.health_bot_enabled ?? true,
         security_bot_enabled: data.security_bot_enabled ?? true,
+        codex_bot_enabled: false,
+        claude_bot_enabled: false,
         all_bots_paused: data.all_bots_paused ?? false,
       });
     }
+
+    const [codexMemory, claudeMemory] = await Promise.all([
+      getBotMemory(org.id, 'codex_bot'),
+      getBotMemory(org.id, 'claude_bot'),
+    ]);
+
+    setBotProviderConfigs({
+      codex_bot: {
+        ...DEFAULT_BOT_PROVIDER_CONFIGS.codex_bot,
+        ...(codexMemory?.memory_value || {}),
+      },
+      claude_bot: {
+        ...DEFAULT_BOT_PROVIDER_CONFIGS.claude_bot,
+        ...(claudeMemory?.memory_value || {}),
+      },
+    });
+
+    const { data: botConfigs } = await supabase
+      .from('bot_config')
+      .select('bot_id, kill_switch')
+      .eq('org_id', org.id)
+      .in('bot_id', ['codex_bot', 'claude_bot']);
+
+    const botKillMap = Object.fromEntries((botConfigs || []).map(row => [row.bot_id, row.kill_switch]));
+    setForm(prev => ({
+      ...prev,
+      codex_bot_enabled: botKillMap.codex_bot === undefined ? false : !botKillMap.codex_bot,
+      claude_bot_enabled: botKillMap.claude_bot === undefined ? false : !botKillMap.claude_bot,
+    }));
   }
 
   async function loadLogs() {
@@ -153,12 +225,34 @@ export default function AISettingsPanel() {
   async function handleSave() {
     if (!org?.id) return;
     setSaving(true);
+    const payload = {
+      provider: form.provider,
+      api_key: form.api_key,
+      model: form.model,
+      temperature: form.temperature,
+      max_tokens: form.max_tokens,
+      motivation_enabled: form.motivation_enabled,
+      scheduling_enabled: form.scheduling_enabled,
+      sentry_bot_enabled: form.sentry_bot_enabled,
+      scheduler_bot_enabled: form.scheduler_bot_enabled,
+      health_bot_enabled: form.health_bot_enabled,
+      security_bot_enabled: form.security_bot_enabled,
+      all_bots_paused: form.all_bots_paused,
+      updated_at: new Date().toISOString(),
+    };
+
     const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', org.id).maybeSingle();
     if (existing) {
-      await supabase.from('ai_settings').update({ ...form, updated_at: new Date().toISOString() }).eq('org_id', org.id);
+      await supabase.from('ai_settings').update(payload).eq('org_id', org.id);
     } else {
-      await supabase.from('ai_settings').insert({ ...form, org_id: org.id });
+      await supabase.from('ai_settings').insert({ ...payload, org_id: org.id });
     }
+
+    await Promise.all([
+      saveBotMemory(org.id, 'codex_bot', 'provider_config', botProviderConfigs.codex_bot),
+      saveBotMemory(org.id, 'claude_bot', 'provider_config', botProviderConfigs.claude_bot),
+    ]);
+
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
     setSaving(false);
@@ -195,6 +289,22 @@ export default function AISettingsPanel() {
         .update({ kill_switch: !enabled, updated_at: new Date().toISOString() })
         .eq('org_id', org.id)
         .eq('bot_id', botId);
+    } else {
+      await supabase
+        .from('bot_config')
+        .insert({
+          org_id: org.id,
+          bot_id: botId,
+          bot_name: BOT_SERVICES.find(bot => bot.id === botId)?.name || botId,
+          autonomy_level: botId === 'claude_bot' ? 'suggest' : 'act',
+          risk_threshold: botId === 'codex_bot' ? 'medium' : 'high',
+          allowed_actions: botId === 'codex_bot'
+            ? ['refresh_data', 'check_health', 'restart_connections', 'flag_anomalies', 'auto_assign']
+            : ['flag_anomalies', 'alert_admin', 'acknowledge_alert', 'investigate_threat'],
+          payout_protection: true,
+          kill_switch: !enabled,
+          updated_at: new Date().toISOString(),
+        });
     }
     setSyncingBot(null);
   }
@@ -218,7 +328,12 @@ export default function AISettingsPanel() {
     }
   }
 
-  const models = form.provider === 'gemini' ? GEMINI_MODELS : OPENAI_MODELS;
+  const models =
+    form.provider === 'gemini'
+      ? GEMINI_MODELS
+      : form.provider === 'anthropic'
+        ? ANTHROPIC_MODELS
+        : OPENAI_MODELS;
   const filteredLogs = filterType === 'all' ? logs : logs.filter(l => l.context_type === filterType);
 
   const activeServices = [
@@ -229,9 +344,21 @@ export default function AISettingsPanel() {
     !form.all_bots_paused && form.scheduler_bot_enabled,
     !form.all_bots_paused && form.health_bot_enabled,
     !form.all_bots_paused && form.security_bot_enabled,
+    !form.all_bots_paused && form.codex_bot_enabled,
+    !form.all_bots_paused && form.claude_bot_enabled,
   ].filter(Boolean).length;
 
-  const totalServices = 7;
+  const totalServices = 9;
+
+  function updateBotProviderConfig(botId, patch) {
+    setBotProviderConfigs(prev => ({
+      ...prev,
+      [botId]: {
+        ...prev[botId],
+        ...patch,
+      },
+    }));
+  }
 
   return (
     <div className="flex h-full overflow-hidden" style={{ background: '#07090d' }}>
@@ -264,7 +391,12 @@ export default function AISettingsPanel() {
               <button
                 key={p.id}
                 onClick={() => {
-                  const defaultModel = p.id === 'gemini' ? 'gemini-1.5-flash' : 'gpt-4o-mini';
+                  const defaultModel =
+                    p.id === 'gemini'
+                      ? 'gemini-1.5-flash'
+                      : p.id === 'anthropic'
+                        ? 'claude-3-5-sonnet-latest'
+                        : 'gpt-4o-mini';
                   setForm({ ...form, provider: p.id, model: defaultModel });
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all"
@@ -440,6 +572,86 @@ export default function AISettingsPanel() {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        <div className="mb-5 rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="px-4 py-3" style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+            <p className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bot Worker Providers</p>
+            <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>
+              CodexBot uses OpenAI for fixes and investigations. ClaudeBot uses Anthropic for review and second-opinion analysis.
+            </p>
+          </div>
+          <div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+            {[
+              { id: 'codex_bot', title: 'CodexBot', keyLabel: 'OpenAI API Key', models: OPENAI_MODELS },
+              { id: 'claude_bot', title: 'ClaudeBot', keyLabel: 'Anthropic API Key', models: ANTHROPIC_MODELS },
+            ].map(worker => (
+              <div key={worker.id} className="p-4 space-y-3" style={{ background: 'rgba(255,255,255,0.01)' }}>
+                <div>
+                  <p className="text-sm" style={{ color: '#e5e7eb', fontWeight: 600 }}>{worker.title}</p>
+                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                    {worker.id === 'codex_bot'
+                      ? 'OpenAI-backed worker for issue diagnosis, safe corrective plans, and automation proposals.'
+                      : 'Anthropic-backed reviewer for threat triage, mitigation guidance, and second-opinion decisions.'}
+                  </p>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showBotKeys[worker.id] ? 'text' : 'password'}
+                    value={botProviderConfigs[worker.id]?.api_key || ''}
+                    onChange={e => updateBotProviderConfig(worker.id, { api_key: e.target.value })}
+                    placeholder={worker.keyLabel}
+                    className="w-full pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowBotKeys(prev => ({ ...prev, [worker.id]: !prev[worker.id] }))}
+                    className="absolute right-3 top-1/2 -translate-y-1/2"
+                    style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)' }}
+                  >
+                    {showBotKeys[worker.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Model</label>
+                    <select
+                      value={botProviderConfigs[worker.id]?.model || worker.models[0]}
+                      onChange={e => updateBotProviderConfig(worker.id, { model: e.target.value })}
+                      className="w-full"
+                      style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#e5e7eb', padding: '8px 10px', fontSize: 13 }}
+                    >
+                      {worker.models.map(model => <option key={model} value={model}>{model}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Temperature</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={botProviderConfigs[worker.id]?.temperature ?? 0.2}
+                      onChange={e => updateBotProviderConfig(worker.id, { temperature: parseFloat(e.target.value) })}
+                      className="w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Max Tokens</label>
+                    <input
+                      type="number"
+                      min="100"
+                      max="2000"
+                      step="50"
+                      value={botProviderConfigs[worker.id]?.max_tokens ?? 500}
+                      onChange={e => updateBotProviderConfig(worker.id, { max_tokens: parseInt(e.target.value, 10) || 500 })}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 

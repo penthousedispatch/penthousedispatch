@@ -9,6 +9,11 @@ import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { sentryApi } from '../../lib/sentryApi';
 import { runAutoScheduler } from '../../utils/autoScheduler';
+import { getAiSettings, getBotRuntimeSettings, requestAIStructuredPlan } from '../../utils/aiMotivation';
+
+const SECURITY_EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-threat-research`;
+const SECURITY_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const RISK_WEIGHT = { low: 1, medium: 2, high: 3, critical: 4 };
 
 const BOT_DEFS = [
   {
@@ -69,12 +74,12 @@ const BOT_DEFS = [
     id: 'security_bot',
     name: 'SecurityBot',
     role: 'Policy Enforcer',
-    desc: 'Detects anomalous assignments, duplicate trips, and unusual billing patterns.',
+    desc: 'Runs threat scans, maps events to MITRE ATT&CK, and mitigates safe issues while escalating higher-risk threats.',
     icon: Shield,
     color: '#f59e0b',
     defaultInterval: 10,
     intervalUnit: 'minutes',
-    defaultAllowedActions: ['scan_policies', 'flag_anomalies', 'cancel_duplicates', 'alert_admin'],
+    defaultAllowedActions: ['scan_policies', 'flag_anomalies', 'cancel_duplicates', 'investigate_threat', 'mitigate_threat', 'acknowledge_alert', 'alert_admin'],
     defaultAutonomyLevel: 'suggest',
     defaultRiskThreshold: 'medium',
     availableActions: [
@@ -82,6 +87,52 @@ const BOT_DEFS = [
       { key: 'alert_admin', label: 'Alert admin on violations' },
       { key: 'flag_anomalies', label: 'Flag anomalous records' },
       { key: 'cancel_duplicates', label: 'Cancel duplicate assignments' },
+      { key: 'investigate_threat', label: 'Mark active threats as investigating' },
+      { key: 'mitigate_threat', label: 'Mitigate lower-risk threats with known steps' },
+      { key: 'acknowledge_alert', label: 'Acknowledge low-risk alerts' },
+    ],
+  },
+  {
+    id: 'codex_bot',
+    name: 'CodexBot',
+    role: 'Fix & Investigation Worker',
+    desc: 'Uses OpenAI to investigate operational issues and produce safe fix plans or auto-actions from approved action types.',
+    icon: Bot,
+    color: '#7dd3fc',
+    defaultInterval: 15,
+    intervalUnit: 'minutes',
+    defaultAllowedActions: ['refresh_data', 'check_health', 'restart_connections', 'flag_anomalies', 'auto_assign', 'alert_admin'],
+    defaultAutonomyLevel: 'suggest',
+    defaultRiskThreshold: 'medium',
+    defaultEnabled: false,
+    availableActions: [
+      { key: 'refresh_data', label: 'Refresh local data cache' },
+      { key: 'check_health', label: 'Run health diagnostics' },
+      { key: 'restart_connections', label: 'Reload stale connections' },
+      { key: 'flag_anomalies', label: 'Flag suspicious assignments' },
+      { key: 'auto_assign', label: 'Trigger auto-assignment' },
+      { key: 'alert_admin', label: 'Alert admin on serious findings' },
+    ],
+  },
+  {
+    id: 'claude_bot',
+    name: 'ClaudeBot',
+    role: 'Reviewer & Second Opinion',
+    desc: 'Uses Anthropic to review threats and pending bot actions, then recommend mitigation or escalation with extra risk scrutiny.',
+    icon: Bot,
+    color: '#c084fc',
+    defaultInterval: 20,
+    intervalUnit: 'minutes',
+    defaultAllowedActions: ['flag_anomalies', 'investigate_threat', 'mitigate_threat', 'acknowledge_alert', 'alert_admin'],
+    defaultAutonomyLevel: 'suggest',
+    defaultRiskThreshold: 'high',
+    defaultEnabled: false,
+    availableActions: [
+      { key: 'flag_anomalies', label: 'Flag risky records for review' },
+      { key: 'investigate_threat', label: 'Move threats to investigating' },
+      { key: 'mitigate_threat', label: 'Mitigate lower-risk threats with clear steps' },
+      { key: 'acknowledge_alert', label: 'Acknowledge noise-level alerts' },
+      { key: 'alert_admin', label: 'Escalate to admin for final review' },
     ],
   },
 ];
@@ -95,7 +146,7 @@ function getDefaultBotConfig(def, orgId) {
     risk_threshold: def.defaultRiskThreshold || 'low',
     allowed_actions: def.defaultAllowedActions,
     payout_protection: true,
-    kill_switch: false,
+    kill_switch: def.defaultEnabled === false,
     updated_at: new Date().toISOString(),
   };
 }
@@ -111,6 +162,10 @@ const AUTONOMY_LEVELS = [
   { key: 'suggest', label: 'Suggest', desc: 'Queue suggested actions for admin approval' },
   { key: 'act', label: 'Act', desc: 'Execute approved actions automatically within threshold' },
 ];
+
+function riskAtOrBelow(level, threshold) {
+  return (RISK_WEIGHT[level] || 99) <= (RISK_WEIGHT[threshold] || 0);
+}
 
 function useBot(botId, intervalSecs, enabled, runFn) {
   const timerRef = useRef(null);
@@ -493,12 +548,16 @@ export default function BotTeamPanel() {
     scheduler_bot: false,
     health_bot: false,
     security_bot: false,
+    codex_bot: false,
+    claude_bot: false,
   });
   const [botIntervals, setBotIntervals] = useState({
     sentry_bot: 60,
     scheduler_bot: 300,
     health_bot: 120,
     security_bot: 600,
+    codex_bot: 900,
+    claude_bot: 1200,
   });
   const [botConfigs, setBotConfigs] = useState({});
   const [schedulerConfig, setSchedulerConfig] = useState(null);
@@ -521,13 +580,22 @@ export default function BotTeamPanel() {
     const paused = data.all_bots_paused ?? false;
     if (paused) {
       setGlobalKillSwitch(true);
-      setBotEnabled({ sentry_bot: false, scheduler_bot: false, health_bot: false, security_bot: false });
+      setBotEnabled({
+        sentry_bot: false,
+        scheduler_bot: false,
+        health_bot: false,
+        security_bot: false,
+        codex_bot: false,
+        claude_bot: false,
+      });
     } else {
       setBotEnabled({
         sentry_bot: data.sentry_bot_enabled ?? false,
         scheduler_bot: data.scheduler_bot_enabled ?? false,
         health_bot: data.health_bot_enabled ?? false,
         security_bot: data.security_bot_enabled ?? false,
+        codex_bot: false,
+        claude_bot: false,
       });
     }
   }
@@ -559,8 +627,11 @@ export default function BotTeamPanel() {
     }
 
     setBotConfigs(map);
-    const anyKill = Object.values(map).some(c => c.kill_switch);
-    setGlobalKillSwitch(anyKill);
+    setBotEnabled(prev => ({
+      ...prev,
+      codex_bot: map.codex_bot ? !map.codex_bot.kill_switch : false,
+      claude_bot: map.claude_bot ? !map.claude_bot.kill_switch : false,
+    }));
   }
 
   async function loadPendingActions() {
@@ -669,6 +740,112 @@ export default function BotTeamPanel() {
     return { flagged: (activeAssignments || []).length };
   }
 
+  async function acknowledgeAlertsByIds(alertIds = []) {
+    if (!alertIds.length) return { acknowledged: 0 };
+    await supabase
+      .from('security_alerts')
+      .update({
+        acknowledged: true,
+        acknowledged_at: new Date().toISOString(),
+        acknowledged_by: profile?.id || null,
+      })
+      .in('id', alertIds);
+    return { acknowledged: alertIds.length };
+  }
+
+  async function updateThreatsAndLinkedAlerts(threatIds = [], status = 'investigating') {
+    if (!threatIds.length) return { updated: 0 };
+
+    await supabase
+      .from('security_threats')
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+        resolved_at: ['mitigated', 'resolved', 'false_positive'].includes(status) ? new Date().toISOString() : null,
+      })
+      .in('id', threatIds);
+
+    if (['mitigated', 'resolved', 'false_positive'].includes(status)) {
+      const { data: linkedAlerts } = await supabase
+        .from('security_alerts')
+        .select('id')
+        .in('threat_id', threatIds)
+        .eq('acknowledged', false);
+      await acknowledgeAlertsByIds((linkedAlerts || []).map(alert => alert.id));
+    }
+
+    return { updated: threatIds.length };
+  }
+
+  async function runSecurityThreatScan() {
+    const res = await fetch(`${SECURITY_EDGE_URL}/scan`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${SECURITY_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Threat scan failed with ${res.status}`);
+    }
+
+    return res.json();
+  }
+
+  async function logAIReview(botId, botName, prompt, response, model, contextType = 'operations_review') {
+    await supabase.from('ai_logs').insert({
+      org_id: org.id,
+      driver_id: null,
+      driver_name: botName,
+      context_type: contextType,
+      prompt,
+      response,
+      model_used: model || '',
+      tokens_used: 0,
+    });
+  }
+
+  function normalizeRecommendedActions(actions = []) {
+    return actions
+      .filter(Boolean)
+      .map(action => ({
+        action_type: action.action_type,
+        reason: action.reason || 'AI recommendation',
+        risk_level: action.risk_level || 'medium',
+        payload: action.payload || {},
+      }))
+      .filter(action => action.action_type);
+  }
+
+  async function processBotRecommendations(botId, botName, config, actions = []) {
+    const autonomy = config?.autonomy_level || 'observe';
+    const riskThreshold = config?.risk_threshold || 'low';
+    const allowedActions = config?.allowed_actions || [];
+    const executed = [];
+    const escalated = [];
+
+    for (const action of normalizeRecommendedActions(actions)) {
+      if (!allowedActions.includes(action.action_type)) continue;
+
+      if (autonomy === 'act' && riskAtOrBelow(action.risk_level, riskThreshold)) {
+        const execution = await executePendingAction({
+          action_type: action.action_type,
+          action_payload: action.payload,
+        });
+        executed.push(`${action.action_type}: ${execution.summary}`);
+        await logBotAction(botId, botName, action.reason, action.action_type, action.risk_level, 'executed', execution.summary || '');
+      } else if (autonomy !== 'observe') {
+        await escalateBotAction(botId, botName, action.reason, action.action_type, action.risk_level, action.payload);
+        escalated.push(action.action_type);
+      }
+    }
+
+    return { executed, escalated };
+  }
+
   async function executePendingAction(action) {
     const payload = action.action_payload || {};
 
@@ -714,6 +891,18 @@ export default function BotTeamPanel() {
         await loadAssignments();
         return { summary: `Flagged ${result.flagged} assignments for review` };
       }
+      case 'acknowledge_alert': {
+        const result = await acknowledgeAlertsByIds(payload.alert_ids || []);
+        return { summary: `Acknowledged ${result.acknowledged} alerts` };
+      }
+      case 'investigate_threat': {
+        const result = await updateThreatsAndLinkedAlerts(payload.threat_ids || [], 'investigating');
+        return { summary: `Moved ${result.updated} threats to investigating` };
+      }
+      case 'mitigate_threat': {
+        const result = await updateThreatsAndLinkedAlerts(payload.threat_ids || [], 'mitigated');
+        return { summary: `Mitigated ${result.updated} threats and synced linked alerts` };
+      }
       default:
         return { summary: `No executor registered for ${action.action_type}` };
     }
@@ -754,7 +943,14 @@ export default function BotTeamPanel() {
     const next = !globalKillSwitch;
     setGlobalKillSwitch(next);
     if (next) {
-      setBotEnabled({ sentry_bot: false, scheduler_bot: false, health_bot: false, security_bot: false });
+      setBotEnabled({
+        sentry_bot: false,
+        scheduler_bot: false,
+        health_bot: false,
+        security_bot: false,
+        codex_bot: false,
+        claude_bot: false,
+      });
     }
     for (const def of BOT_DEFS) {
       await supabase.from('bot_config').upsert({
@@ -891,6 +1087,74 @@ export default function BotTeamPanel() {
       issues.push(`${offlineWithTrips.length} offline drivers have active trip assignments`);
     }
 
+    let scanResult = null;
+    if (allowedActions.includes('scan_policies')) {
+      try {
+        scanResult = await runSecurityThreatScan();
+        if (scanResult?.threats_created > 0) issues.push(`${scanResult.threats_created} new threats detected by AI scan`);
+      } catch (error) {
+        issues.push(`Threat scan failed: ${error.message}`);
+      }
+    }
+
+    const { data: activeThreats } = await supabase
+      .from('security_threats')
+      .select('id, severity, confidence, status, mitigation_steps')
+      .in('status', ['active', 'investigating'])
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    const { data: openAlerts } = await supabase
+      .from('security_alerts')
+      .select('id, severity, threat_id, acknowledged')
+      .eq('acknowledged', false)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    const criticalThreats = (activeThreats || []).filter(threat => ['critical', 'high'].includes(threat.severity));
+    const safeMitigations = (activeThreats || []).filter(threat =>
+      ['low', 'medium'].includes(threat.severity) &&
+      Array.isArray(threat.mitigation_steps) &&
+      threat.mitigation_steps.length > 0
+    );
+
+    if (criticalThreats.length > 0) {
+      issues.push(`${criticalThreats.length} high-risk threats require investigation`);
+      if (allowedActions.includes('investigate_threat')) {
+        if (autonomy === 'act' && riskThreshold === 'high') {
+          const result = await updateThreatsAndLinkedAlerts(criticalThreats.map(threat => threat.id), 'investigating');
+          if (result.updated > 0) actionsTaken.push(`moved ${result.updated} high-risk threats to investigating`);
+        } else if (autonomy === 'suggest') {
+          await escalateBotAction('security_bot', 'SecurityBot', `${criticalThreats.length} high-risk threats require investigation`, 'investigate_threat', 'high', {
+            threat_ids: criticalThreats.map(threat => threat.id),
+          });
+        }
+      }
+    }
+
+    if (safeMitigations.length > 0 && allowedActions.includes('mitigate_threat')) {
+      if (autonomy === 'act' && riskThreshold === 'high') {
+        const result = await updateThreatsAndLinkedAlerts(safeMitigations.map(threat => threat.id), 'mitigated');
+        if (result.updated > 0) actionsTaken.push(`mitigated ${result.updated} low-risk threats with known mitigation steps`);
+      } else if (autonomy === 'suggest') {
+        await escalateBotAction('security_bot', 'SecurityBot', `${safeMitigations.length} lower-risk threats are ready for mitigation`, 'mitigate_threat', 'medium', {
+          threat_ids: safeMitigations.map(threat => threat.id),
+        });
+      }
+    }
+
+    const lowNoiseAlerts = (openAlerts || []).filter(alert => ['low', 'medium'].includes(alert.severity) && !alert.threat_id);
+    if (lowNoiseAlerts.length > 0 && allowedActions.includes('acknowledge_alert')) {
+      if (autonomy === 'act' && riskThreshold !== 'low') {
+        const result = await acknowledgeAlertsByIds(lowNoiseAlerts.map(alert => alert.id));
+        if (result.acknowledged > 0) actionsTaken.push(`acknowledged ${result.acknowledged} low-risk standalone alerts`);
+      } else if (autonomy === 'suggest') {
+        await escalateBotAction('security_bot', 'SecurityBot', `${lowNoiseAlerts.length} lower-risk standalone alerts can be acknowledged`, 'acknowledge_alert', 'low', {
+          alert_ids: lowNoiseAlerts.map(alert => alert.id),
+        });
+      }
+    }
+
     if (duplicates.length > 0 && allowedActions.includes('cancel_duplicates')) {
       if (autonomy === 'act' && riskThreshold !== 'low') {
         const result = await cancelDuplicateAssignments(duplicates);
@@ -931,16 +1195,165 @@ export default function BotTeamPanel() {
     };
   }
 
+  async function runCodexBot() {
+    const config = botConfigs['codex_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'codex_bot'), org?.id);
+    if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
+
+    const aiSettings = await getAiSettings(org?.id);
+    const runtime = await getBotRuntimeSettings(org?.id, 'codex_bot', 'openai', aiSettings);
+    if (!runtime?.api_key) {
+      return { summary: 'CodexBot is waiting for an OpenAI API key', error: 'OpenAI is not configured for CodexBot' };
+    }
+
+    const { data: recentFailures } = await supabase
+      .from('bot_actions')
+      .select('bot_name, action_type, outcome_detail, created_at')
+      .eq('org_id', org.id)
+      .eq('outcome', 'failed')
+      .order('created_at', { ascending: false })
+      .limit(8);
+
+    const { data: activeThreats } = await supabase
+      .from('security_threats')
+      .select('id, title, severity, status')
+      .in('status', ['active', 'investigating'])
+      .order('created_at', { ascending: false })
+      .limit(8);
+
+    const snapshot = {
+      drivers_online: drivers.filter(driver => ['online', 'on_trip'].includes(driver.status)).length,
+      available_trips: trips.filter(trip => trip.status === 'available').length,
+      active_assignments: assignments.filter(assignment => !['completed', 'cancelled', 'rejected'].includes(assignment.status)).length,
+      pending_bot_actions: pendingActions.length,
+      recent_failures: (recentFailures || []).map(row => ({
+        bot_name: row.bot_name,
+        action_type: row.action_type,
+        detail: row.outcome_detail,
+      })),
+      active_threats: (activeThreats || []).map(threat => ({
+        id: threat.id,
+        title: threat.title,
+        severity: threat.severity,
+        status: threat.status,
+      })),
+    };
+
+    const prompt = `Operational snapshot:\n${JSON.stringify(snapshot, null, 2)}\n\nReturn strict JSON with:
+{
+  "summary": "short diagnosis",
+  "findings": ["..."],
+  "recommended_actions": [
+    {
+      "action_type": "refresh_data|check_health|restart_connections|flag_anomalies|auto_assign|alert_admin",
+      "reason": "why",
+      "risk_level": "low|medium|high",
+      "payload": {}
+    }
+  ]
+}
+Only recommend actions that match the allowed action list. Prefer the smallest safe action set.`;
+
+    const result = await requestAIStructuredPlan(runtime, {
+      systemPrompt: 'You are CodexBot, an operations fix and investigation worker. Diagnose issues, favor minimal safe actions, and respond with strict JSON only.',
+      userPrompt: prompt,
+    });
+
+    if (!result?.json) {
+      return { summary: 'CodexBot received an unreadable model response', error: 'AI response was not valid JSON' };
+    }
+
+    await logAIReview('codex_bot', 'CodexBot', prompt, result.text, result.model, 'codex_review');
+    const handled = await processBotRecommendations('codex_bot', 'CodexBot', config, result.json.recommended_actions || []);
+
+    return {
+      summary: `${result.json.summary || 'CodexBot completed a review'}${handled.executed.length ? ` · Executed: ${handled.executed.join(' | ')}` : ''}${handled.escalated.length ? ` · Escalated: ${handled.escalated.join(', ')}` : ''}`,
+      error: null,
+    };
+  }
+
+  async function runClaudeBot() {
+    const config = botConfigs['claude_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'claude_bot'), org?.id);
+    if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
+
+    const aiSettings = await getAiSettings(org?.id);
+    const runtime = await getBotRuntimeSettings(org?.id, 'claude_bot', 'anthropic', aiSettings);
+    if (!runtime?.api_key) {
+      return { summary: 'ClaudeBot is waiting for an Anthropic API key', error: 'Anthropic is not configured for ClaudeBot' };
+    }
+
+    const { data: threatRows } = await supabase
+      .from('security_threats')
+      .select('id, title, severity, status, confidence, mitigation_steps')
+      .in('status', ['active', 'investigating'])
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    const { data: pendingRows } = await supabase
+      .from('pending_bot_actions')
+      .select('id, bot_name, action_type, risk_level, trigger_reason')
+      .eq('org_id', org.id)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    const { data: alertRows } = await supabase
+      .from('security_alerts')
+      .select('id, title, severity, threat_id, acknowledged')
+      .eq('acknowledged', false)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    const prompt = `Security review snapshot:\n${JSON.stringify({
+      threats: threatRows || [],
+      pending_actions: pendingRows || [],
+      open_alerts: alertRows || [],
+    }, null, 2)}\n\nReturn strict JSON with:
+{
+  "summary": "short review",
+  "second_opinion": ["..."],
+  "recommended_actions": [
+    {
+      "action_type": "flag_anomalies|investigate_threat|mitigate_threat|acknowledge_alert|alert_admin",
+      "reason": "why",
+      "risk_level": "low|medium|high|critical",
+      "payload": {}
+    }
+  ]
+}
+Be conservative. Only recommend mitigation for low/medium threats that already have mitigation steps.`;
+
+    const result = await requestAIStructuredPlan(runtime, {
+      systemPrompt: 'You are ClaudeBot, a second-opinion reviewer focused on security risk, mitigation quality, and escalation discipline. Return strict JSON only.',
+      userPrompt: prompt,
+    });
+
+    if (!result?.json) {
+      return { summary: 'ClaudeBot received an unreadable model response', error: 'AI response was not valid JSON' };
+    }
+
+    await logAIReview('claude_bot', 'ClaudeBot', prompt, result.text, result.model, 'claude_review');
+    const handled = await processBotRecommendations('claude_bot', 'ClaudeBot', config, result.json.recommended_actions || []);
+
+    return {
+      summary: `${result.json.summary || 'ClaudeBot completed a review'}${handled.executed.length ? ` · Executed: ${handled.executed.join(' | ')}` : ''}${handled.escalated.length ? ` · Escalated: ${handled.escalated.join(', ')}` : ''}`,
+      error: null,
+    };
+  }
+
   const sentryBotState = useBot('sentry_bot', botIntervals.sentry_bot, botEnabled.sentry_bot && !globalKillSwitch, runSentryBot);
   const schedulerBotState = useBot('scheduler_bot', botIntervals.scheduler_bot, botEnabled.scheduler_bot && !globalKillSwitch, runSchedulerBot);
   const healthBotState = useBot('health_bot', botIntervals.health_bot, botEnabled.health_bot && !globalKillSwitch, runHealthBot);
   const securityBotState = useBot('security_bot', botIntervals.security_bot, botEnabled.security_bot && !globalKillSwitch, runSecurityBot);
+  const codexBotState = useBot('codex_bot', botIntervals.codex_bot, botEnabled.codex_bot && !globalKillSwitch, runCodexBot);
+  const claudeBotState = useBot('claude_bot', botIntervals.claude_bot, botEnabled.claude_bot && !globalKillSwitch, runClaudeBot);
 
   const botStates = {
     sentry_bot: sentryBotState,
     scheduler_bot: schedulerBotState,
     health_bot: healthBotState,
     security_bot: securityBotState,
+    codex_bot: codexBotState,
+    claude_bot: claudeBotState,
   };
 
   const activeBots = Object.values(botEnabled).filter(Boolean).length;
@@ -948,13 +1361,26 @@ export default function BotTeamPanel() {
 
   async function toggleAll(on) {
     if (globalKillSwitch && on) return;
-    setBotEnabled({ sentry_bot: on, scheduler_bot: on, health_bot: on, security_bot: on });
+    setBotEnabled({
+      sentry_bot: on,
+      scheduler_bot: on,
+      health_bot: on,
+      security_bot: on,
+      codex_bot: on,
+      claude_bot: on,
+    });
     await persistAiSettings({
       sentry_bot_enabled: on,
       scheduler_bot_enabled: on,
       health_bot_enabled: on,
       security_bot_enabled: on,
     });
+    for (const botId of ['codex_bot', 'claude_bot']) {
+      await saveConfig(botId, {
+        ...(botConfigs[botId] || getDefaultBotConfig(BOT_DEFS.find(bot => bot.id === botId), org?.id)),
+        kill_switch: !on,
+      });
+    }
   }
 
   return (
@@ -963,7 +1389,7 @@ export default function BotTeamPanel() {
         <div>
           <h2 className="text-base font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Bot Team</h2>
           <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>
-            {activeBots} of 4 bots running
+            {activeBots} of {BOT_DEFS.length} bots running
             {errorBots > 0 && <span style={{ color: '#ff4757' }}> · {errorBots} error{errorBots !== 1 ? 's' : ''}</span>}
             {pendingActions.length > 0 && <span style={{ color: '#f59e0b' }}> · {pendingActions.length} pending approval</span>}
           </p>
@@ -1049,11 +1475,17 @@ export default function BotTeamPanel() {
               def={def}
               botState={botStates[def.id]}
               enabled={botEnabled[def.id]}
-              onToggle={() => {
+              onToggle={async () => {
                 if (globalKillSwitch) return;
                 const next = !botEnabled[def.id];
                 setBotEnabled(prev => ({ ...prev, [def.id]: next }));
-                persistAiSettings({ [def.id + '_enabled']: next });
+                if (['sentry_bot', 'scheduler_bot', 'health_bot', 'security_bot'].includes(def.id)) {
+                  await persistAiSettings({ [def.id + '_enabled']: next });
+                }
+                await saveConfig(def.id, {
+                  ...(botConfigs[def.id] || getDefaultBotConfig(def, org?.id)),
+                  kill_switch: !next,
+                });
               }}
               intervalSecs={botIntervals[def.id]}
               onIntervalChange={v => setBotIntervals(prev => ({ ...prev, [def.id]: v }))}

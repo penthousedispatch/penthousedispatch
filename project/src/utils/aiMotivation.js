@@ -1,9 +1,100 @@
 import { supabase } from '../lib/supabase';
 
-async function getAiSettings(orgId) {
+export async function getAiSettings(orgId) {
   if (!orgId) return null;
   const { data } = await supabase.from('ai_settings').select('*').eq('org_id', orgId).maybeSingle();
   return data;
+}
+
+export async function getBotMemory(orgId, botId, memoryKey = 'provider_config') {
+  if (!orgId || !botId) return null;
+  const { data } = await supabase
+    .from('bot_memory')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('bot_id', botId)
+    .eq('memory_key', memoryKey)
+    .maybeSingle();
+  return data;
+}
+
+export async function saveBotMemory(orgId, botId, memoryKey = 'provider_config', memoryValue = {}) {
+  if (!orgId || !botId) return null;
+  const existing = await getBotMemory(orgId, botId, memoryKey);
+  const payload = {
+    org_id: orgId,
+    bot_id: botId,
+    memory_key: memoryKey,
+    memory_value: memoryValue,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existing?.id) {
+    const { data } = await supabase
+      .from('bot_memory')
+      .update(payload)
+      .eq('id', existing.id)
+      .select()
+      .maybeSingle();
+    return data;
+  }
+
+  const { data } = await supabase.from('bot_memory').insert(payload).select().maybeSingle();
+  return data;
+}
+
+export async function getBotRuntimeSettings(orgId, botId, preferredProvider, fallbackSettings = null) {
+  const memory = await getBotMemory(orgId, botId, 'provider_config');
+  const saved = memory?.memory_value || {};
+  const defaultModel =
+    preferredProvider === 'anthropic'
+      ? 'claude-3-5-sonnet-latest'
+      : preferredProvider === 'gemini'
+        ? 'gemini-1.5-flash'
+        : 'gpt-4o-mini';
+
+  if (saved.api_key) {
+    return {
+      ...fallbackSettings,
+      provider: preferredProvider,
+      api_key: saved.api_key,
+      model: saved.model || defaultModel,
+      temperature: saved.temperature ?? fallbackSettings?.temperature ?? 0.3,
+      max_tokens: saved.max_tokens ?? fallbackSettings?.max_tokens ?? 400,
+    };
+  }
+
+  if (fallbackSettings?.provider === preferredProvider && fallbackSettings?.api_key) {
+    return {
+      ...fallbackSettings,
+      provider: preferredProvider,
+      model: fallbackSettings.model || defaultModel,
+    };
+  }
+
+  return null;
+}
+
+function stripMarkdownFences(text = '') {
+  return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+}
+
+export function parseAIJson(text = '') {
+  const cleaned = stripMarkdownFences(text);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      try {
+        return JSON.parse(cleaned.slice(start, end + 1));
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
 }
 
 export async function callAI(settings, messages) {
@@ -26,6 +117,27 @@ export async function callAI(settings, messages) {
     headers = { 'Content-Type': 'application/json' };
     const combined = messages.map(m => m.content).join('\n');
     body = JSON.stringify({ contents: [{ parts: [{ text: combined }] }] });
+  } else if (settings.provider === 'anthropic') {
+    url = 'https://api.anthropic.com/v1/messages';
+    headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': settings.api_key,
+      'anthropic-version': '2023-06-01',
+    };
+    const system = messages.find(m => m.role === 'system')?.content || '';
+    const convo = messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content,
+      }));
+    body = JSON.stringify({
+      model: settings.model || 'claude-3-5-sonnet-latest',
+      system,
+      messages: convo,
+      max_tokens: parseInt(settings.max_tokens, 10) || 400,
+      temperature: parseFloat(settings.temperature) || 0.3,
+    });
   } else {
     return null;
   }
@@ -41,11 +153,31 @@ export async function callAI(settings, messages) {
     } else if (settings.provider === 'gemini') {
       const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
       return { text, tokens: 0, model: settings.model };
+    } else if (settings.provider === 'anthropic') {
+      const text = Array.isArray(json.content)
+        ? json.content.filter(part => part.type === 'text').map(part => part.text).join('\n').trim()
+        : '';
+      const tokens = (json.usage?.input_tokens || 0) + (json.usage?.output_tokens || 0);
+      return { text, tokens, model: json.model || settings.model };
     }
   } catch {
     return null;
   }
   return null;
+}
+
+export async function requestAIStructuredPlan(settings, { systemPrompt, userPrompt }) {
+  const result = await callAI(settings, [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ]);
+
+  if (!result?.text) return null;
+
+  return {
+    ...result,
+    json: parseAIJson(result.text),
+  };
 }
 
 async function logAICall({ orgId, driverId, driverName, contextType, prompt, response, model, tokens }) {
