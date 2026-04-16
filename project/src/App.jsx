@@ -2,6 +2,7 @@ import React from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { supabase } from './lib/supabase';
 import AuthPage from './pages/AuthPage';
 import DispatcherDashboard from './pages/dispatcher/DispatcherDashboard';
 import DriverApp from './pages/driver/DriverApp';
