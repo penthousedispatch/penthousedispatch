@@ -4,6 +4,7 @@ import { MapPin, Clock, User, CheckCircle, Navigation } from 'lucide-react';
 import { fbGet, fbListen } from '../../lib/firebase';
 import { getPCarSVG, calcBearing } from '../../components/map/PCarMarker';
 import AnimatedCar from '../../components/ui/AnimatedCar';
+import { loadCompanyBranding, DEFAULT_BRANDING } from '../../lib/companyBranding';
 
 const GMAPS_KEY = 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4';
 const DARK_STYLE = [
@@ -52,6 +53,7 @@ export default function RiderTracking() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [mapsLoaded, setMapsLoaded] = useState(mapsReady);
+  const [branding, setBranding] = useState(DEFAULT_BRANDING);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const driverMarkerRef = useRef(null);
@@ -128,6 +130,10 @@ export default function RiderTracking() {
       driverUnsub?.();
     };
   }, [riderKey]);
+
+  useEffect(() => {
+    loadCompanyBranding(tracking?.company_id || tracking?.companyId || null).then(setBranding);
+  }, [tracking?.company_id, tracking?.companyId]);
 
   useEffect(() => {
     if (loading || !mapRef.current) return;
@@ -244,6 +250,23 @@ export default function RiderTracking() {
             </div>
           </div>
         )}
+
+        <div className="flex items-center justify-between rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-2 min-w-0">
+            {branding.logo_url ? (
+              <img src={branding.logo_url} alt={branding.app_display_name} className="w-8 h-8 rounded-lg object-cover flex-shrink-0" />
+            ) : (
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${branding.brand_primary}20`, color: branding.brand_primary, fontWeight: 700 }}>
+                {branding.app_display_name.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs uppercase tracking-wide truncate" style={{ color: 'rgba(255,255,255,0.35)' }}>Dispatch Provider</p>
+              <p className="text-sm font-600 truncate" style={{ color: branding.brand_primary, fontWeight: 600 }}>{branding.app_display_name}</p>
+            </div>
+          </div>
+          <span className="text-xs px-2 py-1 rounded-full" style={{ background: `${branding.brand_primary}18`, color: branding.brand_primary }}>Rider View</span>
+        </div>
 
         <div className="space-y-2">
           {tracking?.puAddress && (

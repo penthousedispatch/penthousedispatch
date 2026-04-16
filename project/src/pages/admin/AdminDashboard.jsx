@@ -11,7 +11,6 @@ import { useApp } from '../../context/AppContext';
 import { useTheme } from '../../context/ThemeContext';
 import SupervisorBadge from '../../components/supervisor/SupervisorBadge';
 import AlertInboxButton from '../../components/ui/AlertInboxButton';
-import { BUILD_INFO } from '../../lib/buildInfo';
 
 const AdminCompanies = lazy(() => import('./AdminCompanies'));
 const AdminBilling = lazy(() => import('./AdminBilling'));
@@ -59,17 +58,17 @@ function ThemeToggle({ showLabel = false }) {
 const PRIMARY_TABS = [
   { path: '/admin/ops', label: 'Ops Center', icon: RadioTower },
   { path: '/', label: 'Dispatch', icon: LayoutGrid, exact: true },
+  { path: '/admin/companies', label: 'Companies', icon: Building2 },
+];
+
+const PLATFORM_TABS = [
   { path: '/admin/billing', label: 'Billing', icon: DollarSign },
   { path: '/admin/sentry', label: 'Sentry', icon: Settings },
   { path: '/admin/testing', label: 'Testing', icon: Cpu },
-  { path: '/admin/ai', label: 'AI Settings', icon: ShieldCheck },
   { path: '/admin/security', label: 'Security', icon: Shield },
-];
-
-const MORE_TABS = [
-  { path: '/admin/companies', label: 'Companies', icon: Building2 },
   { path: '/admin/payroll', label: 'Payroll', icon: Banknote },
   { path: '/admin/incentives', label: 'Incentives', icon: Zap },
+  { path: '/admin/ai', label: 'AI Settings', icon: ShieldCheck },
   { path: '/admin/sentry-guide', label: 'Setup Guide', icon: BookOpen },
   { path: '/admin/chatbot', label: 'Chat AI', icon: MessageSquare },
   { path: '/admin/auto-scheduler', label: 'Auto-Scheduler', icon: Zap },
@@ -77,15 +76,15 @@ const MORE_TABS = [
   { path: '/admin/settings', label: 'Ops Settings', icon: Settings },
   { path: '/admin/users', label: 'Users', icon: Users },
   { path: '/admin/logs', label: 'Logs', icon: FileText },
-  { path: '/admin/integrations', label: 'Legacy Sandbox', icon: Layers },
-  { path: '/admin/hub', label: 'Hub', icon: Globe },
+  { path: '/admin/integrations', label: 'Partner Sandbox', icon: Layers },
+  { path: '/admin/hub', label: 'Integration Hub', icon: Globe },
   { path: '/admin/api-keys', label: 'API Keys', icon: Key },
   { path: '/admin/permissions', label: 'Permissions', icon: ShieldCheck },
   { path: '/admin/tenants', label: 'Tenants', icon: ShieldCheck },
   { path: '/admin/sandbox', label: 'Test Mode', icon: FlaskConical },
 ];
 
-const ALL_TABS = [...PRIMARY_TABS, ...MORE_TABS];
+const ALL_TABS = [...PRIMARY_TABS, ...PLATFORM_TABS];
 
 function MoreMenu({ tabs, onClose }) {
   const location = useLocation();
@@ -181,7 +180,7 @@ function MobileDrawer({ open, onClose }) {
 }
 
 export default function AdminDashboard() {
-  const { profile, org, sentryStatus, drivers, trips } = useApp();
+  const { sentryStatus, drivers } = useApp();
   const [mobileNav, setMobileNav] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef(null);
@@ -196,22 +195,22 @@ export default function AdminDashboard() {
   }, [moreOpen]);
 
   const onlineDrivers = drivers.filter(d => d.status === 'online' || d.status === 'on_trip').length;
-  const isMoreActive = MORE_TABS.some(t => t.exact ? location.pathname === t.path : location.pathname.startsWith(t.path));
+  const isPlatformActive = PLATFORM_TABS.some(t => t.exact ? location.pathname === t.path : location.pathname.startsWith(t.path));
 
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d' }}>
-      <header className="flex items-center justify-between px-4 h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
-        <div className="flex items-center gap-3">
+      <header className="flex items-center justify-between gap-3 px-3 sm:px-4 h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
+        <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(201,168,76,0.25), rgba(201,168,76,0.08))', border: '1px solid rgba(201,168,76,0.4)' }}>
             <ShieldCheck className="w-4 h-4" style={{ color: '#c9a84c' }} />
           </div>
-          <div className="hidden sm:block">
-            <p style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700, letterSpacing: '0.5px' }}>PENTHOUSE ADMIN</p>
-            <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>Platform Control Center</p>
+          <div className="hidden sm:block min-w-0 max-w-[160px]">
+            <p className="truncate" style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700, letterSpacing: '0.5px' }}>PENTHOUSE ADMIN</p>
+            <p className="truncate" style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>Platform Control Center</p>
           </div>
         </div>
 
-        <nav className="hidden md:flex items-center gap-0.5">
+        <nav className="hidden lg:flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto scrollbar-hide justify-center">
           {PRIMARY_TABS.map(({ path, label, icon: Icon, exact }) => (
             <NavLink
               key={path}
@@ -235,52 +234,29 @@ export default function AdminDashboard() {
               onClick={() => setMoreOpen(p => !p)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap"
               style={{
-                color: isMoreActive ? '#c9a84c' : 'rgba(255,255,255,0.45)',
-                background: isMoreActive || moreOpen ? 'rgba(201,168,76,0.1)' : 'transparent',
+                color: isPlatformActive ? '#c9a84c' : 'rgba(255,255,255,0.45)',
+                background: isPlatformActive || moreOpen ? 'rgba(201,168,76,0.1)' : 'transparent',
                 border: '1px solid',
-                borderColor: isMoreActive || moreOpen ? 'rgba(201,168,76,0.2)' : 'transparent',
-                fontWeight: isMoreActive ? 600 : 400,
+                borderColor: isPlatformActive || moreOpen ? 'rgba(201,168,76,0.2)' : 'transparent',
+                fontWeight: isPlatformActive ? 600 : 400,
               }}
             >
-              More
+              Platform
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
             </button>
-            {moreOpen && <MoreMenu tabs={MORE_TABS} onClose={() => setMoreOpen(false)} />}
+            {moreOpen && <MoreMenu tabs={PLATFORM_TABS} onClose={() => setMoreOpen(false)} />}
           </div>
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <AlertInboxButton scope="admin" />
-          <div className="hidden lg:flex items-center gap-2 px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <span className="text-[10px] uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.4)' }}>Build</span>
-            <span className="text-[11px] font-semibold" style={{ color: '#c9a84c' }}>v{BUILD_INFO.version}</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'rgba(255,255,255,0.7)', background: 'rgba(255,255,255,0.06)' }}>
-              {BUILD_INFO.releaseTag}
-            </span>
+          <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.55)' }}>
+            <div className="status-dot online" />
+            <span>{onlineDrivers} online</span>
+            <div className="w-px h-3 mx-1" style={{ background: 'rgba(255,255,255,0.08)' }} />
+            <div className="w-2 h-2 rounded-full" style={{ background: sentryStatus.ok ? '#00e5a0' : '#ff4757' }} />
+            <span>Sentry {sentryStatus.ok ? 'live' : 'offline'}</span>
           </div>
-          <div className="hidden sm:flex items-center gap-3 text-xs">
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{ background: '#c9a84c', boxShadow: '0 0 6px rgba(201,168,76,0.5)' }} />
-              <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>ADMIN</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="status-dot online" />
-              <span style={{ color: 'rgba(255,255,255,0.5)' }}>{onlineDrivers} online</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{ background: sentryStatus.ok ? '#00e5a0' : '#ff4757', boxShadow: sentryStatus.ok ? '0 0 6px #00e5a0' : '0 0 6px #ff4757' }} />
-              <span style={{ color: 'rgba(255,255,255,0.5)' }}>Sentry {sentryStatus.ok ? 'Live' : 'Offline'}</span>
-            </div>
-          </div>
-          <Link
-            to="/admin/ai"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
-            title="Open AI Settings"
-            style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', fontWeight: 600, textDecoration: 'none' }}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            AI Settings
-          </Link>
           <Link
             to="/driver"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"

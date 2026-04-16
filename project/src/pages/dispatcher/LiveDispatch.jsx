@@ -20,7 +20,7 @@ import DispatchWalkthrough from '../../components/dispatch/DispatchWalkthrough';
 import ChatPanel from '../../components/chat/ChatPanel';
 
 export default function LiveDispatch() {
-  const { drivers, trips, assignments, loadDrivers, loadTrips, loadAssignments, refreshTripsFromSentry, sentryStatus } = useApp();
+  const { profile, company, drivers, trips, assignments, loadDrivers, loadTrips, loadAssignments, refreshTripsFromSentry, sentryStatus } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const [take5Driver, setTake5Driver] = useState(null);
   const [showAddDriver, setShowAddDriver] = useState(false);
@@ -30,6 +30,7 @@ export default function LiveDispatch() {
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [search, setSearch] = useState('');
   const [assigning, setAssigning] = useState(null);
+  const [companyTripView, setCompanyTripView] = useState('queue');
 
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -39,6 +40,9 @@ export default function LiveDispatch() {
   const [showDeleteSingleModal, setShowDeleteSingleModal] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteToast, setDeleteToast] = useState(null);
+
+  const isCompanyUser = profile?.role === 'company';
+  const canManageFleet = isCompanyUser;
 
   const assignedTripIds = new Set(assignments.filter(a => a.status !== 'rejected').map(a => a.trip_id));
 
@@ -68,6 +72,7 @@ export default function LiveDispatch() {
     const { error } = await supabase.from('trip_assignments').insert({
       trip_id: trip.sentry_trip_id,
       driver_id: driver.id,
+      company_id: driver.company_id || company?.id || null,
       driver_name: driver.full_name,
       status: 'pending',
       trip_processing_status_id: 0,
@@ -79,7 +84,14 @@ export default function LiveDispatch() {
     });
 
     if (!error) {
-      await supabase.from('marketplace_trips').update({ status: 'assigned', taken_by: driver.id }).eq('sentry_trip_id', trip.sentry_trip_id);
+      await supabase
+        .from('marketplace_trips')
+        .update({
+          status: 'assigned',
+          taken_by: driver.id,
+          company_id: driver.company_id || company?.id || null,
+        })
+        .eq('sentry_trip_id', trip.sentry_trip_id);
 
       await fbSet(`driver_notifications/${driver.id}`, {
         type: 'new_trip',
@@ -136,6 +148,17 @@ export default function LiveDispatch() {
     }
     return { ...t, score };
   }).sort((a, b) => b.score - a.score);
+
+  const activeAssignments = assignments.filter(a => !['completed', 'cancelled', 'rejected'].includes(a.status));
+  const visibleAssignments = activeAssignments.filter(a => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (a.pu_address || '').toLowerCase().includes(q) ||
+           (a.do_address || '').toLowerCase().includes(q) ||
+           (a.driver_name || '').toLowerCase().includes(q) ||
+           (a.trip_id || '').toLowerCase().includes(q);
+  });
+  const companyOpenTrips = scoredTrips.filter(trip => !assignedTripIds.has(trip.sentry_trip_id));
 
   function showToast(msg, type = 'success') {
     setDeleteToast({ msg, type });
@@ -272,29 +295,33 @@ export default function LiveDispatch() {
             <div className="flex gap-1">
               {!selectMode ? (
                 <>
-                  <button onClick={() => setShowCSVImport(true)} className="btn-ghost px-2 py-1 text-xs flex items-center gap-1">
-                    <Upload className="w-3 h-3" /> CSV
-                  </button>
-                  <button onClick={() => setShowAddDriver(true)} className="btn-ghost px-2 py-1 text-xs flex items-center gap-1">
-                    <Plus className="w-3 h-3" /> Add
-                  </button>
-                  {drivers.length > 0 && (
+                  {canManageFleet && (
                     <>
-                      <button
-                        onClick={() => setSelectMode(true)}
-                        className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
-                        title="Select drivers to delete"
-                      >
-                        <CheckSquare className="w-3 h-3" />
+                      <button onClick={() => setShowCSVImport(true)} className="btn-ghost px-2 py-1 text-xs flex items-center gap-1">
+                        <Upload className="w-3 h-3" /> CSV
                       </button>
-                      <button
-                        onClick={() => setShowDeleteAllModal(true)}
-                        className="px-2 py-1 rounded-lg text-xs flex items-center gap-1 transition-all"
-                        style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: 'rgba(255,71,87,0.7)' }}
-                        title="Delete all drivers"
-                      >
-                        <Trash2 className="w-3 h-3" />
+                      <button onClick={() => setShowAddDriver(true)} className="btn-ghost px-2 py-1 text-xs flex items-center gap-1">
+                        <Plus className="w-3 h-3" /> Add
                       </button>
+                      {drivers.length > 0 && (
+                        <>
+                          <button
+                            onClick={() => setSelectMode(true)}
+                            className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
+                            title="Select drivers to delete"
+                          >
+                            <CheckSquare className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => setShowDeleteAllModal(true)}
+                            className="px-2 py-1 rounded-lg text-xs flex items-center gap-1 transition-all"
+                            style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: 'rgba(255,71,87,0.7)' }}
+                            title="Delete all drivers"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </>
+                      )}
                     </>
                   )}
                 </>
@@ -333,8 +360,14 @@ export default function LiveDispatch() {
               <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.1)' }}>
                 <Users className="w-6 h-6" style={{ color: '#c9a84c' }} />
               </div>
-              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>No drivers yet. Import CSV or add manually.</p>
-              <button onClick={() => setShowCSVImport(true)} className="btn-gold text-xs px-4 py-2">Import CSV</button>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                {canManageFleet
+                  ? 'No drivers yet. Import CSV or add manually.'
+                  : 'No company drivers are loaded yet. Drivers are managed inside each company account.'}
+              </p>
+              {canManageFleet && (
+                <button onClick={() => setShowCSVImport(true)} className="btn-gold text-xs px-4 py-2">Import CSV</button>
+              )}
             </div>
           ) : (
             drivers.map(driver => (
@@ -389,9 +422,12 @@ export default function LiveDispatch() {
             assignments={assignments}
             availableTrips={scoredTrips}
             onClose={() => setSelectedDriver(null)}
-            onDriverUpdated={async () => {
+            onDriverUpdated={async (updatedDriver) => {
+              if (updatedDriver) {
+                setSelectedDriver(updatedDriver);
+              }
               const refreshedDrivers = await loadDrivers();
-              const refreshedDriver = refreshedDrivers.find(driver => driver.id === selectedDriver.id);
+              const refreshedDriver = refreshedDrivers.find(driver => driver.id === (updatedDriver?.id || selectedDriver.id));
               if (refreshedDriver) {
                 setSelectedDriver(refreshedDriver);
               }
@@ -407,28 +443,64 @@ export default function LiveDispatch() {
         <div className="p-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>
-              Trips — {availableTrips.length}
+              {isCompanyUser
+                ? companyTripView === 'queue'
+                  ? `Open Trips — ${companyOpenTrips.length}`
+                  : `Active Trips — ${visibleAssignments.length}`
+                : `Trips — ${availableTrips.length}`}
             </p>
             <div className="flex gap-1.5">
-              <button
-                onClick={() => setShowWalkthrough(true)}
-                className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
-                title="Test dispatch walkthrough"
-              >
-                <BookOpen className="w-3 h-3" /> Test
-              </button>
-              <button
-                onClick={handleRefresh}
-                disabled={refreshing}
-                className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
-              >
-                <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
+              {!isCompanyUser && (
+                <>
+                  <button
+                    onClick={() => setShowWalkthrough(true)}
+                    className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
+                    title="Test dispatch walkthrough"
+                  >
+                    <BookOpen className="w-3 h-3" /> Test
+                  </button>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
+                </>
+              )}
             </div>
           </div>
+          {isCompanyUser && (
+            <div className="flex gap-1 p-1 rounded-lg mb-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              {[
+                { key: 'queue', label: 'Open Queue' },
+                { key: 'active', label: 'Assigned' },
+              ].map(option => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setCompanyTripView(option.key)}
+                  className="flex-1 px-3 py-1.5 rounded-lg text-xs transition-all"
+                  style={{
+                    background: companyTripView === option.key ? 'rgba(201,168,76,0.15)' : 'transparent',
+                    color: companyTripView === option.key ? '#c9a84c' : 'rgba(255,255,255,0.45)',
+                    fontWeight: companyTripView === option.key ? 600 : 400,
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
           <input
-            placeholder="Search trips..."
+            placeholder={
+              isCompanyUser
+                ? companyTripView === 'queue'
+                  ? 'Search open trips...'
+                  : 'Search active trips...'
+                : 'Search trips...'
+            }
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full text-xs py-1.5"
@@ -437,7 +509,72 @@ export default function LiveDispatch() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-          {scoredTrips.length === 0 ? (
+          {isCompanyUser ? (
+            companyTripView === 'queue' ? (
+              companyOpenTrips.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.1)' }}>
+                    <Navigation className="w-6 h-6" style={{ color: '#c9a84c' }} />
+                  </div>
+                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                    No open trips are available for dispatch right now.
+                  </p>
+                  <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.28)' }}>
+                    Imported provider trips will appear here for your company dispatch team to assign.
+                  </p>
+                </div>
+              ) : (
+                companyOpenTrips.map(trip => (
+                  <TripCard
+                    key={trip.id}
+                    trip={trip}
+                    selected={selectedTrip?.id === trip.id}
+                    onClick={() => setSelectedTrip(prev => prev?.id === trip.id ? null : trip)}
+                    onAssign={selectedDriver ? () => assignTrip(trip, selectedDriver) : null}
+                    assigning={assigning === trip.sentry_trip_id}
+                    assigned={assignedTripIds.has(trip.sentry_trip_id)}
+                  />
+                ))
+              )
+            ) : visibleAssignments.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.1)' }}>
+                  <Navigation className="w-6 h-6" style={{ color: '#c9a84c' }} />
+                </div>
+                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                  {company?.company_name
+                    ? `No active trips for ${company.company_name} right now.`
+                    : 'No active trips for this company right now.'}
+                </p>
+              </div>
+            ) : (
+              visibleAssignments.map(assignment => (
+                <div
+                  key={assignment.id}
+                  className="rounded-xl p-3"
+                  style={{
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <p className="text-xs font-700 uppercase tracking-wider" style={{ color: '#c9a84c', fontWeight: 700 }}>
+                      {assignment.status || 'assigned'}
+                    </p>
+                    <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                      {assignment.driver_name || assignment.drivers?.full_name || 'Unassigned'}
+                    </p>
+                  </div>
+                  <p className="text-sm" style={{ color: '#e5e7eb' }}>{assignment.pu_address || 'Unknown pickup'}</p>
+                  <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>{assignment.do_address || 'Unknown dropoff'}</p>
+                  <div className="flex items-center justify-between mt-3 text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                    <span>{assignment.pu_time || 'No pickup time'}</span>
+                    <span>${parseFloat(assignment.delivery_price || 0).toFixed(2)}</span>
+                  </div>
+                </div>
+              ))
+            )
+          ) : scoredTrips.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">
               <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.1)' }}>
                 <Navigation className="w-6 h-6" style={{ color: '#c9a84c' }} />
@@ -474,15 +611,15 @@ export default function LiveDispatch() {
         />
       )}
 
-      {showAddDriver && (
+      {canManageFleet && showAddDriver && (
         <AddDriverModal onClose={() => { setShowAddDriver(false); loadDrivers(); }} />
       )}
 
-      {showCSVImport && (
+      {canManageFleet && showCSVImport && (
         <CSVImportModal onClose={() => { setShowCSVImport(false); loadDrivers(); }} />
       )}
 
-      {showDeleteAllModal && (
+      {canManageFleet && showDeleteAllModal && (
         <DeleteConfirmModal
           title="Delete All Drivers"
           subtitle={`This will permanently remove all ${drivers.length} drivers`}
@@ -496,7 +633,7 @@ export default function LiveDispatch() {
         />
       )}
 
-      {showDeleteSelectedModal && (
+      {canManageFleet && showDeleteSelectedModal && (
         <DeleteConfirmModal
           title={`Delete ${selectedIds.size} Driver${selectedIds.size !== 1 ? 's' : ''}`}
           subtitle="Selected drivers will be permanently removed"
@@ -509,7 +646,7 @@ export default function LiveDispatch() {
         />
       )}
 
-      {showDeleteSingleModal && (
+      {canManageFleet && showDeleteSingleModal && (
         <DeleteConfirmModal
           title={`Delete ${showDeleteSingleModal.full_name}`}
           subtitle="This driver will be permanently removed"
@@ -522,7 +659,7 @@ export default function LiveDispatch() {
         />
       )}
 
-      {showWalkthrough && (
+      {!isCompanyUser && showWalkthrough && (
         <DispatchWalkthrough
           onClose={() => setShowWalkthrough(false)}
           onTriggerAction={(action) => {

@@ -162,6 +162,7 @@ export default function TestModeSandbox() {
       const { error: tripErr } = await supabase.from('trip_assignments').insert({
         trip_id: `TST-${Date.now()}-${scenarioLabel}-${i}`,
         driver_id: preassigned ? driverId : null,
+        company_id: companyId,
         driver_name: preassigned ? (driver?.full_name || 'Test Driver') : '',
         status: i < 3 ? 'completed' : i === 3 ? 'in_progress' : 'pending',
         pu_address: tt.pu,
@@ -195,47 +196,18 @@ export default function TestModeSandbox() {
 
     try {
       addLog('Starting test mode initialization...', 'info');
-
-      addLog('Setting up test organization...', 'info');
-      let testOrg;
-      const { data: existingOrg } = await supabase
-        .from('organizations')
-        .select('id')
-        .eq('slug', 'test-sandbox-penthouse')
+      const { data: existingMembership } = await supabase
+        .from('org_members')
+        .select('org_id, organizations(id, name)')
+        .eq('user_id', user.id)
+        .limit(1)
         .maybeSingle();
 
-      if (existingOrg) {
-        testOrg = existingOrg;
-        addLog('Test org already exists — reusing', 'warn');
-      } else {
-        const { data: newOrg, error: orgErr } = await supabase
-          .from('organizations')
-          .insert({ name: 'Penthouse Test Co', slug: 'test-sandbox-penthouse', plan: 'pro' })
-          .select()
-          .maybeSingle();
-        if (orgErr) throw new Error(`Org creation failed: ${orgErr.message}`);
-        testOrg = newOrg;
-        addLog('Test organization created', 'success');
-      }
-
+      let testOrg = existingMembership?.organizations || (existingMembership?.org_id ? { id: existingMembership.org_id } : null);
       if (testOrg?.id) {
-        const { data: existingMember } = await supabase
-          .from('org_members')
-          .select('id')
-          .eq('org_id', testOrg.id)
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-        if (!existingMember) {
-          const { error: memberErr } = await supabase
-            .from('org_members')
-            .insert({ org_id: testOrg.id, user_id: user.id, role: 'admin' });
-          if (memberErr) {
-            addLog(`Org member insert warning: ${memberErr.message}`, 'warn');
-          } else {
-            addLog('User linked to test org', 'success');
-          }
-        }
+        addLog(`Using your existing organization for scheduler helpers: ${testOrg.name || testOrg.id}`, 'info');
+      } else {
+        addLog('No dispatch organization is linked to this admin yet. Sandbox will seed company/drivers/trips without org-level helpers.', 'warn');
       }
 
       addLog('Setting up test company...', 'info');
@@ -416,6 +388,12 @@ export default function TestModeSandbox() {
 
     const { data: companyDrivers } = await supabase.from('drivers').select('id').eq('company_id', session.test_company_id);
     const driverIds = (companyDrivers || []).map(d => d.id).filter(Boolean);
+    if (driverIds.length === 0) {
+      addLog('No sandbox drivers were found for this company. Activate test mode first so drivers are seeded before loading a scenario.', 'error');
+      setSeeding(false);
+      return;
+    }
+
     const count = await seedTripsForTemplates(session.test_company_id, driverIds, scenario.templates, key);
     addLog(`Scenario ready: ${count} trips seeded for ${scenario.label}`, count > 0 ? 'success' : 'warn');
     await loadTestData(session.test_company_id);
@@ -514,6 +492,10 @@ export default function TestModeSandbox() {
           addLog(`Failed to assign ${trip.sentry_trip_id?.slice(-8)}: ${error.message}`, 'error');
         }
       }
+    }
+
+    if ((scheduleResult.results || []).length === 0) {
+      addLog('Scheduler returned no assignment plans. This usually means the current trip windows, distances, or driver availability do not produce a valid match.', 'warn');
     }
 
     addLog(

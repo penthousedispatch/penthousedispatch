@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle, RefreshCw, ShieldAlert, Webhook, ServerCog,
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { BUILD_INFO } from '../../lib/buildInfo';
+import { APP_AUDIT_CHECKLIST } from '../../lib/appAuditChecklist';
 
 function StatCard({ icon: Icon, label, value, tone = 'neutral', subtext }) {
   const tones = {
@@ -25,9 +26,11 @@ function StatCard({ icon: Icon, label, value, tone = 'neutral', subtext }) {
 }
 
 export default function AdminOpsCenter() {
-  const { sentryStatus, sentryConfig } = useApp();
+  const { sentryStatus, sentryConfig, drivers } = useApp();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
+    companyCount: 0,
+    platformUsers: 0,
     webhookFailures: 0,
     syncFailures: 0,
     securityAlerts: 0,
@@ -38,7 +41,9 @@ export default function AdminOpsCenter() {
 
   async function loadStats() {
     setLoading(true);
-    const [webhookRes, syncRes, securityRes, sandboxRes] = await Promise.all([
+    const [companyRes, profileRes, webhookRes, syncRes, securityRes, sandboxRes] = await Promise.all([
+      supabase.from('companies').select('id', { count: 'exact', head: true }),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }),
       supabase
         .from('webhook_logs')
         .select('id, received_at, processed', { count: 'exact' })
@@ -65,6 +70,8 @@ export default function AdminOpsCenter() {
     ]);
 
     setStats({
+      companyCount: companyRes.count || 0,
+      platformUsers: profileRes.count || 0,
       webhookFailures: webhookRes.count || 0,
       syncFailures: syncRes.count || 0,
       securityAlerts: securityRes.count || 0,
@@ -82,6 +89,7 @@ export default function AdminOpsCenter() {
   const webhookTone = stats.webhookFailures === 0 ? 'good' : 'bad';
   const syncTone = stats.syncFailures === 0 ? 'good' : 'warn';
   const securityTone = stats.securityAlerts === 0 ? 'good' : 'warn';
+  const onlineDrivers = drivers.filter(driver => ['online', 'on_trip'].includes(driver.status)).length;
 
   return (
     <div className="h-full overflow-y-auto p-6" style={{ color: '#e5e7eb' }}>
@@ -112,6 +120,8 @@ export default function AdminOpsCenter() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <StatCard icon={Activity} label="Subscriber Companies" value={String(stats.companyCount)} tone="neutral" subtext="Active companies managed on the platform" />
+          <StatCard icon={RadioTower} label="Online Drivers" value={String(onlineDrivers)} tone={onlineDrivers > 0 ? 'good' : 'neutral'} subtext={`${stats.platformUsers} total platform users`} />
           <StatCard icon={RadioTower} label="Sentry API" value={sentryStatus.ok ? 'Live' : 'Offline'} tone={sentryStatus.ok ? 'good' : 'bad'} subtext={sentryConfig?.base_url || 'No base URL saved'} />
           <StatCard icon={Webhook} label="Webhook Failures" value={String(stats.webhookFailures)} tone={webhookTone} subtext={stats.lastWebhookAt ? `Latest at ${new Date(stats.lastWebhookAt).toLocaleString()}` : 'No failed webhook deliveries logged'} />
           <StatCard icon={ServerCog} label="Sync Failures" value={String(stats.syncFailures)} tone={syncTone} subtext={stats.lastSyncError || 'No recent Sentry sync errors'} />
@@ -141,6 +151,30 @@ export default function AdminOpsCenter() {
               <li>If webhook tests fail with 401, make sure the saved bearer secret matches the header sent by Sentry.</li>
               <li>Use sandbox mode before live routing changes so driver, map, billing, and AI behavior can be verified safely.</li>
             </ul>
+          </div>
+        </div>
+
+        <div className="rounded-2xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="flex items-center gap-2 mb-4">
+            <CheckCircle className="w-4 h-4" style={{ color: '#c9a84c' }} />
+            <p className="text-sm font-600" style={{ fontWeight: 600 }}>Platform Audit Checklist</p>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {APP_AUDIT_CHECKLIST.map(section => (
+              <div key={section.section} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <p className="text-xs font-700 uppercase tracking-wider mb-3" style={{ color: '#c9a84c', fontWeight: 700 }}>
+                  {section.section}
+                </p>
+                <ul className="space-y-2 text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                  {section.checks.map(check => (
+                    <li key={check} className="flex items-start gap-2">
+                      <span style={{ color: '#c9a84c' }}>•</span>
+                      <span>{check}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         </div>
       </div>

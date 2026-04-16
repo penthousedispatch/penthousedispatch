@@ -3,14 +3,14 @@ import { ShieldCheck, XCircle, CheckCircle2 } from 'lucide-react';
 
 const ROLES = ['admin', 'dispatcher', 'company', 'driver'];
 const RULES = [
-  ['Live Dispatch', { admin: true, dispatcher: true, company: false, driver: false }],
+  ['Live Dispatch', { admin: true, dispatcher: true, company: true, driver: false }],
   ['Billing', { admin: true, dispatcher: false, company: false, driver: false }],
   ['Sentry / Integrations', { admin: true, dispatcher: true, company: false, driver: false }],
   ['AI Settings', { admin: true, dispatcher: false, company: false, driver: false }],
   ['Security / MITRE', { admin: true, dispatcher: false, company: false, driver: false }],
   ['Users & Companies', { admin: true, dispatcher: false, company: false, driver: false }],
   ['Test Mode / Sandbox', { admin: true, dispatcher: true, company: false, driver: false }],
-  ['Driver App', { admin: true, dispatcher: true, company: false, driver: true }],
+  ['Driver App', { admin: true, dispatcher: true, company: true, driver: true }],
   ['Company Onboarding', { admin: false, dispatcher: false, company: true, driver: false }],
   ['Community / Leaderboard', { admin: false, dispatcher: false, company: false, driver: true }],
 ];

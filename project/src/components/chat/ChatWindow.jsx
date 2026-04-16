@@ -28,6 +28,10 @@ export default function ChatWindow({ thread, profile, onClose }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [thread.id]);
+
   async function sendMessage(body) {
     if (!body.trim()) return;
     setSending(true);
@@ -102,6 +106,7 @@ export default function ChatWindow({ thread, profile, onClose }) {
         {QUICK_REPLIES.map(qr => (
           <button
             key={qr}
+            type="button"
             onClick={() => sendMessage(qr)}
             className="px-2 py-0.5 rounded-full text-xs transition-all"
             style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: 'rgba(201,168,76,0.8)', fontSize: 10 }}
@@ -122,6 +127,7 @@ export default function ChatWindow({ thread, profile, onClose }) {
           style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '7px 10px', color: '#e5e7eb', outline: 'none', fontSize: 12 }}
         />
         <button
+          type="button"
           onClick={() => sendMessage(text)}
           disabled={!text.trim() || sending}
           className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"

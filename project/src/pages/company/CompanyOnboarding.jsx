@@ -220,7 +220,7 @@ export default function CompanyOnboarding() {
       agreement_text: AGREEMENT_TEXT,
     });
 
-    await supabase.from('profiles').update({ role: 'company' }).eq('id', user.id);
+    await supabase.from('profiles').update({ role: 'company', company_id: comp.id }).eq('id', user.id);
 
     setCompany(comp);
     setSaving(false);

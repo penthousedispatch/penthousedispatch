@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { handleSupabaseError } from '../../utils/errorHandler';
+import { loadCompanyBranding, DEFAULT_BRANDING } from '../../lib/companyBranding';
 
 function normalize(value) {
   return String(value || '').trim().toLowerCase();
@@ -12,10 +13,63 @@ export default function DriverLogin({ onLogin }) {
   const [driver, setDriver] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [branding, setBranding] = useState(DEFAULT_BRANDING);
 
   const credentialHint = useMemo(() => (
-    'Use your assigned driver username and password. If your account has not been customized yet, your TLC number works as both username and password.'
+    'Use your assigned driver email, username, or TLC number with your driver password. If your account has not been customized yet, your TLC number can still work for both fields.'
   ), []);
+
+  React.useEffect(() => {
+    loadCompanyBranding().then(setBranding);
+  }, []);
+
+  async function trySandboxCredentialLogin(cleanUsername, cleanPassword) {
+    const { data: sentryCfg, error: sentryErr } = await supabase
+      .from('sentry_config')
+      .select('driver_sandbox_username, driver_sandbox_password')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (sentryErr || !sentryCfg?.driver_sandbox_username || !sentryCfg?.driver_sandbox_password) {
+      return null;
+    }
+
+    const sandboxUsernameMatch = normalize(sentryCfg.driver_sandbox_username) === cleanUsername;
+    const sandboxPasswordMatch = String(sentryCfg.driver_sandbox_password || '').trim() === cleanPassword;
+
+    if (!sandboxUsernameMatch || !sandboxPasswordMatch) {
+      return null;
+    }
+
+    const { data: session, error: sessionErr } = await supabase
+      .from('test_sandbox_sessions')
+      .select('test_company_id')
+      .eq('is_active', true)
+      .order('reset_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (sessionErr || !session?.test_company_id) {
+      return null;
+    }
+
+    const { data: sandboxDriver, error: driverErr } = await supabase
+      .from('drivers')
+      .select('id, full_name, photo_data, tlc_number, login_username, login_password, email, is_active, status')
+      .eq('company_id', session.test_company_id)
+      .eq('is_active', true)
+      .order('status', { ascending: true })
+      .order('full_name', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (driverErr || !sandboxDriver) {
+      return null;
+    }
+
+    return sandboxDriver;
+  }
 
   async function handleStart(e) {
     e.preventDefault();
@@ -34,7 +88,7 @@ export default function DriverLogin({ onLogin }) {
 
     const { data, error: queryError } = await supabase
       .from('drivers')
-      .select('id, full_name, photo_data, tlc_number, login_username, login_password, is_active, status')
+      .select('id, full_name, photo_data, tlc_number, login_username, login_password, email, is_active, status')
       .eq('is_active', true)
       .order('full_name');
 
@@ -46,6 +100,7 @@ export default function DriverLogin({ onLogin }) {
 
     const matchedDriver = (data || []).find(row => {
       const aliases = [
+        row.email,
         row.login_username,
         row.tlc_number,
         row.full_name,
@@ -58,14 +113,16 @@ export default function DriverLogin({ onLogin }) {
       return usernameMatch && passwordMatch;
     });
 
-    if (!matchedDriver) {
-      setError('Driver username or password is incorrect.');
+    const finalDriver = matchedDriver || await trySandboxCredentialLogin(cleanUsername, cleanPassword);
+
+    if (!finalDriver) {
+      setError('Driver email, username, TLC number, or password is incorrect.');
       setLoading(false);
       return;
     }
 
-    setDriver(matchedDriver);
-    onLogin({ id: matchedDriver.id, name: matchedDriver.full_name, photo: matchedDriver.photo_data });
+    setDriver(finalDriver);
+    onLogin({ id: finalDriver.id, name: finalDriver.full_name, photo: finalDriver.photo_data });
     setLoading(false);
   }
 
@@ -75,12 +132,16 @@ export default function DriverLogin({ onLogin }) {
         <div className="flex flex-col items-center gap-3">
           <div
             className="w-20 h-20 rounded-3xl flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, rgba(201,168,76,0.2), rgba(201,168,76,0.05))', border: '2px solid rgba(201,168,76,0.3)' }}
+            style={{ background: `linear-gradient(135deg, ${branding.brand_primary}33, ${branding.brand_primary}12)`, border: `2px solid ${branding.brand_primary}55` }}
           >
-            <span style={{ color: '#c9a84c', fontSize: 42, fontWeight: 800 }}>P</span>
+            {branding.logo_url ? (
+              <img src={branding.logo_url} alt={branding.app_display_name} className="w-14 h-14 rounded-2xl object-cover" />
+            ) : (
+              <span style={{ color: branding.brand_primary, fontSize: 42, fontWeight: 800 }}>{branding.app_display_name.charAt(0).toUpperCase()}</span>
+            )}
           </div>
           <div className="text-center">
-            <p style={{ color: '#c9a84c', fontSize: 22, fontWeight: 800, letterSpacing: '0.5px' }}>PENTHOUSE</p>
+            <p style={{ color: branding.brand_primary, fontSize: 22, fontWeight: 800, letterSpacing: '0.5px' }}>{branding.app_display_name}</p>
             <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>Driver App</p>
           </div>
         </div>
@@ -88,7 +149,7 @@ export default function DriverLogin({ onLogin }) {
         <form onSubmit={handleStart} className="w-full flex flex-col gap-4">
           <input
             type="text"
-            placeholder="Driver username or TLC number"
+            placeholder="Driver email, username, or TLC number"
             value={username}
             onChange={e => setUsername(e.target.value)}
             autoFocus
@@ -134,11 +195,11 @@ export default function DriverLogin({ onLogin }) {
             disabled={loading}
             className="w-full py-5 rounded-2xl text-xl font-800 flex items-center justify-center gap-2 transition-all"
             style={{
-              background: 'linear-gradient(135deg, #c9a84c, #b8983e)',
+              background: `linear-gradient(135deg, ${branding.brand_primary}, ${branding.brand_accent})`,
               color: '#07090d',
               fontWeight: 800,
               fontSize: 18,
-              boxShadow: '0 8px 32px rgba(201,168,76,0.35)',
+              boxShadow: `0 8px 32px ${branding.brand_primary}55`,
               opacity: loading ? 0.7 : 1,
             }}
           >

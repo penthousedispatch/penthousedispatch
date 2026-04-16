@@ -79,13 +79,27 @@ export function AppProvider({ children }) {
       setProfile(prof);
 
       if (prof?.role === 'company') {
-        const { data: comp, error: compErr } = await supabase.from('companies').select('*').eq('owner_user_id', u.id).maybeSingle();
+        let comp = null;
+        let compErr = null;
+
+        if (prof.company_id) {
+          const result = await supabase.from('companies').select('*').eq('id', prof.company_id).maybeSingle();
+          comp = result.data;
+          compErr = result.error;
+        }
+
+        if (!comp && !compErr) {
+          const result = await supabase.from('companies').select('*').eq('owner_user_id', u.id).maybeSingle();
+          comp = result.data;
+          compErr = result.error;
+        }
+
         if (compErr) logFailure('loadUserData:companies', compErr);
         setCompany(comp);
         if (comp) {
-          await loadDrivers();
-          await loadTrips();
-          await loadAssignments();
+          await loadDrivers({ companyId: comp.id });
+          await loadTrips({ companyId: comp.id });
+          await loadAssignments({ companyId: comp.id });
         }
       } else {
         const { data: membership, error: memErr } = await supabase.from('org_members').select('*, organizations(*)').eq('user_id', u.id).maybeSingle();
@@ -130,6 +144,7 @@ export function AppProvider({ children }) {
       if (!autoPullRef.current) {
         autoPullRef.current = setInterval(async () => {
           if (!sentryApi.enabled) return;
+          const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
 
           function mapTrip(t) {
             return {
@@ -149,6 +164,7 @@ export function AppProvider({ children }) {
               do_time: t.scheduled_dropoff_time || t.do_time || '',
               delivery_price: String(t.total_amount || t.delivery_price || ''),
               status: 'available',
+              company_id: scopedCompanyId,
               loaded_at: new Date().toISOString(),
             };
           }
@@ -163,7 +179,13 @@ export function AppProvider({ children }) {
                 const mapped = rawTrips.map(mapTrip);
                 const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
                 if (!error) {
-                  const { data } = await supabase.from('marketplace_trips').select('*').eq('status', 'available').order('loaded_at', { ascending: false });
+                  let refreshQuery = supabase
+                    .from('marketplace_trips')
+                    .select('*')
+                    .eq('status', 'available')
+                    .order('loaded_at', { ascending: false });
+                  if (scopedCompanyId) refreshQuery = refreshQuery.eq('company_id', scopedCompanyId);
+                  const { data } = await refreshQuery;
                   if (data) { setTrips(data); newTripsArrived = true; }
                 }
               }
@@ -206,8 +228,11 @@ export function AppProvider({ children }) {
     }
   }
 
-  async function loadDrivers() {
-    const { data, error } = await supabase.from('drivers').select('*').eq('is_active', true).order('full_name');
+  async function loadDrivers(options = {}) {
+    const scopedCompanyId = options.companyId || (profile?.role === 'company' ? company?.id : null);
+    let query = supabase.from('drivers').select('*').eq('is_active', true);
+    if (scopedCompanyId) query = query.eq('company_id', scopedCompanyId);
+    const { data, error } = await query.order('full_name');
     if (error) {
       handleSupabaseError(error, 'loadDrivers', { fallback: 'Failed to load drivers.' });
       return [];
@@ -216,8 +241,19 @@ export function AppProvider({ children }) {
     return data || [];
   }
 
-  async function loadTrips() {
-    const { data, error } = await supabase.from('marketplace_trips').select('*').eq('status', 'available').order('loaded_at', { ascending: false });
+  async function loadTrips(options = {}) {
+    const scopedCompanyId = options.companyId || (profile?.role === 'company' ? company?.id : null);
+    let query = supabase
+      .from('marketplace_trips')
+      .select('*')
+      .eq('status', 'available')
+      .order('loaded_at', { ascending: false });
+
+    if (scopedCompanyId) {
+      query = query.eq('company_id', scopedCompanyId).limit(250);
+    }
+
+    const { data, error } = await query;
     if (error) {
       handleSupabaseError(error, 'loadTrips', { fallback: 'Failed to load trips.' });
       return [];
@@ -226,8 +262,34 @@ export function AppProvider({ children }) {
     return data || [];
   }
 
-  async function loadAssignments() {
-    const { data, error } = await supabase.from('trip_assignments').select('*, drivers(full_name, photo_data, status, company_id)').order('assigned_at', { ascending: false }).limit(200);
+  async function loadAssignments(options = {}) {
+    const scopedCompanyId = options.companyId || (profile?.role === 'company' ? company?.id : null);
+    let query = supabase
+      .from('trip_assignments')
+      .select('*, drivers(full_name, photo_data, status, company_id)')
+      .order('assigned_at', { ascending: false })
+      .limit(200);
+
+    if (scopedCompanyId) {
+      const { data: companyDrivers, error: companyDriversError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('company_id', scopedCompanyId);
+
+      if (companyDriversError) {
+        handleSupabaseError(companyDriversError, 'loadAssignments:companyDrivers', { fallback: 'Failed to scope company assignments.' });
+        return [];
+      }
+
+      const driverIds = (companyDrivers || []).map(row => row.id).filter(Boolean);
+      if (!driverIds.length) {
+        setAssignments([]);
+        return [];
+      }
+      query = query.in('driver_id', driverIds);
+    }
+
+    const { data, error } = await query;
     if (error) {
       handleSupabaseError(error, 'loadAssignments', { fallback: 'Failed to load assignments.' });
       return [];
@@ -259,7 +321,7 @@ export function AppProvider({ children }) {
     return data || [];
   }
 
-  function mapSentryTrip(t) {
+  function mapSentryTrip(t, scopedCompanyId = null) {
     return {
       sentry_trip_id: String(t.trip_id || t.id || Math.random()),
       sentry_last_modified_at: String(t.last_modified_at || ''),
@@ -277,6 +339,7 @@ export function AppProvider({ children }) {
       do_time: t.scheduled_dropoff_time || t.do_time || '',
       delivery_price: String(t.total_amount || t.delivery_price || ''),
       status: 'available',
+      company_id: scopedCompanyId,
       loaded_at: new Date().toISOString(),
     };
   }
@@ -284,13 +347,14 @@ export function AppProvider({ children }) {
   async function refreshTripsFromSentry() {
     let totalCount = 0;
     let lastError = null;
+    const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
 
     if (sentryApi.features.marketplaceTrips) {
       const result = await sentryApi.getMarketplaceTrips();
       if (result.ok) {
         const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
         if (rawTrips.length > 0) {
-          const mapped = rawTrips.map(mapSentryTrip);
+          const mapped = rawTrips.map(trip => mapSentryTrip(trip, scopedCompanyId));
           const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
           if (error) {
             handleSupabaseError(error, 'refreshTripsFromSentry:marketplace', { fallback: 'Failed to save marketplace trips.' });
@@ -309,7 +373,7 @@ export function AppProvider({ children }) {
       if (result.ok) {
         const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
         if (rawTrips.length > 0) {
-          const mapped = rawTrips.map(mapSentryTrip);
+          const mapped = rawTrips.map(trip => mapSentryTrip(trip, scopedCompanyId));
           const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
           if (!error) totalCount += mapped.length;
         }
@@ -333,12 +397,17 @@ export function AppProvider({ children }) {
     const list = Array.isArray(result.data) ? result.data : (result.data?.drivers || []);
     let created = 0;
     let updated = 0;
+    const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
 
     for (const sd of list) {
       const sentryId = String(sd.id || sd.driver_id || '');
       if (!sentryId) continue;
 
-      const { data: existing, error: lookupErr } = await supabase.from('drivers').select('id').eq('sentry_driver_id', sentryId).maybeSingle();
+      let lookupQuery = supabase.from('drivers').select('id').eq('sentry_driver_id', sentryId);
+      if (scopedCompanyId) {
+        lookupQuery = lookupQuery.eq('company_id', scopedCompanyId);
+      }
+      const { data: existing, error: lookupErr } = await lookupQuery.maybeSingle();
       if (lookupErr) { logFailure('syncDrivers:lookup', lookupErr); continue; }
 
       if (existing) {
@@ -346,6 +415,7 @@ export function AppProvider({ children }) {
           full_name: sd.name || sd.full_name || existing.full_name,
           phone: sd.phone || '',
           email: sd.email || '',
+          company_id: scopedCompanyId,
           updated_at: new Date().toISOString(),
         }).eq('id', existing.id);
         if (updateErr) { logFailure('syncDrivers:update', updateErr); continue; }
@@ -358,6 +428,7 @@ export function AppProvider({ children }) {
           phone: sd.phone || '',
           email: sd.email || '',
           sentry_driver_id: sentryId,
+          company_id: scopedCompanyId,
           status: 'offline',
           is_active: true,
         });
@@ -384,24 +455,53 @@ export function AppProvider({ children }) {
     schedRunningRef.current = true;
     try {
       const { data: cfg } = await supabase.from('auto_scheduler_config').select('*').maybeSingle();
+      if (profile?.role === 'company' && company) {
+        if (company.ai_routing_enabled === false || company.ai_auto_assign_enabled === false) return;
+      }
       if (!cfg?.enabled || !cfg?.auto_assign) return;
 
-      const { data: currentDrivers } = await supabase
+      let driverQuery = supabase
         .from('drivers')
         .select('*')
         .eq('is_active', true)
         .in('status', ['online', 'on_trip']);
 
-      const { data: availableTrips } = await supabase
+      if (profile?.role === 'company' && company?.id) {
+        driverQuery = driverQuery.eq('company_id', company.id);
+      }
+
+      const { data: currentDrivers } = await driverQuery;
+
+      let tripQuery = supabase
         .from('marketplace_trips')
         .select('*')
         .eq('status', 'available')
         .order('loaded_at', { ascending: true });
 
-      const { data: currentAssignments } = await supabase
-        .from('trip_assignments')
-        .select('*')
-        .not('status', 'in', '("completed","cancelled","rejected")');
+      if (profile?.role === 'company' && company?.id) {
+        tripQuery = tripQuery.eq('company_id', company.id);
+      }
+
+      const { data: availableTrips } = await tripQuery;
+
+      let currentAssignments = [];
+      if (profile?.role === 'company' && company?.id) {
+        const companyDriverIds = (currentDrivers || []).map(driver => driver.id).filter(Boolean);
+        if (companyDriverIds.length) {
+          const { data } = await supabase
+            .from('trip_assignments')
+            .select('*')
+            .in('driver_id', companyDriverIds)
+            .not('status', 'in', '("completed","cancelled","rejected")');
+          currentAssignments = data || [];
+        }
+      } else {
+        const { data } = await supabase
+          .from('trip_assignments')
+          .select('*')
+          .not('status', 'in', '("completed","cancelled","rejected")');
+        currentAssignments = data || [];
+      }
 
       if (!currentDrivers?.length || !availableTrips?.length) return;
 

@@ -47,20 +47,43 @@ export async function getBotRuntimeSettings(orgId, botId, preferredProvider, fal
   const memory = await getBotMemory(orgId, botId, 'provider_config');
   const saved = memory?.memory_value || {};
   const defaultModel =
-    preferredProvider === 'anthropic'
-      ? 'claude-3-5-sonnet-latest'
-      : preferredProvider === 'gemini'
-        ? 'gemini-1.5-flash'
-        : 'gpt-4o-mini';
+    preferredProvider === 'self_hosted'
+      ? 'local-chat'
+      : preferredProvider === 'anthropic'
+        ? 'claude-3-5-sonnet-latest'
+        : preferredProvider === 'gemini'
+          ? 'gemini-1.5-flash'
+          : 'gpt-4o-mini';
+
+  if (saved.provider === 'self_hosted' && saved.api_key && saved.base_url) {
+    return {
+      ...fallbackSettings,
+      provider: 'self_hosted',
+      api_key: saved.api_key,
+      base_url: saved.base_url,
+      model: saved.model || 'local-chat',
+      temperature: saved.temperature ?? fallbackSettings?.temperature ?? 0.3,
+      max_tokens: saved.max_tokens ?? fallbackSettings?.max_tokens ?? 400,
+    };
+  }
 
   if (saved.api_key) {
     return {
       ...fallbackSettings,
-      provider: preferredProvider,
+      provider: saved.provider || preferredProvider,
       api_key: saved.api_key,
+      base_url: saved.base_url || fallbackSettings?.base_url || '',
       model: saved.model || defaultModel,
       temperature: saved.temperature ?? fallbackSettings?.temperature ?? 0.3,
       max_tokens: saved.max_tokens ?? fallbackSettings?.max_tokens ?? 400,
+    };
+  }
+
+  if (fallbackSettings?.provider === 'self_hosted' && fallbackSettings?.api_key && fallbackSettings?.base_url) {
+    return {
+      ...fallbackSettings,
+      provider: 'self_hosted',
+      model: fallbackSettings.model || 'local-chat',
     };
   }
 
@@ -73,6 +96,12 @@ export async function getBotRuntimeSettings(orgId, botId, preferredProvider, fal
   }
 
   return null;
+}
+
+function normalizeOpenAICompatibleBaseUrl(baseUrl = '') {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return trimmed.endsWith('/chat/completions') ? trimmed : `${trimmed}/chat/completions`;
 }
 
 function stripMarkdownFences(text = '') {
@@ -107,6 +136,16 @@ export async function callAI(settings, messages) {
     headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.api_key}` };
     body = JSON.stringify({
       model: settings.model || 'gpt-4o-mini',
+      messages,
+      max_tokens: settings.max_tokens || 200,
+      temperature: parseFloat(settings.temperature) || 0.7,
+    });
+  } else if (settings.provider === 'self_hosted') {
+    url = normalizeOpenAICompatibleBaseUrl(settings.base_url);
+    if (!url) return null;
+    headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.api_key}` };
+    body = JSON.stringify({
+      model: settings.model || 'local-chat',
       messages,
       max_tokens: settings.max_tokens || 200,
       temperature: parseFloat(settings.temperature) || 0.7,
@@ -146,7 +185,7 @@ export async function callAI(settings, messages) {
     const res = await fetch(url, { method: 'POST', headers, body });
     const json = await res.json();
 
-    if (settings.provider === 'openai') {
+    if (settings.provider === 'openai' || settings.provider === 'self_hosted') {
       const text = json.choices?.[0]?.message?.content || '';
       const tokens = json.usage?.total_tokens || 0;
       return { text, tokens, model: json.model || settings.model };

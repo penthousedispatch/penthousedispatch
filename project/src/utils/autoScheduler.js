@@ -132,6 +132,7 @@ export async function runAutoScheduler({ drivers, trips, assignments, config, or
         const { error: assignmentError } = await supabase.from('trip_assignments').insert({
           trip_id: trip.sentry_trip_id,
           driver_id: driver.id,
+          company_id: driver.company_id || trip.company_id || null,
           driver_name: driver.full_name,
           status: 'pending',
           trip_processing_status_id: 0,
@@ -152,7 +153,11 @@ export async function runAutoScheduler({ drivers, trips, assignments, config, or
 
         const { error: tripUpdateError } = await supabase
           .from('marketplace_trips')
-          .update({ status: 'assigned', taken_by: driver.id })
+          .update({
+            status: 'assigned',
+            taken_by: driver.id,
+            company_id: driver.company_id || trip.company_id || null,
+          })
           .eq('sentry_trip_id', trip.sentry_trip_id);
         if (tripUpdateError) {
           logFailure('runAutoScheduler:updateMarketplaceTrip', tripUpdateError);

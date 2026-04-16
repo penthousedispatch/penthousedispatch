@@ -27,10 +27,11 @@ const FEATURE_DEFS = [
 
 const DEFAULT_FEATURES = Object.fromEntries(FEATURE_DEFS.map(f => [f.key, true]));
 
-function CopyButton({ text }) {
+function CopyButton({ text, onCopy }) {
   const [copied, setCopied] = useState(false);
   function handleCopy() {
     navigator.clipboard?.writeText(text);
+    onCopy?.();
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
@@ -60,14 +61,21 @@ function UrlRow({ label, url }) {
   );
 }
 
-function HeaderRow({ label, value }) {
+function maskSecret(value) {
+  if (!value) return '';
+  if (value.length <= 8) return '•'.repeat(value.length);
+  return `${'•'.repeat(Math.max(8, value.length - 6))}${value.slice(-6)}`;
+}
+
+function HeaderRow({ label, value, mask = false, onCopy }) {
+  const displayValue = mask ? maskSecret(value) : value;
   return (
     <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
       <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>{label}</p>
       <div className="flex items-center gap-2">
         <Key className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.3)' }} />
-        <p className="text-xs font-mono flex-1 truncate" style={{ color: '#c9a84c' }}>{value}</p>
-        <CopyButton text={value} />
+        <p className="text-xs font-mono flex-1 truncate" style={{ color: '#c9a84c' }}>{displayValue}</p>
+        <CopyButton text={value} onCopy={onCopy} />
       </div>
     </div>
   );
@@ -83,6 +91,8 @@ export default function AdminSentryConfig() {
     username: '',
     password_enc: '',
     api_key: '',
+    driver_sandbox_username: '',
+    driver_sandbox_password: '',
     sandbox: true,
     enabled: true,
     max_trips_per_pull: 150,
@@ -99,6 +109,7 @@ export default function AdminSentryConfig() {
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
   const [generatingSecret, setGeneratingSecret] = useState(false);
+  const [secretVisible, setSecretVisible] = useState(false);
 
   useEffect(() => {
     if (sentryConfig) {
@@ -110,6 +121,8 @@ export default function AdminSentryConfig() {
         username: sentryConfig.username || '',
         password_enc: sentryConfig.password_enc || '',
         api_key: sentryConfig.api_key || '',
+        driver_sandbox_username: sentryConfig.driver_sandbox_username || '',
+        driver_sandbox_password: sentryConfig.driver_sandbox_password || '',
         sandbox: sentryConfig.sandbox !== false,
         enabled: sentryConfig.enabled !== false,
         max_trips_per_pull: sentryConfig.max_trips_per_pull || 150,
@@ -143,6 +156,7 @@ export default function AdminSentryConfig() {
       .replace(/[+/=]/g, '')
       .slice(0, 32);
     setForm(prev => ({ ...prev, webhook_secret: secret }));
+    setSecretVisible(false);
     setGeneratingSecret(false);
   }
 
@@ -240,6 +254,7 @@ export default function AdminSentryConfig() {
       id: persisted.id || prev.id,
       webhook_secret: persisted.webhook_secret || '',
     }));
+    setSecretVisible(false);
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -391,13 +406,20 @@ export default function AdminSentryConfig() {
               </div>
               <div className="flex gap-2">
                 <input
-                  type="text"
+                  type={secretVisible ? 'text' : 'password'}
                   value={form.webhook_secret}
                   onChange={e => setForm({ ...form, webhook_secret: e.target.value })}
                   className="flex-1 font-mono text-xs"
                   placeholder="Paste or generate your bearer webhook secret"
                   style={{ fontSize: 12 }}
                 />
+                <button
+                  type="button"
+                  onClick={() => setSecretVisible(prev => !prev)}
+                  className="btn-ghost px-3 py-2 text-xs flex-shrink-0"
+                >
+                  {secretVisible ? 'Hide' : 'Reveal'}
+                </button>
                 <button
                   type="button"
                   onClick={generateSecret}
@@ -408,10 +430,50 @@ export default function AdminSentryConfig() {
                   Generate
                 </button>
               </div>
-              <HeaderRow label="Authorization Header Preview" value={`Bearer ${form.webhook_secret || 'YOUR_WEBHOOK_SECRET'}`} />
+              <HeaderRow
+                label="Authorization Header Preview"
+                value={`Bearer ${form.webhook_secret || 'YOUR_WEBHOOK_SECRET'}`}
+                mask={!secretVisible}
+                onCopy={() => setSecretVisible(false)}
+              />
               <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
                 Send this header to Sentry for both receiver and provider endpoints. Query-string secret support is still available, but header auth is cleaner for production.
               </p>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.32)' }}>
+                The secret stays masked after save and after copy so it is not left exposed on screen.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center gap-2 mb-4">
+              <Key className="w-4 h-4" style={{ color: '#60a5fa' }} />
+              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Sandbox Driver App Credentials</p>
+            </div>
+            <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              Optional. Save the Sentry sandbox driver-app credential here so the Penthouse driver app can accept it during active test-mode sessions.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Sandbox Driver Username</label>
+                <input
+                  type="text"
+                  value={form.driver_sandbox_username}
+                  onChange={e => setForm({ ...form, driver_sandbox_username: e.target.value })}
+                  className="w-full"
+                  placeholder="driverapp_cljexpress_16eb"
+                />
+              </div>
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Sandbox Driver Password</label>
+                <input
+                  type="password"
+                  value={form.driver_sandbox_password}
+                  onChange={e => setForm({ ...form, driver_sandbox_password: e.target.value })}
+                  className="w-full"
+                  placeholder="Paste Sentry driver app password"
+                />
+              </div>
             </div>
           </div>
 

@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { X, Upload, CheckCircle, Camera, Download, AlertCircle, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useApp } from '../../context/AppContext';
 
 const CSV_DRIVERS = [
   { first_name: 'BARTHELEMY', last_name: 'ADJAVEHOUEDE', phone: '6312029396', gender: 'Male', dob: '01/01/1960', license_number: '273447679', license_state: 'New York', license_class: 'E', tlc_number: '5596965', status: 'Active' },
@@ -104,6 +105,7 @@ function downloadTemplate() {
 }
 
 export default function CSVImportModal({ onClose }) {
+  const { company, profile } = useApp();
   const [preview, setPreview] = useState(null);
   const [importing, setImporting] = useState(false);
   const [results, setResults] = useState(null);
@@ -133,6 +135,7 @@ export default function CSVImportModal({ onClose }) {
   async function importDrivers(driverList) {
     setImporting(true);
     const perDriverResults = [];
+    const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
 
     for (const d of driverList) {
       const firstName = (d.first_name || '').trim();
@@ -163,15 +166,21 @@ export default function CSVImportModal({ onClose }) {
         tlc_number: tlc,
         gender: (d.gender || '').trim(),
         dob: (d.dob || '').trim(),
+        company_id: profile?.role === 'company' ? company?.id || null : null,
         status: 'offline',
         is_active: isActive,
       };
 
-      const { data: existing } = await supabase
+      let existingQuery = supabase
         .from('drivers')
         .select('id, full_name')
-        .eq('tlc_number', tlc)
-        .maybeSingle();
+        .eq('tlc_number', tlc);
+
+      if (scopedCompanyId) {
+        existingQuery = existingQuery.eq('company_id', scopedCompanyId);
+      }
+
+      const { data: existing } = await existingQuery.maybeSingle();
 
       let error;
       if (existing) {

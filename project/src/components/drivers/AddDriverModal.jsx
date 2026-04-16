@@ -19,7 +19,7 @@ async function uploadDriverPhoto(file, driverNum) {
 }
 
 export default function AddDriverModal({ onClose }) {
-  const { org } = useApp();
+  const { company, profile } = useApp();
   const [form, setForm] = useState({ full_name: '', phone: '', email: '', shift_hours: '7am-5pm', home_address: '' });
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -63,6 +63,7 @@ export default function AddDriverModal({ onClose }) {
       shift_hours: form.shift_hours,
       home_address: form.home_address,
       photo_data: photoUrl,
+      company_id: profile?.role === 'company' ? company?.id || null : null,
       status: 'offline',
       is_active: true,
     }).select().maybeSingle();
@@ -105,12 +106,16 @@ export default function AddDriverModal({ onClose }) {
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg btn-ghost"><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-3">
-          <div className="flex flex-col items-center gap-2">
+          <div className="rounded-2xl p-4 flex flex-col items-center gap-3" style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.16)' }}>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+            <div className="text-center">
+              <p className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>Driver Photo</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>Upload a clear profile picture so riders know who is arriving.</p>
+            </div>
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="relative w-20 h-20 rounded-full overflow-hidden flex items-center justify-center transition-all"
+              className="relative w-24 h-24 rounded-full overflow-hidden flex items-center justify-center transition-all"
               style={{
                 background: photoPreview ? 'transparent' : 'rgba(201,168,76,0.08)',
                 border: photoPreview ? '3px solid rgba(201,168,76,0.5)' : '2px dashed rgba(201,168,76,0.4)',
@@ -120,18 +125,21 @@ export default function AddDriverModal({ onClose }) {
                 <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
               ) : (
                 <div className="flex flex-col items-center gap-1">
-                  <Camera className="w-6 h-6" style={{ color: 'rgba(201,168,76,0.6)' }} />
-                  <span className="text-xs" style={{ color: 'rgba(201,168,76,0.6)', fontSize: 9 }}>REQUIRED</span>
+                  <Camera className="w-7 h-7" style={{ color: 'rgba(201,168,76,0.7)' }} />
+                  <span className="text-[10px] font-semibold" style={{ color: 'rgba(201,168,76,0.75)' }}>UPLOAD</span>
                 </div>
               )}
               {photoPreview && (
-                <div className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                <div className="absolute inset-0 bg-black/45 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                   <Upload className="w-5 h-5" style={{ color: '#fff' }} />
                 </div>
               )}
             </button>
+            <button type="button" onClick={() => fileRef.current?.click()} className="btn-gold px-4 py-2 text-xs">
+              {photoPreview ? 'Change Driver Photo' : 'Upload Driver Photo'}
+            </button>
             <p className="text-xs" style={{ color: photoPreview ? '#00e5a0' : 'rgba(255,71,87,0.8)' }}>
-              {photoPreview ? 'Photo added' : 'Driver photo required for rider visibility'}
+              {photoPreview ? 'Photo added and ready for riders' : 'A photo is required before this driver can be added'}
             </p>
           </div>
 

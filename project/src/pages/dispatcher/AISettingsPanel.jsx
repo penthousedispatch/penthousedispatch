@@ -13,11 +13,13 @@ const PROVIDERS = [
   { id: 'openai', label: 'OpenAI', icon: '🤖', desc: 'GPT-4o, GPT-4o-mini, GPT-3.5' },
   { id: 'anthropic', label: 'Anthropic', icon: '🧠', desc: 'Claude models for review and second-opinion analysis' },
   { id: 'gemini', label: 'Google Gemini', icon: '✨', desc: 'Gemini 1.5 Flash, Pro' },
+  { id: 'self_hosted', label: 'Self-Hosted / OpenAI-Compatible', icon: '🖥️', desc: 'Use your own hosted model endpoint later without replacing the hosted-model path.' },
 ];
 
 const OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'];
 const ANTHROPIC_MODELS = ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'];
 const GEMINI_MODELS = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+const SELF_HOSTED_MODELS = ['local-chat', 'qwen-coder', 'llama-instruct'];
 
 const CONTEXT_LABELS = {
   motivation: 'Driver Motivation',
@@ -65,18 +67,18 @@ const BOT_SERVICES = [
   {
     id: 'codex_bot',
     field: 'codex_bot_enabled',
-    name: 'CodexBot',
+    name: 'Frank',
     role: 'Fix & Investigation Worker',
-    desc: 'Uses OpenAI to investigate operational issues and recommend safe corrective actions',
+    desc: 'Codex-powered implementer bot for issue diagnosis, safe corrective plans, and code-fix proposals.',
     icon: Bot,
     color: '#7dd3fc',
   },
   {
     id: 'claude_bot',
     field: 'claude_bot_enabled',
-    name: 'ClaudeBot',
+    name: 'Darius',
     role: 'Reviewer & Second Opinion',
-    desc: 'Uses Anthropic to review threats, pending actions, and provide risk-focused second opinions',
+    desc: 'Claude-powered reviewer bot for second opinions, risk review, and approval guidance.',
     icon: Bot,
     color: '#c084fc',
   },
@@ -85,6 +87,7 @@ const BOT_SERVICES = [
 const DEFAULT_FORM = {
   provider: 'disabled',
   api_key: '',
+  base_url: '',
   model: 'gpt-4o-mini',
   temperature: 0.7,
   max_tokens: 200,
@@ -104,6 +107,7 @@ const DEFAULT_BOT_PROVIDER_CONFIGS = {
     provider: 'openai',
     api_key: '',
     model: 'gpt-4o-mini',
+    base_url: '',
     temperature: 0.2,
     max_tokens: 500,
   },
@@ -111,6 +115,7 @@ const DEFAULT_BOT_PROVIDER_CONFIGS = {
     provider: 'anthropic',
     api_key: '',
     model: 'claude-3-5-sonnet-latest',
+    base_url: '',
     temperature: 0.2,
     max_tokens: 500,
   },
@@ -164,6 +169,7 @@ export default function AISettingsPanel() {
       setForm({
         provider: data.provider || 'disabled',
         api_key: data.api_key || '',
+        base_url: data.base_url || '',
         model: data.model || 'gpt-4o-mini',
         temperature: data.temperature ?? 0.7,
         max_tokens: data.max_tokens || 200,
@@ -228,6 +234,7 @@ export default function AISettingsPanel() {
     const payload = {
       provider: form.provider,
       api_key: form.api_key,
+      base_url: form.base_url || '',
       model: form.model,
       temperature: form.temperature,
       max_tokens: form.max_tokens,
@@ -331,6 +338,8 @@ export default function AISettingsPanel() {
   const models =
     form.provider === 'gemini'
       ? GEMINI_MODELS
+      : form.provider === 'self_hosted'
+        ? SELF_HOSTED_MODELS
       : form.provider === 'anthropic'
         ? ANTHROPIC_MODELS
         : OPENAI_MODELS;
@@ -349,6 +358,7 @@ export default function AISettingsPanel() {
   ].filter(Boolean).length;
 
   const totalServices = 9;
+  const aiProviderReady = form.provider !== 'disabled' && !!form.api_key && (form.provider !== 'self_hosted' || !!(form.base_url || '').trim());
 
   function updateBotProviderConfig(botId, patch) {
     setBotProviderConfigs(prev => ({
@@ -394,6 +404,8 @@ export default function AISettingsPanel() {
                   const defaultModel =
                     p.id === 'gemini'
                       ? 'gemini-1.5-flash'
+                      : p.id === 'self_hosted'
+                        ? 'local-chat'
                       : p.id === 'anthropic'
                         ? 'claude-3-5-sonnet-latest'
                         : 'gpt-4o-mini';
@@ -438,6 +450,22 @@ export default function AISettingsPanel() {
                 </button>
               </div>
             </div>
+
+            {form.provider === 'self_hosted' && (
+              <div className="mb-4">
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Base URL</label>
+                <input
+                  type="text"
+                  value={form.base_url || ''}
+                  onChange={e => setForm({ ...form, base_url: e.target.value })}
+                  placeholder="https://your-model-host/v1/chat/completions"
+                  className="w-full"
+                />
+                <p className="text-xs mt-1.5" style={{ color: 'rgba(255,255,255,0.32)' }}>
+                  This is for your future self-hosted OpenAI-compatible endpoint. Hosted models keep working separately.
+                </p>
+              </div>
+            )}
 
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div>
@@ -579,22 +607,41 @@ export default function AISettingsPanel() {
           <div className="px-4 py-3" style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
             <p className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bot Worker Providers</p>
             <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>
-              CodexBot uses OpenAI for fixes and investigations. ClaudeBot uses Anthropic for review and second-opinion analysis.
+              Frank uses hosted OpenAI by default and can switch to your own self-hosted OpenAI-compatible endpoint later. Darius uses Anthropic by default and can also move to your own OpenAI-compatible reviewer endpoint when you are ready.
             </p>
           </div>
           <div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             {[
-              { id: 'codex_bot', title: 'CodexBot', keyLabel: 'OpenAI API Key', models: OPENAI_MODELS },
-              { id: 'claude_bot', title: 'ClaudeBot', keyLabel: 'Anthropic API Key', models: ANTHROPIC_MODELS },
+              { id: 'codex_bot', title: 'Frank', defaultDesc: 'Codex-powered implementer bot', hostedProvider: 'openai', keyLabel: 'Provider API Key', models: { openai: OPENAI_MODELS, self_hosted: SELF_HOSTED_MODELS } },
+              { id: 'claude_bot', title: 'Darius', defaultDesc: 'Claude-powered reviewer bot', hostedProvider: 'anthropic', keyLabel: 'Provider API Key', models: { anthropic: ANTHROPIC_MODELS, self_hosted: SELF_HOSTED_MODELS } },
             ].map(worker => (
               <div key={worker.id} className="p-4 space-y-3" style={{ background: 'rgba(255,255,255,0.01)' }}>
                 <div>
                   <p className="text-sm" style={{ color: '#e5e7eb', fontWeight: 600 }}>{worker.title}</p>
                   <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
                     {worker.id === 'codex_bot'
-                      ? 'OpenAI-backed worker for issue diagnosis, safe corrective plans, and automation proposals.'
-                      : 'Anthropic-backed reviewer for threat triage, mitigation guidance, and second-opinion decisions.'}
+                      ? 'Default hosted provider: OpenAI. Optional later path: your own self-hosted OpenAI-compatible endpoint.'
+                      : 'Default hosted provider: Anthropic. Optional later path: your own self-hosted OpenAI-compatible endpoint.'}
                   </p>
+                </div>
+                <div>
+                  <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Provider</label>
+                  <select
+                    value={botProviderConfigs[worker.id]?.provider || worker.hostedProvider}
+                    onChange={e => updateBotProviderConfig(worker.id, {
+                      provider: e.target.value,
+                      model: e.target.value === 'self_hosted'
+                        ? 'local-chat'
+                        : e.target.value === 'anthropic'
+                          ? 'claude-3-5-sonnet-latest'
+                          : 'gpt-4o-mini',
+                    })}
+                    className="w-full"
+                    style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#e5e7eb', padding: '8px 10px', fontSize: 13 }}
+                  >
+                    <option value={worker.hostedProvider}>{worker.hostedProvider === 'openai' ? 'Hosted OpenAI' : 'Hosted Anthropic'}</option>
+                    <option value="self_hosted">Self-Hosted / OpenAI-Compatible</option>
+                  </select>
                 </div>
                 <div className="relative">
                   <input
@@ -613,16 +660,28 @@ export default function AISettingsPanel() {
                     {showBotKeys[worker.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                {botProviderConfigs[worker.id]?.provider === 'self_hosted' && (
+                  <div>
+                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Base URL</label>
+                    <input
+                      type="text"
+                      value={botProviderConfigs[worker.id]?.base_url || ''}
+                      onChange={e => updateBotProviderConfig(worker.id, { base_url: e.target.value })}
+                      placeholder="https://your-model-host/v1/chat/completions"
+                      className="w-full"
+                    />
+                  </div>
+                )}
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Model</label>
                     <select
-                      value={botProviderConfigs[worker.id]?.model || worker.models[0]}
+                      value={botProviderConfigs[worker.id]?.model || (botProviderConfigs[worker.id]?.provider === 'self_hosted' ? 'local-chat' : worker.hostedProvider === 'anthropic' ? 'claude-3-5-sonnet-latest' : 'gpt-4o-mini')}
                       onChange={e => updateBotProviderConfig(worker.id, { model: e.target.value })}
                       className="w-full"
                       style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#e5e7eb', padding: '8px 10px', fontSize: 13 }}
                     >
-                      {worker.models.map(model => <option key={model} value={model}>{model}</option>)}
+                      {(worker.models[botProviderConfigs[worker.id]?.provider || worker.hostedProvider] || []).map(model => <option key={model} value={model}>{model}</option>)}
                     </select>
                   </div>
                   <div>
@@ -685,7 +744,7 @@ export default function AISettingsPanel() {
           {form.provider !== 'disabled' && (
             <button
               onClick={handleTest}
-              disabled={testing || !form.api_key}
+              disabled={testing || !aiProviderReady}
               className="btn-ghost flex items-center gap-2 py-2.5 px-4 flex-1"
             >
               <TestTube className={`w-4 h-4 ${testing ? 'animate-spin' : ''}`} />

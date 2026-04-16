@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Check, Save } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
+import { toastError, toastSuccess } from '../../utils/errorHandler';
 
 export default function PayRatesSection() {
   const { drivers, loadDrivers } = useApp();
@@ -50,17 +51,32 @@ export default function PayRatesSection() {
         ...prev,
         [driverId]: error?.message || 'No driver row was updated. Check your permissions and try again.',
       }));
+      toastError(error?.message || 'Driver pay rate save failed.');
       return;
     }
 
     setSaving(prev => ({ ...prev, [driverId]: false }));
     setSaved(prev => ({ ...prev, [driverId]: true }));
+    setRates(prev => ({
+      ...prev,
+      [driverId]: {
+        pay_rate: data.pay_rate,
+        pay_rate_type: data.pay_rate_type,
+      },
+    }));
+    toastSuccess('Driver pay rate saved.');
     setTimeout(() => setSaved(prev => ({ ...prev, [driverId]: false })), 2000);
     await loadDrivers();
   }
 
   async function applyBulk() {
     if (!bulkRate) return;
+    const targetDriverIds = drivers.map(driver => driver.id).filter(Boolean);
+    if (!targetDriverIds.length) {
+      setBulkError('No scoped drivers were found for this update.');
+      toastError('No drivers available for bulk pay-rate update.');
+      return;
+    }
     setBulkSaving(true);
     setBulkMessage('');
     setBulkError('');
@@ -71,18 +87,30 @@ export default function PayRatesSection() {
         pay_rate: parseFloat(bulkRate),
         pay_rate_type: bulkType,
       })
-      .neq('id', '00000000-0000-0000-0000-000000000000')
+      .in('id', targetDriverIds)
       .select('id');
 
     if (error || !data?.length) {
       setBulkSaving(false);
       setBulkError(error?.message || 'No driver rows were updated. Check your permissions and try again.');
+      toastError(error?.message || 'Bulk pay-rate update failed.');
       return;
     }
 
     await loadDrivers();
+    setRates(prev => {
+      const next = { ...prev };
+      targetDriverIds.forEach(driverId => {
+        next[driverId] = {
+          pay_rate: parseFloat(bulkRate),
+          pay_rate_type: bulkType,
+        };
+      });
+      return next;
+    });
     setBulkSaving(false);
     setBulkMessage(`Applied $${parseFloat(bulkRate).toFixed(2)}/${bulkType === 'per_trip' ? 'trip' : 'hr'} to all drivers.`);
+    toastSuccess('Bulk pay rates updated.');
   }
 
   return (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, MapPin, Navigation, Clock, DollarSign, Phone, Car, CheckCircle, Circle, ArrowRight, Activity, Zap, TrendingUp, AlertTriangle, ChevronRight, CreditCard as Edit2, Save, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { logFailure } from '../../utils/errorHandler';
+import { logFailure, toastError, toastSuccess } from '../../utils/errorHandler';
 
 const STATUS_CONFIG = {
   online:      { color: '#00e5a0', label: 'Available',  glow: '0 0 8px rgba(0,229,160,0.4)' },
@@ -55,37 +55,56 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
       setPayRateSaving(false);
       setPayRateSaved(false);
       setPayRateError(error?.message || 'No driver row was updated. Check your permissions and try again.');
+      toastError(error?.message || 'Pay rate was not saved.');
       return;
     }
     setPayRateSaving(false);
     setPayRateSaved(true);
     setDisplayPay({ pay_rate: data.pay_rate, pay_rate_type: data.pay_rate_type });
+    setPayRate(data.pay_rate ?? normalizedRate);
+    setPayType(data.pay_rate_type || payType);
     setEditingPay(false);
+    toastSuccess(`Saved ${driver.full_name}'s pay rate.`);
     setTimeout(() => setPayRateSaved(false), 3000);
-    if (onDriverUpdated) onDriverUpdated();
+    if (onDriverUpdated) {
+      onDriverUpdated({
+        ...driver,
+        pay_rate: data.pay_rate,
+        pay_rate_type: data.pay_rate_type,
+      });
+    }
   }
 
   async function changeDriverStatus(nextStatus) {
     if (!driver?.id) return;
     setStatusSaving(true);
     setStatusError('');
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('drivers')
       .update({
         status: nextStatus,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', driver.id);
+      .eq('id', driver.id)
+      .select('id, status')
+      .maybeSingle();
 
-    if (error) {
+    if (error || !data) {
       logFailure('DriverDetailPanel:changeDriverStatus', error);
-      setStatusError(error.message || 'Status update failed');
+      setStatusError(error?.message || 'No driver row was updated. Check your permissions and try again.');
       setStatusSaving(false);
+      toastError(error?.message || 'Driver status update failed.');
       return;
     }
 
     setStatusSaving(false);
-    if (onDriverUpdated) onDriverUpdated();
+    toastSuccess(`${driver.full_name} is now ${nextStatus}.`);
+    if (onDriverUpdated) {
+      onDriverUpdated({
+        ...driver,
+        status: data.status,
+      });
+    }
   }
 
   async function loadDriverData() {

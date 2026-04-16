@@ -6,7 +6,7 @@ import { useApp } from '../../context/AppContext';
 import ChatWindow from './ChatWindow';
 
 export default function ChatPanel() {
-  const { profile, drivers } = useApp();
+  const { profile, drivers, company } = useApp();
   const [open, setOpen] = useState(false);
   const [threads, setThreads] = useState([]);
   const [activeThread, setActiveThread] = useState(null);
@@ -18,14 +18,51 @@ export default function ChatPanel() {
     return () => {
       unsubscribers.current.forEach(fn => fn && fn());
     };
-  }, []);
+  }, [profile?.role, company?.id, drivers.length]);
+
+  const scopedDrivers = profile?.role === 'company' && company?.id
+    ? drivers.filter(driver => driver.company_id === company.id)
+    : drivers;
+
+  const availableDrivers = scopedDrivers.filter(
+    driver => driver.status === 'online' || driver.status === 'on_trip'
+  );
 
   async function loadThreads() {
-    const { data } = await supabase
+    unsubscribers.current.forEach(fn => fn && fn());
+    unsubscribers.current = [];
+    setActiveThread(prev => {
+      if (!prev) return prev;
+      if (profile?.role === 'company' && company?.id) {
+        return scopedDrivers.some(driver => driver.id === prev.driver_id) ? prev : null;
+      }
+      return prev;
+    });
+
+    let driverIds = [];
+    if (profile?.role === 'company' && company?.id) {
+      driverIds = scopedDrivers
+        .map(driver => driver.id)
+        .filter(Boolean);
+
+      if (!driverIds.length) {
+        setThreads([]);
+        setActiveThread(null);
+        return;
+      }
+    }
+
+    let query = supabase
       .from('chat_threads')
-      .select('*, drivers(full_name, status)')
+      .select('*, drivers(full_name, status, company_id)')
       .order('last_message_at', { ascending: false })
       .limit(50);
+
+    if (driverIds.length) {
+      query = query.in('driver_id', driverIds);
+    }
+
+    const { data } = await query;
     if (!data) return;
 
     setThreads(data);
@@ -56,6 +93,7 @@ export default function ChatPanel() {
   }, [threads]);
 
   async function openOrCreateThread(driver) {
+    if (!driver?.id) return;
     const existing = threads.find(t => t.driver_id === driver.id);
     if (existing) {
       setActiveThread(existing);
@@ -98,7 +136,7 @@ export default function ChatPanel() {
     <>
       <button
         onClick={() => setOpen(o => !o)}
-        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all"
+        className="fixed bottom-6 right-6 z-[60] w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all"
         style={{ background: 'linear-gradient(135deg, #c9a84c, #a07830)', boxShadow: '0 4px 20px rgba(201,168,76,0.4)' }}
       >
         <MessageCircle className="w-5 h-5 text-black" />
@@ -111,7 +149,7 @@ export default function ChatPanel() {
       </button>
 
       {open && (
-        <div className="fixed bottom-20 right-6 z-40 flex gap-3 items-end">
+        <div className="fixed bottom-20 right-6 z-[60] flex gap-3 items-end">
           {activeThread && (
             <ChatWindow
               thread={activeThread}
@@ -124,7 +162,7 @@ export default function ChatPanel() {
             <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
               <div className="flex items-center gap-2">
                 <MessageCircle className="w-4 h-4" style={{ color: '#c9a84c' }} />
-                <span className="font-600 text-sm" style={{ color: '#c9a84c', fontWeight: 600 }}>Chat</span>
+                <span className="font-600 text-sm" style={{ color: '#c9a84c', fontWeight: 600 }}>Dispatch Chat</span>
                 {unreadTotal > 0 && (
                   <span className="px-1.5 py-0.5 rounded-full text-xs font-700" style={{ background: '#ff4757', color: '#fff', fontWeight: 700, fontSize: 10 }}>
                     {unreadTotal}
@@ -157,16 +195,22 @@ export default function ChatPanel() {
             <div className="border-t px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
               <p className="text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.3)' }}>Start chat with driver</p>
               <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
-                {drivers.filter(d => d.status === 'online' || d.status === 'on_trip').slice(0, 8).map(d => (
+                {availableDrivers.slice(0, 8).map(d => (
                   <button
                     key={d.id}
                     onClick={() => openOrCreateThread(d)}
-                    className="px-2 py-1 rounded-lg text-xs"
+                    className="px-3 py-2 rounded-lg text-xs flex items-center gap-1.5"
                     style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#e5e7eb' }}
                   >
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: d.status === 'on_trip' ? '#c9a84c' : '#00e5a0' }} />
                     {d.full_name?.split(' ')[0]}
                   </button>
                 ))}
+                {availableDrivers.length === 0 && (
+                  <div className="w-full rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)' }}>
+                    No online drivers are available to chat yet.
+                  </div>
+                )}
               </div>
             </div>
           </div>

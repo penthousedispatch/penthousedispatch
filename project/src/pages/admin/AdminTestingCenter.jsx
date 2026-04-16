@@ -122,6 +122,23 @@ export default function AdminTestingCenter() {
 
   async function runSentryTest(testId) {
     const cfg = await loadLatestSentryConfig();
+    if (!cfg) {
+      addLog(testId, 'No Sentry config row was found yet. Save the Sentry settings first.', 'warn');
+      setResult(testId, 'fail');
+      return;
+    }
+
+    const missingBasic = cfg.auth_type === 'basic' && (!cfg.username || !cfg.password_enc);
+    const missingBearer = cfg.auth_type === 'bearer' && !cfg.api_key;
+    if (missingBasic || missingBearer) {
+      addLog(testId, 'Sentry auth settings are incomplete for the selected auth type.', 'warn');
+      addLog(testId, cfg.auth_type === 'basic'
+        ? 'Add both Username and Password on the Sentry page before running this test.'
+        : 'Add a Bearer token/API key on the Sentry page before running this test.', 'info');
+      setResult(testId, 'fail');
+      return;
+    }
+
     if (cfg) {
       sentryApi.configure({
         baseUrl: cfg.base_url,
@@ -139,7 +156,8 @@ export default function AdminTestingCenter() {
     if (result.error === 'Failed to fetch' && cfg) {
       addLog(testId, 'Browser direct-connect test was blocked. Falling back to server-side diagnostic...', 'warn');
       try {
-        const fnRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1/sentry-diagnostics/health-check`, {
+        const edgeBase = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
+        const fnRes = await fetch(`${edgeBase}/sentry-diagnostics/health-check`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -154,6 +172,11 @@ export default function AdminTestingCenter() {
             auth_type: cfg.auth_type,
           }),
         });
+
+        if (!fnRes.ok) {
+          const text = await fnRes.text().catch(() => '');
+          addLog(testId, `Diagnostics function returned HTTP ${fnRes.status}${text ? ` — ${text}` : ''}`, 'error');
+        }
 
         const fallback = await fnRes.json().catch(() => ({}));
         result = {
@@ -188,6 +211,11 @@ export default function AdminTestingCenter() {
 
   async function runWebhookTest(testId) {
     const cfg = await loadLatestSentryConfig();
+    if (!cfg) {
+      addLog(testId, 'No Sentry config row was found yet. Save the Sentry settings first.', 'warn');
+      setResult(testId, 'fail');
+      return;
+    }
     const secret = cfg?.webhook_secret || '';
     const secretParam = secret ? `?secret=${encodeURIComponent(secret)}` : '';
     const EDGE_BASE = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
@@ -299,11 +327,18 @@ export default function AdminTestingCenter() {
   async function runTripFlowTest(testId) {
     addLog(testId, 'Creating test driver...');
     const testDriverNum = 'TEST-' + Date.now().toString(36).toUpperCase();
+    const scopedCompanyId = sandboxStatus.companyId || null;
+    if (scopedCompanyId) {
+      addLog(testId, `Using active sandbox company scope: ${scopedCompanyId}`, 'info');
+    } else {
+      addLog(testId, 'No active sandbox company found. Running trip flow test without company scope may be blocked by tenant policies.', 'warn');
+    }
     const { data: testDriver, error: dErr } = await supabase.from('drivers').insert({
       driver_number: testDriverNum,
       full_name: 'Test Driver (Auto)',
       status: 'offline',
       is_active: true,
+      company_id: scopedCompanyId,
     }).select().maybeSingle();
 
     if (dErr || !testDriver) {
@@ -318,6 +353,7 @@ export default function AdminTestingCenter() {
     const { data: assignment, error: aErr } = await supabase.from('trip_assignments').insert({
       trip_id: testTripId,
       driver_id: testDriver.id,
+      company_id: scopedCompanyId,
       driver_name: testDriver.full_name,
       status: 'pending',
       pu_address: '123 Test St, New York NY',

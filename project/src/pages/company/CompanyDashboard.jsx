@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, Routes, Route } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
+import LiveDispatch from '../dispatcher/LiveDispatch';
 import {
   Users, Navigation, FileText, Settings, LogOut,
-  DollarSign, AlertTriangle, LayoutGrid
+  DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers
 } from 'lucide-react';
 import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
 import AlertInboxButton from '../../components/ui/AlertInboxButton';
@@ -205,6 +206,125 @@ function CompanyInvoices({ company }) {
   );
 }
 
+function CompanyMarketplace({ company }) {
+  const [trips, setTrips] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadMarketplaceTrips() {
+      setLoading(true);
+      let query = supabase
+        .from('marketplace_trips')
+        .select('*')
+        .order('loaded_at', { ascending: false })
+        .limit(250);
+
+      if (company?.id) {
+        query = query.eq('company_id', company.id);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        handleSupabaseError(error, 'CompanyMarketplace:load', { silent: true, fallback: 'Failed to load marketplace trips.' });
+      }
+
+      if (mounted) {
+        setTrips(data || []);
+        setLoading(false);
+      }
+    }
+
+    loadMarketplaceTrips();
+    return () => {
+      mounted = false;
+    };
+  }, [company?.id]);
+
+  const filteredTrips = trips.filter(trip => {
+    if (!search) return true;
+    const query = search.toLowerCase();
+    return [trip.sentry_trip_id, trip.pu_address, trip.do_address, trip.pu_city, trip.do_city]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(query));
+  });
+
+  const statusColors = {
+    available: '#00e5a0',
+    assigned: '#c9a84c',
+    completed: '#0ea5e9',
+    cancelled: '#ff4757',
+  };
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto space-y-4">
+      <div>
+        <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Marketplace Trips</h2>
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+          Review provider-imported trips assigned to your company before or after dispatching them.
+        </p>
+      </div>
+
+      <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Search imported trips</label>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search by trip id, pickup, dropoff, city..."
+          className="w-full"
+        />
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center h-40">
+          <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: '#c9a84c', borderTopColor: 'transparent' }} />
+        </div>
+      ) : filteredTrips.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48 rounded-xl gap-3" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <Layers className="w-8 h-8" style={{ color: 'rgba(255,255,255,0.22)' }} />
+          <p style={{ color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>No marketplace trips available right now.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredTrips.map(trip => (
+            <div key={trip.id || trip.sentry_trip_id} className="rounded-xl p-4 flex items-start gap-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(201,168,76,0.1)', color: '#c9a84c' }}>
+                <Navigation className="w-4 h-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <p className="text-sm font-600 truncate" style={{ fontWeight: 600 }}>{trip.sentry_trip_id || trip.id}</p>
+                  <span
+                    className="text-[11px] px-2 py-0.5 rounded-full"
+                    style={{
+                      background: `${statusColors[trip.status] || '#c9a84c'}15`,
+                      color: statusColors[trip.status] || '#c9a84c',
+                    }}
+                  >
+                    {trip.status || 'available'}
+                  </span>
+                </div>
+                <p className="text-sm truncate" style={{ color: '#e5e7eb' }}>{trip.pu_address || 'Unknown pickup'}</p>
+                <p className="text-xs mt-1 truncate" style={{ color: 'rgba(255,255,255,0.42)' }}>{trip.do_address || 'Unknown dropoff'}</p>
+                <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                  <span>Pickup: {trip.pu_time || 'TBD'}</span>
+                  <span>Mileage: {trip.mileage || '0'}</span>
+                  <span>Fare: ${parseFloat(trip.delivery_price || 0).toFixed(2)}</span>
+                  <span>Source: {trip.loaded_at ? 'Imported' : 'Manual'}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompanySettings({ company, setCompany }) {
   const [form, setForm] = useState({
     company_name: company?.company_name || '',
@@ -212,9 +332,48 @@ function CompanySettings({ company, setCompany }) {
     address: company?.address || '',
     billing_contact_name: company?.billing_contact_name || '',
     billing_contact_email: company?.billing_contact_email || '',
+    white_label_enabled: company?.white_label_enabled || false,
+    app_display_name: company?.app_display_name || '',
+    logo_url: company?.logo_url || '',
+    brand_primary: company?.brand_primary || '#c9a84c',
+    brand_accent: company?.brand_accent || '#00e5a0',
+    payout_bank_name: company?.payout_bank_name || '',
+    payout_bank_last4: company?.payout_bank_last4 || '',
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const displayNamePreview = form.app_display_name || form.company_name || 'Your Dispatch App';
+
+  useEffect(() => {
+    setForm({
+      company_name: company?.company_name || '',
+      phone: company?.phone || '',
+      address: company?.address || '',
+      billing_contact_name: company?.billing_contact_name || '',
+      billing_contact_email: company?.billing_contact_email || '',
+      white_label_enabled: company?.white_label_enabled || false,
+      app_display_name: company?.app_display_name || '',
+      logo_url: company?.logo_url || '',
+      brand_primary: company?.brand_primary || '#c9a84c',
+      brand_accent: company?.brand_accent || '#00e5a0',
+      payout_bank_name: company?.payout_bank_name || '',
+      payout_bank_last4: company?.payout_bank_last4 || '',
+    });
+  }, [
+    company?.id,
+    company?.company_name,
+    company?.phone,
+    company?.address,
+    company?.billing_contact_name,
+    company?.billing_contact_email,
+    company?.white_label_enabled,
+    company?.app_display_name,
+    company?.logo_url,
+    company?.brand_primary,
+    company?.brand_accent,
+    company?.payout_bank_name,
+    company?.payout_bank_last4,
+  ]);
 
   async function handleSave(e) {
     e.preventDefault();
@@ -254,6 +413,95 @@ function CompanySettings({ company, setCompany }) {
             ))}
           </div>
         </div>
+        <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(201,168,76,0.14)' }}>
+          <div className="flex items-center gap-2 mb-4">
+            <Palette className="w-4 h-4" style={{ color: '#c9a84c' }} />
+            <div>
+              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>White Label Branding</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>Optional subscriber branding for your drivers and riders. If your subscription includes white-label access, your logo, colors, and app name can replace the platform defaults.</p>
+            </div>
+          </div>
+          <label className="flex items-center justify-between rounded-xl px-4 py-3 mb-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div>
+              <p className="text-sm font-600" style={{ fontWeight: 600 }}>Enable white-label app branding</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>Show your company name, colors, and logo in the driver and rider experience.</p>
+            </div>
+            <input type="checkbox" checked={form.white_label_enabled} onChange={e => setForm({ ...form, white_label_enabled: e.target.checked })} />
+          </label>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>App Display Name</label>
+              <input type="text" value={form.app_display_name} onChange={e => setForm({ ...form, app_display_name: e.target.value })} placeholder="CLJExpress Dispatch" className="w-full" />
+            </div>
+            <div>
+              <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Logo URL</label>
+              <input type="text" value={form.logo_url} onChange={e => setForm({ ...form, logo_url: e.target.value })} placeholder="https://..." className="w-full" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Primary Brand Color</label>
+                <input type="text" value={form.brand_primary} onChange={e => setForm({ ...form, brand_primary: e.target.value })} placeholder="#c9a84c" className="w-full" />
+              </div>
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Accent Color</label>
+                <input type="text" value={form.brand_accent} onChange={e => setForm({ ...form, brand_accent: e.target.value })} placeholder="#00e5a0" className="w-full" />
+              </div>
+            </div>
+            <div className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.45)' }}>Brand preview</p>
+              <div
+                className="rounded-xl px-4 py-3 flex items-center gap-3"
+                style={{
+                  background: form.white_label_enabled ? form.brand_primary || '#c9a84c' : 'rgba(201,168,76,0.08)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0"
+                  style={{ background: form.white_label_enabled ? form.brand_accent || '#00e5a0' : 'rgba(255,255,255,0.08)' }}
+                >
+                  {form.logo_url ? (
+                    <img src={form.logo_url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <span style={{ color: form.white_label_enabled ? '#07090d' : '#c9a84c', fontWeight: 800 }}>
+                      {displayNamePreview.charAt(0)}
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-600 truncate" style={{ color: form.white_label_enabled ? '#07090d' : '#e5e7eb', fontWeight: 600 }}>
+                    {displayNamePreview}
+                  </p>
+                  <p className="text-xs truncate" style={{ color: form.white_label_enabled ? 'rgba(7,9,13,0.72)' : 'rgba(255,255,255,0.45)' }}>
+                    Driver and rider branding preview
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(0,229,160,0.12)' }}>
+          <div className="flex items-center gap-2 mb-4">
+            <CreditCard className="w-4 h-4" style={{ color: '#00e5a0' }} />
+            <div>
+              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Banking & Withdrawals</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>Store your payout account so settlements can be finalized once your bank is connected.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Bank Account Name</label>
+              <input type="text" value={form.payout_bank_name} onChange={e => setForm({ ...form, payout_bank_name: e.target.value })} placeholder="Business checking" className="w-full" />
+            </div>
+            <div>
+              <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Last 4 Digits</label>
+              <input type="text" value={form.payout_bank_last4} onChange={e => setForm({ ...form, payout_bank_last4: e.target.value.replace(/\D/g, '').slice(0, 4) })} placeholder="1234" className="w-full" />
+            </div>
+          </div>
+          <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,0.4)' }}>
+            This stores the payout destination label for now. Full bank linking and withdrawals can be connected later without changing the company workflow.
+          </p>
+        </div>
         <button type="submit" disabled={saving} className="btn-gold px-5 py-2.5 text-sm">
           {saved ? 'Saved!' : saving ? 'Saving...' : 'Save Changes'}
         </button>
@@ -262,15 +510,155 @@ function CompanySettings({ company, setCompany }) {
   );
 }
 
+function CompanyAIControls({ company, setCompany }) {
+  const [form, setForm] = useState({
+    ai_routing_enabled: company?.ai_routing_enabled ?? true,
+    ai_auto_assign_enabled: company?.ai_auto_assign_enabled ?? true,
+    ai_driver_nudges_enabled: company?.ai_driver_nudges_enabled ?? true,
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setForm({
+      ai_routing_enabled: company?.ai_routing_enabled ?? true,
+      ai_auto_assign_enabled: company?.ai_auto_assign_enabled ?? true,
+      ai_driver_nudges_enabled: company?.ai_driver_nudges_enabled ?? true,
+    });
+  }, [company?.id, company?.ai_routing_enabled, company?.ai_auto_assign_enabled, company?.ai_driver_nudges_enabled]);
+
+  async function handleSave() {
+    if (!company?.id) return;
+    setSaving(true);
+    const { data, error } = await supabase
+      .from('companies')
+      .update({ ...form, updated_at: new Date().toISOString() })
+      .eq('id', company.id)
+      .select()
+      .maybeSingle();
+    if (error) {
+      handleSupabaseError(error, 'CompanyAIControls:handleSave', { fallback: 'Failed to save AI controls.' });
+      setSaving(false);
+      return;
+    }
+    if (data) setCompany(data);
+    toastSuccess('AI controls saved.');
+    setSaving(false);
+  }
+
+  const options = [
+    {
+      key: 'ai_routing_enabled',
+      title: 'AI Route Planning',
+      description: 'Let the company dispatch board use routing recommendations and trip scoring.',
+    },
+    {
+      key: 'ai_auto_assign_enabled',
+      title: 'AI Auto Assignment',
+      description: 'Allow the scheduler to recommend or auto-assign the best-fit driver for open trips.',
+    },
+    {
+      key: 'ai_driver_nudges_enabled',
+      title: 'Driver Motivation Nudges',
+      description: 'Send incentive and performance nudges to active drivers during their shift.',
+    },
+  ];
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto space-y-4">
+      <div>
+        <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>AI Controls</h2>
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Company dispatchers can control route automation here without exposing the platform-level AI system.</p>
+      </div>
+      {options.map(option => (
+        <div key={option.key} className="rounded-xl p-4 flex items-start justify-between gap-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div>
+            <p className="text-sm font-600" style={{ fontWeight: 600 }}>{option.title}</p>
+            <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>{option.description}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setForm(prev => ({ ...prev, [option.key]: !prev[option.key] }))}
+            className="px-3 py-1.5 rounded-lg text-xs"
+            style={{
+              background: form[option.key] ? 'rgba(0,229,160,0.12)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${form[option.key] ? 'rgba(0,229,160,0.24)' : 'rgba(255,255,255,0.08)'}`,
+              color: form[option.key] ? '#00e5a0' : 'rgba(255,255,255,0.55)',
+              fontWeight: 600,
+            }}
+          >
+            {form[option.key] ? 'Enabled' : 'Disabled'}
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={handleSave} disabled={saving} className="btn-gold px-5 py-2.5 text-sm">
+        {saving ? 'Saving...' : 'Save AI Controls'}
+      </button>
+    </div>
+  );
+}
+
+function CompanyGuides() {
+  const guides = [
+    {
+      title: 'Dispatch Guide',
+      copy: 'Use Dispatch to watch your live fleet, review trip assignments, and keep drivers moving. Add or import drivers first so the map can route work to your company only.',
+    },
+    {
+      title: 'Drivers Guide',
+      copy: 'The Drivers tab shows only your company drivers. Update their photo, pay, online status, and contact details there before sending them into the field.',
+    },
+    {
+      title: 'Trip History Guide',
+      copy: 'Trip History is your clean audit trail for past assignments. Use it to review completed trips, spot no-shows, and verify billing questions.',
+    },
+    {
+      title: 'Invoices Guide',
+      copy: 'Invoices show accrued mileage billing and issued platform invoices. Keep your billing contact current in Settings so you never miss an invoice notice.',
+    },
+    {
+      title: 'Settings Guide',
+      copy: 'Settings is where your company can update branding, payout information, and white-label preferences. Leave blanks now and complete them later if needed.',
+    },
+    {
+      title: 'AI Controls Guide',
+      copy: 'AI Controls lets your company decide whether route planning, auto-assign, and driver motivation nudges are active without exposing platform-wide AI settings.',
+    },
+  ];
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Dashboard Guides</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {guides.map(guide => (
+          <div key={guide.title} className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center gap-2 mb-2">
+              <BookOpen className="w-4 h-4" style={{ color: '#c9a84c' }} />
+              <p className="text-sm font-600" style={{ fontWeight: 600 }}>{guide.title}</p>
+            </div>
+            <p className="text-sm leading-6" style={{ color: 'rgba(255,255,255,0.48)' }}>{guide.copy}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function CompanyDashboard() {
   const { company, setCompany, profile } = useApp();
   const [mobileNav, setMobileNav] = useState(false);
-  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const importSource = React.useMemo(() => {
+    const match = company?.notes?.match(/IMPORT_SOURCE:([A-Z_]+)/);
+    return match?.[1] || 'MANUAL';
+  }, [company?.notes]);
 
   const tabs = [
-    { path: '/', label: 'Drivers', icon: Users, exact: true },
-    { path: '/trips', label: 'Trips', icon: Navigation },
+    { path: '/', label: 'Dispatch', icon: LayoutGrid, exact: true },
+    { path: '/marketplace', label: 'Marketplace', icon: Layers },
+    { path: '/drivers', label: 'Drivers', icon: Users },
+    { path: '/trips', label: 'Trip History', icon: Navigation },
     { path: '/invoices', label: 'Invoices', icon: FileText },
+    { path: '/ai-controls', label: 'AI Controls', icon: Bot },
+    { path: '/guides', label: 'Guides', icon: BookOpen },
     { path: '/settings', label: 'Settings', icon: Settings },
   ];
 
@@ -295,14 +683,18 @@ export default function CompanyDashboard() {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d', color: '#e5e7eb' }}>
-      {!bannerDismissed && (
-        <div className="flex items-center justify-between px-4 py-2 flex-shrink-0" style={{ background: 'linear-gradient(135deg, rgba(201,168,76,0.15), rgba(201,168,76,0.08))', borderBottom: '1px solid rgba(201,168,76,0.2)' }}>
-          <p className="text-xs font-600" style={{ color: '#c9a84c', fontWeight: 600 }}>
-            Upgrade to SaaS — Advanced features coming soon. Manage your fleet at scale.
-          </p>
-          <button onClick={() => setBannerDismissed(true)} className="text-xs" style={{ color: 'rgba(201,168,76,0.6)', background: 'none', border: 'none' }}>✕</button>
-        </div>
-      )}
+      <div
+        className="flex flex-wrap items-center gap-2 px-4 py-2 flex-shrink-0"
+        style={{
+          background: 'linear-gradient(135deg, rgba(201,168,76,0.12), rgba(201,168,76,0.04))',
+          borderBottom: '1px solid rgba(201,168,76,0.18)',
+        }}
+      >
+        <StatusChip label={`Company: ${company?.company_name || 'Subscriber'}`} color="#c9a84c" />
+        <StatusChip label={`Import: ${importSource}`} color="#0ea5e9" />
+        <StatusChip label={company?.white_label_enabled ? 'White-label enabled' : 'Platform branding active'} color={company?.white_label_enabled ? '#00e5a0' : 'rgba(255,255,255,0.6)'} />
+        <StatusChip label={company?.ai_routing_enabled ? 'AI routing on' : 'AI routing off'} color={company?.ai_routing_enabled ? '#00e5a0' : '#ff4757'} />
+      </div>
 
       <header className="flex items-center justify-between px-4 h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
         <div className="flex items-center gap-3">
@@ -371,13 +763,33 @@ export default function CompanyDashboard() {
 
       <main className="flex-1 overflow-y-auto">
         <Routes>
-          <Route path="/" element={<CompanyDrivers company={company} />} />
+          <Route path="/" element={<LiveDispatch />} />
+          <Route path="/marketplace" element={<CompanyMarketplace company={company} />} />
+          <Route path="/drivers" element={<CompanyDrivers company={company} />} />
           <Route path="/trips" element={<CompanyTrips company={company} />} />
           <Route path="/invoices" element={<CompanyInvoices company={company} />} />
+          <Route path="/ai-controls" element={<CompanyAIControls company={company} setCompany={setCompany} />} />
+          <Route path="/guides" element={<CompanyGuides />} />
           <Route path="/settings" element={<CompanySettings company={company} setCompany={setCompany} />} />
-          <Route path="/*" element={<CompanyDrivers company={company} />} />
+          <Route path="/*" element={<LiveDispatch />} />
         </Routes>
       </main>
     </div>
+  );
+}
+
+function StatusChip({ label, color }) {
+  return (
+    <span
+      className="text-[11px] px-2.5 py-1 rounded-full"
+      style={{
+        background: `${color}15`,
+        border: `1px solid ${color}33`,
+        color,
+        fontWeight: 600,
+      }}
+    >
+      {label}
+    </span>
   );
 }

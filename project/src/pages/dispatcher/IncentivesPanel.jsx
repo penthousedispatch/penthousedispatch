@@ -46,30 +46,17 @@ export default function IncentivesPanel() {
     if (org?.id) loadAll();
   }, [org?.id, drivers.length]);
 
-  async function ensureDriverOfMonth(orgId) {
+  async function ensureDefaultIncentives(orgId) {
     if (!orgId) return;
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
+    const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 0);
     monthEnd.setHours(23, 59, 59, 999);
+    const weekEnd = new Date(start.getTime() + 6 * 86400000);
 
-    const { data: existing } = await supabase
-      .from('incentives')
-      .select('id')
-      .eq('org_id', orgId)
-      .eq('name', 'Driver of the Month')
-      .eq('goal_type', 'trips')
-      .gte('start_date', monthStart.toISOString().slice(0, 10))
-      .lte('end_date', monthEnd.toISOString().slice(0, 10))
-      .maybeSingle();
-
-    if (existing?.id) return;
-
-    const { data: incentive } = await supabase
-      .from('incentives')
-      .insert({
-        org_id: orgId,
+    const defaults = [
+      {
         name: 'Driver of the Month',
         description: 'Top driver by completed trips this month wins the featured leaderboard bonus.',
         goal_type: 'trips',
@@ -77,29 +64,103 @@ export default function IncentivesPanel() {
         bonus_amount: 500,
         start_date: monthStart.toISOString().slice(0, 10),
         end_date: monthEnd.toISOString().slice(0, 10),
-        is_active: true,
         celebration_style: 'spotlight',
         celebration_message: 'You climbed to the top of the monthly trip board. Keep the crown.',
-      })
-      .select()
-      .maybeSingle();
+      },
+      {
+        name: 'Morning Rush Champion',
+        description: 'Crush the morning pickup rush with a strong trip streak before noon.',
+        goal_type: 'trips',
+        goal_value: 18,
+        bonus_amount: 120,
+        start_date: start.toISOString().slice(0, 10),
+        end_date: weekEnd.toISOString().slice(0, 10),
+        celebration_style: 'turbo',
+        celebration_message: 'You owned the morning rush and banked the bonus.',
+      },
+      {
+        name: 'Perfect Pickup Streak',
+        description: 'Complete a full week of timely pickups without a no-show.',
+        goal_type: 'trips',
+        goal_value: 25,
+        bonus_amount: 150,
+        start_date: start.toISOString().slice(0, 10),
+        end_date: weekEnd.toISOString().slice(0, 10),
+        celebration_style: 'stars',
+        celebration_message: 'Pickup streak complete. Riders can count on you.',
+      },
+      {
+        name: 'Five Star Service',
+        description: 'Hit your service target and keep riders happy all week.',
+        goal_type: 'trips',
+        goal_value: 30,
+        bonus_amount: 175,
+        start_date: start.toISOString().slice(0, 10),
+        end_date: weekEnd.toISOString().slice(0, 10),
+        celebration_style: 'confetti',
+        celebration_message: 'Service goal reached. Keep delivering the premium experience.',
+      },
+      {
+        name: 'Weekend Warrior',
+        description: 'Take the late-weekend demand and turn it into a leaderboard push.',
+        goal_type: 'trips',
+        goal_value: 20,
+        bonus_amount: 160,
+        start_date: start.toISOString().slice(0, 10),
+        end_date: weekEnd.toISOString().slice(0, 10),
+        celebration_style: 'spotlight',
+        celebration_message: 'Weekend shift complete. You outworked the field.',
+      },
+      {
+        name: 'Long Haul Bonus',
+        description: 'Stack high-value long trips and beat your earnings goal.',
+        goal_type: 'revenue',
+        goal_value: 900,
+        bonus_amount: 220,
+        start_date: start.toISOString().slice(0, 10),
+        end_date: weekEnd.toISOString().slice(0, 10),
+        celebration_style: 'turbo',
+        celebration_message: 'Revenue target cleared. Your long-haul strategy paid off.',
+      },
+    ];
 
-    if (incentive?.id && drivers.length > 0) {
-      await supabase.from('driver_incentive_enrollments').upsert(
-        drivers.map(driver => ({
-          incentive_id: incentive.id,
-          driver_id: driver.id,
-          current_progress: 0,
-          earned: false,
-        })),
-        { onConflict: 'incentive_id,driver_id' }
-      );
+    for (const incentiveSeed of defaults) {
+      const { data: existing } = await supabase
+        .from('incentives')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('name', incentiveSeed.name)
+        .maybeSingle();
+
+      if (existing?.id) continue;
+
+      const { data: incentive } = await supabase
+        .from('incentives')
+        .insert({
+          org_id: orgId,
+          is_active: true,
+          ...incentiveSeed,
+        })
+        .select()
+        .maybeSingle();
+
+      if (incentive?.id && drivers.length > 0) {
+        await supabase.from('driver_incentive_enrollments').upsert(
+          drivers.map(driver => ({
+            incentive_id: incentive.id,
+            driver_id: driver.id,
+            current_progress: 0,
+            earned: false,
+          })),
+          { onConflict: 'incentive_id,driver_id' }
+        );
+      }
     }
   }
 
   async function loadAll() {
     setLoading(true);
-    await ensureDriverOfMonth(org?.id);
+    await ensureDefaultIncentives(org?.id);
     const [{ data: inv, error: invErr }, { data: enr, error: enrErr }] = await Promise.all([
       supabase.from('incentives').select('*').eq('org_id', org?.id).order('created_at', { ascending: false }),
       supabase.from('driver_incentive_enrollments').select('*, incentives!inner(org_id)').eq('incentives.org_id', org?.id),

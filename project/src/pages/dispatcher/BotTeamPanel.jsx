@@ -94,9 +94,9 @@ const BOT_DEFS = [
   },
   {
     id: 'codex_bot',
-    name: 'CodexBot',
+    name: 'Frank',
     role: 'Fix & Investigation Worker',
-    desc: 'Uses OpenAI to investigate operational issues and produce safe fix plans or auto-actions from approved action types.',
+    desc: 'Codex-powered implementer bot for operational issue diagnosis, safe fix plans, and controlled automation proposals.',
     icon: Bot,
     color: '#7dd3fc',
     defaultInterval: 15,
@@ -116,9 +116,9 @@ const BOT_DEFS = [
   },
   {
     id: 'claude_bot',
-    name: 'ClaudeBot',
+    name: 'Darius',
     role: 'Reviewer & Second Opinion',
-    desc: 'Uses Anthropic to review threats and pending bot actions, then recommend mitigation or escalation with extra risk scrutiny.',
+    desc: 'Claude-powered reviewer bot for second opinions, threat review, and risk-focused approval guidance.',
     icon: Bot,
     color: '#c084fc',
     defaultInterval: 20,
