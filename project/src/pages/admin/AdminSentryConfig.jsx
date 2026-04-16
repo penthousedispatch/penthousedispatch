@@ -183,11 +183,22 @@ export default function AdminSentryConfig() {
       updated_at: new Date().toISOString(),
     };
 
-    const saveQuery = form.id
+    let configId = form.id;
+    if (!configId) {
+      const { data: existing } = await supabase
+        .from('sentry_config')
+        .select('id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      configId = existing?.id || null;
+    }
+
+    const saveQuery = configId
       ? supabase
           .from('sentry_config')
           .update(payload)
-          .eq('id', form.id)
+          .eq('id', configId)
           .select()
           .maybeSingle()
       : supabase
@@ -207,10 +218,20 @@ export default function AdminSentryConfig() {
       return;
     }
 
-    const persisted = data || {
+    let persisted = data;
+    if (!persisted) {
+      const { data: refreshed } = await supabase
+        .from('sentry_config')
+        .select('*')
+        .eq('id', configId)
+        .maybeSingle();
+      persisted = refreshed;
+    }
+
+    persisted = persisted || {
       ...(sentryConfig || {}),
       ...payload,
-      id: data?.id || form.id || sentryConfig?.id || null,
+      id: configId || sentryConfig?.id || null,
     };
 
     setSentryConfig(persisted);
@@ -416,10 +437,11 @@ export default function AdminSentryConfig() {
           <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
             <div className="flex items-center gap-2 mb-1">
               <Key className="w-4 h-4" style={{ color: '#c9a84c' }} />
-              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Webhook Security</p>
+              <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bearer Webhook Secret</p>
             </div>
             <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.25)', fontSize: 11 }}>
-              Generate a secret and append it to your inbound URLs. SentryMS must include it or calls will be rejected.
+              Generate or paste the secret Sentry should send in the header:
+              <span style={{ color: '#c9a84c' }}> Authorization: Bearer &lt;secret&gt;</span>
             </p>
             <div className="flex gap-2">
               <input
@@ -427,7 +449,7 @@ export default function AdminSentryConfig() {
                 value={form.webhook_secret}
                 onChange={e => setForm({ ...form, webhook_secret: e.target.value })}
                 className="flex-1 font-mono text-xs"
-                placeholder="Leave blank to allow all inbound calls"
+                placeholder="Paste or generate your bearer webhook secret"
                 style={{ fontSize: 12 }}
               />
               <button

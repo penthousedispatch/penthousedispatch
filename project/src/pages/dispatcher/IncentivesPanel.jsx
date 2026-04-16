@@ -10,6 +10,13 @@ const GOAL_TYPES = [
   { id: 'hours', label: 'Hours Worked', icon: '⏱️', unit: 'hrs' },
 ];
 
+const CELEBRATION_STYLES = [
+  { id: 'confetti', label: 'Confetti Burst' },
+  { id: 'spotlight', label: 'Spotlight Win' },
+  { id: 'stars', label: 'Star Shower' },
+  { id: 'turbo', label: 'Turbo Surge' },
+];
+
 const EMPTY_FORM = {
   name: '',
   description: '',
@@ -19,6 +26,8 @@ const EMPTY_FORM = {
   start_date: new Date().toISOString().slice(0, 10),
   end_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
   is_active: true,
+  celebration_style: 'confetti',
+  celebration_message: '',
 };
 
 export default function IncentivesPanel() {
@@ -34,14 +43,66 @@ export default function IncentivesPanel() {
   const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
-    loadAll();
-  }, []);
+    if (org?.id) loadAll();
+  }, [org?.id, drivers.length]);
+
+  async function ensureDriverOfMonth(orgId) {
+    if (!orgId) return;
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+    monthEnd.setHours(23, 59, 59, 999);
+
+    const { data: existing } = await supabase
+      .from('incentives')
+      .select('id')
+      .eq('org_id', orgId)
+      .eq('name', 'Driver of the Month')
+      .eq('goal_type', 'trips')
+      .gte('start_date', monthStart.toISOString().slice(0, 10))
+      .lte('end_date', monthEnd.toISOString().slice(0, 10))
+      .maybeSingle();
+
+    if (existing?.id) return;
+
+    const { data: incentive } = await supabase
+      .from('incentives')
+      .insert({
+        org_id: orgId,
+        name: 'Driver of the Month',
+        description: 'Top driver by completed trips this month wins the featured leaderboard bonus.',
+        goal_type: 'trips',
+        goal_value: 100,
+        bonus_amount: 500,
+        start_date: monthStart.toISOString().slice(0, 10),
+        end_date: monthEnd.toISOString().slice(0, 10),
+        is_active: true,
+        celebration_style: 'spotlight',
+        celebration_message: 'You climbed to the top of the monthly trip board. Keep the crown.',
+      })
+      .select()
+      .maybeSingle();
+
+    if (incentive?.id && drivers.length > 0) {
+      await supabase.from('driver_incentive_enrollments').upsert(
+        drivers.map(driver => ({
+          incentive_id: incentive.id,
+          driver_id: driver.id,
+          current_progress: 0,
+          earned: false,
+        })),
+        { onConflict: 'incentive_id,driver_id' }
+      );
+    }
+  }
 
   async function loadAll() {
     setLoading(true);
+    await ensureDriverOfMonth(org?.id);
     const [{ data: inv, error: invErr }, { data: enr, error: enrErr }] = await Promise.all([
-      supabase.from('incentives').select('*').order('created_at', { ascending: false }),
-      supabase.from('driver_incentive_enrollments').select('*'),
+      supabase.from('incentives').select('*').eq('org_id', org?.id).order('created_at', { ascending: false }),
+      supabase.from('driver_incentive_enrollments').select('*, incentives!inner(org_id)').eq('incentives.org_id', org?.id),
     ]);
     if (invErr) handleSupabaseError(invErr, 'IncentivesPanel:loadAll:incentives', { silent: true });
     if (enrErr) handleSupabaseError(enrErr, 'IncentivesPanel:loadAll:enrollments', { silent: true });
@@ -79,6 +140,8 @@ export default function IncentivesPanel() {
       org_id: orgId,
       goal_value: parseFloat(form.goal_value) || 1,
       bonus_amount: parseFloat(form.bonus_amount) || 0,
+      celebration_style: form.celebration_style || 'confetti',
+      celebration_message: form.celebration_message || '',
     };
 
     if (editingId) {
@@ -155,6 +218,8 @@ export default function IncentivesPanel() {
       start_date: inc.start_date,
       end_date: inc.end_date,
       is_active: inc.is_active,
+      celebration_style: inc.celebration_style || 'confetti',
+      celebration_message: inc.celebration_message || '',
     });
     setEditingId(inc.id);
     setShowForm(true);
@@ -282,6 +347,31 @@ export default function IncentivesPanel() {
                   type="date"
                   value={form.end_date}
                   onChange={e => setForm({ ...form, end_date: e.target.value })}
+                  className="w-full"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Celebration Animation</label>
+                <select
+                  value={form.celebration_style}
+                  onChange={e => setForm({ ...form, celebration_style: e.target.value })}
+                  className="w-full"
+                >
+                  {CELEBRATION_STYLES.map(style => (
+                    <option key={style.id} value={style.id}>{style.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Celebration Message</label>
+                <input
+                  type="text"
+                  placeholder="What drivers should see when they hit this goal"
+                  value={form.celebration_message}
+                  onChange={e => setForm({ ...form, celebration_message: e.target.value })}
                   className="w-full"
                 />
               </div>

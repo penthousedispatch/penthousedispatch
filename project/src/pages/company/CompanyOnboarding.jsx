@@ -67,6 +67,8 @@ export default function CompanyOnboarding() {
     tax_id: '',
     billing_contact_name: '',
     billing_contact_email: '',
+    import_source: 'sentry',
+    asm_notes: '',
     sentry_base_url: 'https://dsp-integration.test.sentryms.com',
     sentry_username: '',
     sentry_password: '',
@@ -76,6 +78,23 @@ export default function CompanyOnboarding() {
   function setField(key, val) {
     setForm(prev => ({ ...prev, [key]: val }));
   }
+
+  React.useEffect(() => {
+    try {
+      const seed = JSON.parse(localStorage.getItem('pd_company_signup_seed') || 'null');
+      if (seed) {
+        setForm(prev => ({
+          ...prev,
+          company_name: prev.company_name || seed.company_name || '',
+          billing_contact_name: prev.billing_contact_name || seed.billing_contact_name || '',
+          billing_contact_email: prev.billing_contact_email || seed.billing_contact_email || '',
+          import_source: seed.import_source || prev.import_source,
+        }));
+      }
+    } catch (_) {
+      // ignore malformed local storage seed
+    }
+  }, []);
 
   function handleScroll() {
     const el = agreementRef.current;
@@ -182,6 +201,10 @@ export default function CompanyOnboarding() {
       sentry_api_key: form.sentry_api_key,
       onboarding_status: 'agreement_signed',
       is_approved: false,
+      notes: [
+        `IMPORT_SOURCE:${form.import_source.toUpperCase()}`,
+        form.asm_notes ? `ASM_NOTES:${form.asm_notes}` : '',
+      ].filter(Boolean).join('\n'),
     }).select().maybeSingle();
 
     if (compErr || !comp) {
@@ -254,75 +277,130 @@ export default function CompanyOnboarding() {
               <div className="p-5 sm:p-6">
                 <div className="flex items-center gap-2 mb-1">
                   <Zap className="w-4 h-4" style={{ color: '#c9a84c' }} />
-                  <h2 className="text-base font-700" style={{ fontWeight: 700 }}>Connect SentryMS</h2>
+                  <h2 className="text-base font-700" style={{ fontWeight: 700 }}>
+                    {form.import_source === 'asm' ? 'Prepare ASM Transfer' : form.import_source === 'manual' ? 'Choose Data Setup' : 'Connect SentryMS'}
+                  </h2>
                 </div>
                 <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
-                  Enter your SentryMS credentials to auto-import your company info. Skip this step if you do not use SentryMS.
+                  {form.import_source === 'asm'
+                    ? 'Tell us you are migrating from ASM so the platform can tag your onboarding correctly and keep the data-transfer path visible.'
+                    : form.import_source === 'manual'
+                      ? 'You can skip imports and enter everything manually if your business is starting fresh.'
+                      : 'Enter your SentryMS credentials to auto-import your company info. Skip this step if you do not use SentryMS.'}
                 </p>
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Sentry Base URL</label>
-                    <input type="url" value={form.sentry_base_url} onChange={e => setField('sentry_base_url', e.target.value)} className="w-full" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Username</label>
-                      <input type="text" value={form.sentry_username} onChange={e => setField('sentry_username', e.target.value)} className="w-full" placeholder="API username" autoComplete="off" />
-                    </div>
-                    <div>
-                      <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Password</label>
-                      <input type="password" value={form.sentry_password} onChange={e => setField('sentry_password', e.target.value)} className="w-full" placeholder="API password" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>API Key (Bearer)</label>
-                    <input type="password" value={form.sentry_api_key} onChange={e => setField('sentry_api_key', e.target.value)} className="w-full" placeholder="Bearer token" />
-                  </div>
-
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={testSentryConnection}
-                      disabled={testingConn}
-                      className="btn-ghost flex items-center gap-1.5 text-sm px-4 py-2"
-                    >
-                      {testingConn ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                      Test Connection
-                    </button>
-                    {connResult?.authenticated && (
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  {[
+                    { value: 'sentry', label: 'Sentry' },
+                    { value: 'asm', label: 'ASM' },
+                    { value: 'manual', label: 'Manual' },
+                  ].map(option => {
+                    const active = form.import_source === option.value;
+                    return (
                       <button
+                        key={option.value}
                         type="button"
-                        onClick={importFromSentry}
-                        disabled={importing}
-                        className="btn-gold flex items-center gap-1.5 text-sm px-4 py-2"
+                        onClick={() => setField('import_source', option.value)}
+                        className="py-2 rounded-xl text-xs transition-all"
+                        style={{
+                          background: active ? 'rgba(201,168,76,0.12)' : 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${active ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.08)'}`,
+                          color: active ? '#c9a84c' : 'rgba(255,255,255,0.45)',
+                          fontWeight: active ? 600 : 400,
+                        }}
                       >
-                        {importing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                        {importing ? 'Importing...' : 'Import Company Info'}
+                        {option.label}
                       </button>
-                    )}
-                  </div>
+                    );
+                  })}
+                </div>
+                <div className="space-y-3">
+                  {form.import_source === 'sentry' ? (
+                    <>
+                      <div>
+                        <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Sentry Base URL</label>
+                        <input type="url" value={form.sentry_base_url} onChange={e => setField('sentry_base_url', e.target.value)} className="w-full" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Username</label>
+                          <input type="text" value={form.sentry_username} onChange={e => setField('sentry_username', e.target.value)} className="w-full" placeholder="API username" autoComplete="off" />
+                        </div>
+                        <div>
+                          <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Password</label>
+                          <input type="password" value={form.sentry_password} onChange={e => setField('sentry_password', e.target.value)} className="w-full" placeholder="API password" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>API Key (Bearer)</label>
+                        <input type="password" value={form.sentry_api_key} onChange={e => setField('sentry_api_key', e.target.value)} className="w-full" placeholder="Bearer token" />
+                      </div>
 
-                  {connResult && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: connResult.authenticated ? 'rgba(0,229,160,0.08)' : 'rgba(255,71,87,0.08)', border: `1px solid ${connResult.authenticated ? 'rgba(0,229,160,0.2)' : 'rgba(255,71,87,0.2)'}` }}>
-                      {connResult.authenticated
-                        ? <CheckCircle className="w-4 h-4 flex-shrink-0" style={{ color: '#00e5a0' }} />
-                        : <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: '#ff4757' }} />}
-                      <span style={{ color: connResult.authenticated ? '#00e5a0' : '#ff4757' }}>
-                        {connResult.authenticated ? `Connected (${connResult.latencyMs}ms)` : (connResult.error || 'Connection failed')}
-                      </span>
-                    </div>
-                  )}
+                      <div className="flex gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={testSentryConnection}
+                          disabled={testingConn}
+                          className="btn-ghost flex items-center gap-1.5 text-sm px-4 py-2"
+                        >
+                          {testingConn ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                          Test Connection
+                        </button>
+                        {connResult?.authenticated && (
+                          <button
+                            type="button"
+                            onClick={importFromSentry}
+                            disabled={importing}
+                            className="btn-gold flex items-center gap-1.5 text-sm px-4 py-2"
+                          >
+                            {importing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                            {importing ? 'Importing...' : 'Import Company Info'}
+                          </button>
+                        )}
+                      </div>
 
-                  {importResult && (
-                    <div className="p-3 rounded-lg text-sm" style={{ background: importResult.ok ? 'rgba(201,168,76,0.08)' : 'rgba(255,255,255,0.04)', border: `1px solid ${importResult.ok ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.08)'}` }}>
-                      {importResult.ok ? (
-                        <>
-                          <p style={{ color: '#c9a84c', fontWeight: 600, marginBottom: 4 }}>Imported {importResult.count} field{importResult.count !== 1 ? 's' : ''} from SentryMS</p>
-                          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{importResult.fields.join(', ')}</p>
-                        </>
-                      ) : (
-                        <p style={{ color: 'rgba(255,255,255,0.4)' }}>No company data found in SentryMS. You can enter details manually on the next step.</p>
+                      {connResult && (
+                        <div className="flex items-center gap-2 p-3 rounded-lg text-sm" style={{ background: connResult.authenticated ? 'rgba(0,229,160,0.08)' : 'rgba(255,71,87,0.08)', border: `1px solid ${connResult.authenticated ? 'rgba(0,229,160,0.2)' : 'rgba(255,71,87,0.2)'}` }}>
+                          {connResult.authenticated
+                            ? <CheckCircle className="w-4 h-4 flex-shrink-0" style={{ color: '#00e5a0' }} />
+                            : <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: '#ff4757' }} />}
+                          <span style={{ color: connResult.authenticated ? '#00e5a0' : '#ff4757' }}>
+                            {connResult.authenticated ? `Connected (${connResult.latencyMs}ms)` : (connResult.error || 'Connection failed')}
+                          </span>
+                        </div>
                       )}
+
+                      {importResult && (
+                        <div className="p-3 rounded-lg text-sm" style={{ background: importResult.ok ? 'rgba(201,168,76,0.08)' : 'rgba(255,255,255,0.04)', border: `1px solid ${importResult.ok ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.08)'}` }}>
+                          {importResult.ok ? (
+                            <>
+                              <p style={{ color: '#c9a84c', fontWeight: 600, marginBottom: 4 }}>Imported {importResult.count} field{importResult.count !== 1 ? 's' : ''} from SentryMS</p>
+                              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{importResult.fields.join(', ')}</p>
+                            </>
+                          ) : (
+                            <p style={{ color: 'rgba(255,255,255,0.4)' }}>No company data found in SentryMS. You can enter details manually on the next step.</p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  ) : form.import_source === 'asm' ? (
+                    <div className="space-y-3">
+                      <div className="p-3 rounded-lg text-sm" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}>
+                        ASM migration mode enabled. Finish signup now, then use the admin side to map your legacy export into the platform without retyping everything.
+                      </div>
+                      <div>
+                        <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>ASM migration notes</label>
+                        <textarea
+                          value={form.asm_notes}
+                          onChange={e => setField('asm_notes', e.target.value)}
+                          rows={4}
+                          className="w-full"
+                          placeholder="Example: 42 drivers, 3 dispatchers, weekly CSV export available, last billing period closed in ASM..."
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.45)' }}>
+                      Manual setup selected. Continue and enter your company information directly on the next steps.
                     </div>
                   )}
                 </div>

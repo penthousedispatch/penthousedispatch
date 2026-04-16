@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, User, Building2, Database } from 'lucide-react';
 
 export default function AuthPage() {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [signupRole, setSignupRole] = useState('dispatcher');
+  const [importSource, setImportSource] = useState('sentry');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -24,6 +27,8 @@ export default function AuthPage() {
     } else {
       const cleanEmail = email.trim();
       const cleanName = name.trim();
+      const cleanCompanyName = companyName.trim();
+      const nextRole = signupRole;
       const { data, error: err } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -31,7 +36,9 @@ export default function AuthPage() {
           emailRedirectTo: `${window.location.origin}/`,
           data: {
             full_name: cleanName,
-            role: 'dispatcher',
+            role: nextRole,
+            company_name: cleanCompanyName,
+            import_source: importSource,
           },
         },
       });
@@ -42,7 +49,7 @@ export default function AuthPage() {
           id: data.user.id,
           email: cleanEmail,
           full_name: cleanName,
-          role: 'dispatcher',
+          role: nextRole,
         });
 
         if (profileErr) {
@@ -50,6 +57,15 @@ export default function AuthPage() {
           setLoading(false);
           return;
         }
+      }
+
+      if (nextRole === 'company') {
+        localStorage.setItem('pd_company_signup_seed', JSON.stringify({
+          company_name: cleanCompanyName,
+          billing_contact_name: cleanName,
+          billing_contact_email: cleanEmail,
+          import_source: importSource,
+        }));
       }
 
       if (data.user && !data.session) {
@@ -124,17 +140,92 @@ export default function AuthPage() {
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             {mode === 'signup' && (
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'rgba(255,255,255,0.3)' }} />
-                <input
-                  type="text"
-                  placeholder="Full name"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  required
-                  className="w-full pl-10"
-                />
-              </div>
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { value: 'dispatcher', label: 'Dispatcher', icon: User },
+                    { value: 'company', label: 'Company', icon: Building2 },
+                  ].map(option => {
+                    const Icon = option.icon;
+                    const active = signupRole === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setSignupRole(option.value)}
+                        className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm transition-all"
+                        style={{
+                          background: active ? 'rgba(201,168,76,0.15)' : 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${active ? 'rgba(201,168,76,0.3)' : 'rgba(255,255,255,0.08)'}`,
+                          color: active ? '#c9a84c' : 'rgba(255,255,255,0.45)',
+                          fontWeight: active ? 600 : 400,
+                        }}
+                      >
+                        <Icon className="w-4 h-4" />
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'rgba(255,255,255,0.3)' }} />
+                  <input
+                    type="text"
+                    placeholder={signupRole === 'company' ? 'Primary contact name' : 'Full name'}
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    required
+                    className="w-full pl-10"
+                  />
+                </div>
+
+                {signupRole === 'company' && (
+                  <>
+                    <div className="relative">
+                      <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'rgba(255,255,255,0.3)' }} />
+                      <input
+                        type="text"
+                        placeholder="Company name"
+                        value={companyName}
+                        onChange={e => setCompanyName(e.target.value)}
+                        required
+                        className="w-full pl-10"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.45)' }}>Port data from</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { value: 'sentry', label: 'Sentry' },
+                          { value: 'asm', label: 'ASM' },
+                          { value: 'manual', label: 'Manual' },
+                        ].map(option => {
+                          const active = importSource === option.value;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => setImportSource(option.value)}
+                              className="flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs transition-all"
+                              style={{
+                                background: active ? 'rgba(201,168,76,0.12)' : 'rgba(255,255,255,0.03)',
+                                border: `1px solid ${active ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.08)'}`,
+                                color: active ? '#c9a84c' : 'rgba(255,255,255,0.45)',
+                                fontWeight: active ? 600 : 400,
+                              }}
+                            >
+                              <Database className="w-3 h-3" />
+                              {option.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </>
             )}
 
             <div className="relative">
@@ -200,7 +291,9 @@ export default function AuthPage() {
 
           {mode === 'signup' && (
             <p className="text-xs text-center mt-4" style={{ color: 'rgba(255,255,255,0.3)', lineHeight: 1.6 }}>
-              New accounts are registered as dispatchers. You can set up your company profile after signing in.
+              {signupRole === 'company'
+                ? 'Company accounts can start onboarding immediately and choose to port data from Sentry, ASM, or manual setup.'
+                : 'Dispatcher accounts are created for platform operations and internal dispatch use.'}
             </p>
           )}
         </div>

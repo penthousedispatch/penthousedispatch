@@ -23,6 +23,8 @@ export function AppProvider({ children }) {
   const schedRunningRef = useRef(false);
   const orgIdRef = useRef(null);
   const billingSyncRef = useRef(0);
+  const liveChannelRef = useRef(null);
+  const liveRefreshTimersRef = useRef({});
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session }, error }) => {
@@ -49,6 +51,14 @@ export function AppProvider({ children }) {
       if (autoPullRef.current) clearInterval(autoPullRef.current);
     };
   }, []);
+
+  function scheduleLiveRefresh(key, fn, delay = 350) {
+    if (liveRefreshTimersRef.current[key]) clearTimeout(liveRefreshTimersRef.current[key]);
+    liveRefreshTimersRef.current[key] = setTimeout(() => {
+      fn();
+      delete liveRefreshTimersRef.current[key];
+    }, delay);
+  }
 
   async function loadUserData(u) {
     try {
@@ -422,6 +432,51 @@ export function AppProvider({ children }) {
 
     return result;
   }
+
+  useEffect(() => {
+    if (liveChannelRef.current) {
+      supabase.removeChannel(liveChannelRef.current);
+      liveChannelRef.current = null;
+    }
+
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`app-live-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => {
+        scheduleLiveRefresh('drivers', loadDrivers);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'marketplace_trips' }, () => {
+        scheduleLiveRefresh('trips', loadTrips);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_assignments' }, () => {
+        scheduleLiveRefresh('assignments', loadAssignments);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'companies' }, () => {
+        if (profile?.role === 'company' || profile?.role === 'admin') {
+          scheduleLiveRefresh('company', () => loadUserData(user), 500);
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+        scheduleLiveRefresh('profile', () => loadUserData(user), 500);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentry_config' }, async () => {
+        const { data: cfg } = await supabase.from('sentry_config').select('*').maybeSingle();
+        if (cfg) setSentryConfig(cfg);
+      })
+      .subscribe();
+
+    liveChannelRef.current = channel;
+
+    return () => {
+      if (liveChannelRef.current) {
+        supabase.removeChannel(liveChannelRef.current);
+        liveChannelRef.current = null;
+      }
+      Object.values(liveRefreshTimersRef.current).forEach(timer => clearTimeout(timer));
+      liveRefreshTimersRef.current = {};
+    };
+  }, [user?.id, profile?.role, company?.id]);
 
   const value = {
     user, profile, org, company, drivers, trips, assignments, schedules,

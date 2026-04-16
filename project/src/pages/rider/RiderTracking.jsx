@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MapPin, Clock, User, CheckCircle, Navigation } from 'lucide-react';
 import { fbGet, fbListen } from '../../lib/firebase';
-import { getPCarSVG } from '../../components/map/PCarMarker';
+import { getPCarSVG, calcBearing } from '../../components/map/PCarMarker';
 import AnimatedCar from '../../components/ui/AnimatedCar';
 
 const GMAPS_KEY = 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4';
@@ -55,6 +55,50 @@ export default function RiderTracking() {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const driverMarkerRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const previousDriverCoordsRef = useRef(null);
+
+  function cancelDriverAnimation() {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+  }
+
+  function buildCarIcon(heading) {
+    const svg = getPCarSVG({ isSelected: true, isOnTrip: true, heading });
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      scaledSize: new window.google.maps.Size(52, 52),
+      anchor: new window.google.maps.Point(26, 26),
+    };
+  }
+
+  function animateDriverMarker(from, to, heading) {
+    if (!driverMarkerRef.current) return;
+    cancelDriverAnimation();
+    const startedAt = performance.now();
+    const durationMs = 1100;
+
+    const step = now => {
+      const progress = Math.min((now - startedAt) / durationMs, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextPosition = {
+        lat: from.lat + (to.lat - from.lat) * eased,
+        lng: from.lng + (to.lng - from.lng) * eased,
+      };
+      driverMarkerRef.current.setPosition(nextPosition);
+      driverMarkerRef.current.setIcon(buildCarIcon(heading));
+
+      if (progress < 1) {
+        animationFrameRef.current = requestAnimationFrame(step);
+      } else {
+        animationFrameRef.current = null;
+      }
+    };
+
+    animationFrameRef.current = requestAnimationFrame(step);
+  }
 
   useEffect(() => {
     if (!riderKey) { setError('No trip key provided'); setLoading(false); return; }
@@ -101,6 +145,7 @@ export default function RiderTracking() {
   }, [loading, driverCoords]);
 
   useEffect(() => () => {
+    cancelDriverAnimation();
     if (driverMarkerRef.current) {
       driverMarkerRef.current.setMap(null);
       driverMarkerRef.current = null;
@@ -110,20 +155,22 @@ export default function RiderTracking() {
   useEffect(() => {
     if (!mapsLoaded || !mapInstanceRef.current || !driverCoords || !window.google) return;
 
-    const CAR_SVG = getPCarSVG({ isSelected: true, isOnTrip: true, heading: 0 });
-    const icon = {
-      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(CAR_SVG),
-      scaledSize: new window.google.maps.Size(52, 52),
-      anchor: new window.google.maps.Point(26, 26),
-    };
+    const previous = previousDriverCoordsRef.current;
+    const heading = previous ? calcBearing(previous, driverCoords) : 0;
+    previousDriverCoordsRef.current = driverCoords;
 
     if (driverMarkerRef.current) {
-      driverMarkerRef.current.setPosition(driverCoords);
+      if (previous) {
+        animateDriverMarker(previous, driverCoords, heading);
+      } else {
+        driverMarkerRef.current.setPosition(driverCoords);
+        driverMarkerRef.current.setIcon(buildCarIcon(heading));
+      }
     } else {
       driverMarkerRef.current = new window.google.maps.Marker({
         position: driverCoords,
         map: mapInstanceRef.current,
-        icon,
+        icon: buildCarIcon(heading),
         zIndex: 100,
       });
     }

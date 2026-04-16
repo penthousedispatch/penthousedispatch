@@ -412,6 +412,20 @@ textarea {
   to { opacity: 1; }
 }
 
+@keyframes incentive-burst {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.4) rotate(0deg);
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc((var(--burst-x, 0) * 1px)), 120vh, 0) scale(1.1) rotate(420deg);
+  }
+}
+
 .animate-fade-in {
   animation: fade-in 0.2s ease both;
 }
@@ -423,4 +437,3 @@ textarea {
 .safe-top {
   padding-top: env(safe-area-inset-top, 0px);
 }
-

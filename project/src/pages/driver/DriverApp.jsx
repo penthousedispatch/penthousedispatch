@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight } from 'lucide-react';
+import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight, Trophy } from 'lucide-react';
 import { fbSet, fbGet } from '../../lib/firebase';
 import { supabase } from '../../lib/supabase';
 import { getMotivationMessage } from '../../utils/aiMotivation';
@@ -14,7 +14,9 @@ import DriverChat from './DriverChat';
 import DriverPaymentSetup from './DriverPaymentSetup';
 import DriverScheduleView from './DriverScheduleView';
 import DriverGuide from './DriverGuide';
+import DriverCommunityHub from './DriverCommunityHub';
 import IncentiveGoalToast from '../../components/drivers/IncentiveGoalToast';
+import IncentiveCelebrationOverlay from '../../components/drivers/IncentiveCelebrationOverlay';
 
 export default function DriverApp() {
   const [driverData, setDriverData] = useState(null);
@@ -38,8 +40,10 @@ export default function DriverApp() {
   const [countdown, setCountdown] = useState(null);
   const [postTripSummary, setPostTripSummary] = useState(null);
   const [incentiveGoals, setIncentiveGoals] = useState(null);
+  const [celebration, setCelebration] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [showCommunity, setShowCommunity] = useState(false);
   const watchRef = useRef(null);
   const pollRef = useRef(null);
   const sheetStateRef = useRef(sheetState);
@@ -50,6 +54,7 @@ export default function DriverApp() {
   const sosTimerRef = useRef(null);
   const countdownRef = useRef(null);
   const locationRef = useRef(location);
+  const incentiveSnapshotRef = useRef([]);
 
   useEffect(() => { sheetStateRef.current = sheetState; }, [sheetState]);
   useEffect(() => { locationRef.current = location; }, [location]);
@@ -117,6 +122,7 @@ export default function DriverApp() {
         setTimeout(() => triggerMotivation({ driver, orgId: membership.org_id, trigger: 'shift_start' }), 3000);
         const progress = await getIncentiveProgress(driver.id);
         if (progress.length > 0) {
+          incentiveSnapshotRef.current = progress;
           const sorted = [...progress].sort((a, b) => (b.current / (b.goal || 1)) - (a.current / (a.goal || 1)));
           setTimeout(() => setIncentiveGoals(sorted), 6000);
         }
@@ -169,21 +175,57 @@ export default function DriverApp() {
     }
   }
 
-  async function getIncentiveProgress(driverId) {
+  async function getIncentiveProgress(driverId, overrides = {}) {
     if (!driverId) return [];
     const { data, error } = await supabase
       .from('driver_incentive_enrollments')
-      .select('*, incentives(name, goal_type, goal_value, bonus_amount)')
+      .select('*, incentives(id, name, goal_type, goal_value, bonus_amount, celebration_style, celebration_message)')
       .eq('driver_id', driverId)
       .eq('earned', false);
     if (error) logFailure('DriverApp:getIncentiveProgress', error);
     return (data || []).map(e => ({
+      id: e.incentives?.id,
       name: e.incentives?.name || '',
       goal: e.incentives?.goal_value || 0,
-      current: e.current_progress || 0,
+      current: Math.max(
+        e.current_progress || 0,
+        e.incentives?.goal_type === 'trips'
+          ? overrides.tripCount ?? earnings.trips ?? 0
+          : e.incentives?.goal_type === 'revenue'
+            ? overrides.earningsToday ?? earnings.today ?? 0
+            : e.incentives?.goal_type === 'hours'
+              ? overrides.hoursWorked ?? ((Date.now() - shiftStartRef.current) / 3600000)
+              : 0
+      ),
       unit: e.incentives?.goal_type === 'revenue' ? '$' : e.incentives?.goal_type === 'hours' ? 'hrs' : 'trips',
       bonus: e.incentives?.bonus_amount || 0,
+      celebration_style: e.incentives?.celebration_style || 'confetti',
+      celebration_message: e.incentives?.celebration_message || '',
     }));
+  }
+
+  function syncIncentiveFeedback(progress) {
+    const previous = incentiveSnapshotRef.current || [];
+    const completedNow = progress.find(goal => {
+      const prev = previous.find(item => item.id === goal.id);
+      const wasComplete = prev ? prev.current >= prev.goal : false;
+      return goal.goal > 0 && goal.current >= goal.goal && !wasComplete;
+    });
+
+    if (completedNow) {
+      setCelebration({
+        title: completedNow.name,
+        message: completedNow.celebration_message || `You hit the ${completedNow.name} goal. Keep the momentum going.`,
+        style: completedNow.celebration_style,
+        bonus: completedNow.bonus,
+      });
+    }
+
+    incentiveSnapshotRef.current = progress;
+    if (progress.length > 0) {
+      const sorted = [...progress].sort((a, b) => (b.current / (b.goal || 1)) - (a.current / (a.goal || 1)));
+      setIncentiveGoals(sorted);
+    }
   }
 
   function showToast(message) {
@@ -462,12 +504,18 @@ export default function DriverApp() {
       setTimeout(() => triggerMotivation({ trigger: 'five_trips' }), 1500);
     }
 
-    const progress = await getIncentiveProgress(driverData?.id);
+    const nextDisplayToday = tripEarnings
+      ? parseFloat(displayEarnings.today || 0) + parseFloat(tripEarnings || 0)
+      : parseFloat(displayEarnings.today || 0);
+    const progress = await getIncentiveProgress(driverData?.id, {
+      tripCount: newTrips,
+      earningsToday: nextDisplayToday,
+      hoursWorked: (Date.now() - shiftStartRef.current) / 3600000,
+    });
     const nearGoal = progress.some(p => p.goal > 0 && (p.current / p.goal) >= 0.8);
     if (nearGoal) setTimeout(() => triggerMotivation({ trigger: 'near_goal' }), 2000);
     if (progress.length > 0) {
-      const sorted = [...progress].sort((a, b) => (b.current / (b.goal || 1)) - (a.current / (a.goal || 1)));
-      setTimeout(() => setIncentiveGoals(sorted), 3000);
+      setTimeout(() => syncIncentiveFeedback(progress), 3000);
     }
 
     setTimeout(() => setPostTripSummary(null), 6000);
@@ -685,6 +733,13 @@ export default function DriverApp() {
         />
       )}
 
+      {celebration && (
+        <IncentiveCelebrationOverlay
+          celebration={celebration}
+          onDone={() => setCelebration(null)}
+        />
+      )}
+
       {onBreak && <BreakOverlay driverId={driverRecord?.id || driverData?.id} onEnd={() => setOnBreak(false)} />}
 
       {showPaymentSetup && (
@@ -729,6 +784,15 @@ export default function DriverApp() {
 
       {showGuide && <DriverGuide onClose={() => setShowGuide(false)} />}
 
+      {showCommunity && (
+        <DriverCommunityHub
+          orgId={orgId}
+          driver={driverRecord || driverData}
+          currentTrip={currentTrip}
+          onClose={() => setShowCommunity(false)}
+        />
+      )}
+
       {showMenu && (
         <div className="fixed inset-0 z-50 flex" onClick={() => setShowMenu(false)}>
           <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} />
@@ -772,6 +836,7 @@ export default function DriverApp() {
                 { icon: <Calendar className="w-5 h-5" />, color: '#00e5a0', label: 'My Schedule', sub: 'View today\'s trips', action: () => { setShowSchedule(true); setShowMenu(false); } },
                 { icon: <CreditCard className="w-5 h-5" />, color: '#c9a84c', label: 'Earnings & Pay', sub: 'Bank account & payouts', action: () => { setShowPaymentSetup(true); setShowMenu(false); } },
                 { icon: <Coffee className="w-5 h-5" />, color: '#f59e0b', label: 'Take a Break', sub: '15-minute break timer', action: () => { setOnBreak(true); setShowMenu(false); } },
+                { icon: <Trophy className="w-5 h-5" />, color: '#c9a84c', label: 'Community & Leaderboard', sub: 'Compete, post tips, track riders', action: () => { setShowCommunity(true); setShowMenu(false); } },
                 { icon: <BookOpen className="w-5 h-5" />, color: '#0ea5e9', label: 'Driver Guide', sub: 'How to use this app', action: () => { setShowGuide(true); setShowMenu(false); } },
               ].map((item, i) => (
                 <button

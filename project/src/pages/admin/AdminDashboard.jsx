@@ -258,6 +258,15 @@ export default function AdminDashboard() {
             </div>
           </div>
           <Link
+            to="/admin/ai"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+            title="Open AI Settings"
+            style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', fontWeight: 600, textDecoration: 'none' }}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            AI Settings
+          </Link>
+          <Link
             to="/driver"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
             title="Open Driver App"

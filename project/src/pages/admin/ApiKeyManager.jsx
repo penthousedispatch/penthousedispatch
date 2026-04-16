@@ -181,25 +181,31 @@ function NewKeyModal({ orgId, onCreated, onClose }) {
               style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb', outline: 'none' }}
             />
           </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl text-sm font-600 transition-all"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)', fontWeight: 600 }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreate}
-              disabled={saving || !name.trim()}
-              className="flex-1 py-2.5 rounded-xl text-sm font-600 flex items-center justify-center gap-2 transition-all"
-              style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600, opacity: saving || !name.trim() ? 0.5 : 1 }}
-            >
-              {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
-              Generate Key
-            </button>
-          </div>
+        </div>
+        <div
+          className="flex gap-2 px-5 py-4"
+          style={{
+            borderTop: '1px solid rgba(255,255,255,0.06)',
+            background: '#0d1117',
+            boxShadow: '0 -10px 24px rgba(0,0,0,0.35)',
+          }}
+        >
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl text-sm font-600 transition-all"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)', fontWeight: 600 }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleCreate}
+            disabled={saving || !name.trim()}
+            className="flex-1 py-2.5 rounded-xl text-sm font-600 flex items-center justify-center gap-2 transition-all"
+            style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600, opacity: saving || !name.trim() ? 0.5 : 1 }}
+          >
+            {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
+            Generate Key
+          </button>
         </div>
       </div>
     </div>
