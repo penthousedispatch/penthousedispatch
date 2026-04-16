@@ -76,6 +76,11 @@ function ProviderCard({ provider, integration, onConfigure, onTest, testing }) {
         </div>
 
         <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>{provider.description}</p>
+        {integration?.error_message && (
+          <p className="text-xs mb-3" style={{ color: '#ff4757', lineHeight: 1.5 }}>
+            {integration.error_message}
+          </p>
+        )}
 
         <div className="flex items-center justify-between">
           {integration?.last_sync_at ? (
@@ -259,24 +264,87 @@ export default function IntegrationHub() {
   const [saving, setSaving] = useState(false);
   const [testingKey, setTestingKey] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState(null);
+  const [banner, setBanner] = useState(null);
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data?.user?.id) setUserId(data.user.id);
+  function showBanner(type, text) {
+    setBanner({ type, text });
+    setTimeout(() => setBanner(null), 4000);
+  }
+
+  function validateProviderCredentials(provider, credentials) {
+    const errors = [];
+    const requiredFields = provider.fields.filter(field => field.type !== 'select');
+
+    requiredFields.forEach(field => {
+      const value = String(credentials[field.key] || '').trim();
+      if (!value) errors.push(`${field.label} is required`);
     });
-  }, []);
+
+    const urlFields = ['queue_url', 'function_url', 'webhook_url'];
+    urlFields.forEach(key => {
+      const raw = credentials[key];
+      if (raw) {
+        try {
+          new URL(raw);
+        } catch {
+          errors.push(`${key.replace(/_/g, ' ')} must be a valid URL`);
+        }
+      }
+    });
+
+    if (credentials.service_account_json) {
+      try {
+        JSON.parse(credentials.service_account_json);
+      } catch {
+        errors.push('Service Account JSON must be valid JSON');
+      }
+    }
+
+    if (provider.key === 'stripe') {
+      if (credentials.publishable_key && !String(credentials.publishable_key).startsWith('pk_')) errors.push('Stripe publishable key should start with pk_');
+      if (credentials.secret_key && !String(credentials.secret_key).startsWith('sk_')) errors.push('Stripe secret key should start with sk_');
+      if (credentials.webhook_secret && !String(credentials.webhook_secret).startsWith('whsec_')) errors.push('Stripe webhook secret should start with whsec_');
+    }
+
+    if (provider.key === 'twilio' && credentials.account_sid && !String(credentials.account_sid).startsWith('AC')) {
+      errors.push('Twilio Account SID should start with AC');
+    }
+
+    if (provider.key === 'sendgrid' && credentials.api_key && !String(credentials.api_key).startsWith('SG.')) {
+      errors.push('SendGrid API key should start with SG.');
+    }
+
+    if (provider.key === 'slack' && credentials.webhook_url && !String(credentials.webhook_url).includes('hooks.slack.com/services/')) {
+      errors.push('Slack webhook URL should point to hooks.slack.com/services/');
+    }
+
+    if (provider.key === 'zapier' && credentials.webhook_url && !String(credentials.webhook_url).includes('hooks.zapier.com/')) {
+      errors.push('Zapier webhook URL should point to hooks.zapier.com/');
+    }
+
+    if (provider.key === 'mapbox' && credentials.access_token && !/^p[ks]\./.test(String(credentials.access_token))) {
+      errors.push('Mapbox access token should start with pk. or sk.');
+    }
+
+    return errors;
+  }
 
   const load = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data } = await supabase
+    if (!org?.id) {
+      setIntegrations([]);
+      setLoading(false);
+      return;
+    }
+    const { data, error } = await supabase
       .from('saas_integrations')
       .select('*')
-      .eq('user_id', user.id);
+      .eq('org_id', org.id);
+    if (error) {
+      showBanner('error', `Failed to load integrations: ${error.message}`);
+    }
     setIntegrations(data || []);
     setLoading(false);
-  }, []);
+  }, [org?.id]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -285,12 +353,15 @@ export default function IntegrationHub() {
   }
 
   async function handleSave(provider, credentials) {
+    const validationErrors = validateProviderCredentials(provider, credentials);
+    if (validationErrors.length) {
+      showBanner('error', validationErrors[0]);
+      return;
+    }
+
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setSaving(false); return; }
     const existing = getIntegration(provider.key);
     const payload = {
-      user_id: user.id,
       org_id: org?.id || null,
       provider_key: provider.key,
       provider_name: provider.name,
@@ -298,14 +369,22 @@ export default function IntegrationHub() {
       enabled: true,
       credentials,
       health_status: 'unknown',
+      error_message: '',
       updated_at: new Date().toISOString(),
     };
+    let error = null;
     if (existing) {
-      await supabase.from('saas_integrations').update(payload).eq('id', existing.id);
+      ({ error } = await supabase.from('saas_integrations').update(payload).eq('id', existing.id));
     } else {
-      await supabase.from('saas_integrations').insert(payload);
+      ({ error } = await supabase.from('saas_integrations').insert(payload));
+    }
+    if (error) {
+      showBanner('error', `Save failed: ${error.message}`);
+      setSaving(false);
+      return;
     }
     await load();
+    showBanner('success', `${provider.name} saved. Run Test to validate the credentials format.`);
     setSaving(false);
     setActiveProvider(null);
   }
@@ -313,18 +392,38 @@ export default function IntegrationHub() {
   async function handleDisconnect(providerKey) {
     const existing = getIntegration(providerKey);
     if (!existing) return;
-    await supabase.from('saas_integrations').update({ enabled: false, health_status: 'disconnected' }).eq('id', existing.id);
+    const { error } = await supabase.from('saas_integrations').update({
+      enabled: false,
+      health_status: 'disconnected',
+      error_message: '',
+      updated_at: new Date().toISOString(),
+    }).eq('id', existing.id);
+    if (error) {
+      showBanner('error', `Disconnect failed: ${error.message}`);
+      return;
+    }
     await load();
     setActiveProvider(null);
+    showBanner('success', 'Integration disconnected');
   }
 
   async function handleTest(provider, integration) {
     setTestingKey(provider.key);
-    await supabase.from('saas_integrations').update({
+    const errors = validateProviderCredentials(provider, integration?.credentials || {});
+    const patch = {
       last_health_check_at: new Date().toISOString(),
-      health_status: 'healthy',
-    }).eq('id', integration.id);
+      health_status: errors.length ? 'error' : 'healthy',
+      error_message: errors.join(' | '),
+      ...(errors.length ? {} : { last_sync_at: new Date().toISOString() }),
+    };
+    const { error } = await supabase.from('saas_integrations').update(patch).eq('id', integration.id);
+    if (error) {
+      showBanner('error', `Test failed: ${error.message}`);
+      setTestingKey(null);
+      return;
+    }
     await load();
+    showBanner(errors.length ? 'error' : 'success', errors.length ? errors[0] : `${provider.name} passed credential validation`);
     setTestingKey(null);
   }
 
@@ -355,6 +454,19 @@ export default function IntegrationHub() {
           {healthyCount > 0 && <span style={{ color: '#00e5a0' }}>{healthyCount} healthy</span>}
         </div>
       </div>
+
+      {banner && (
+        <div
+          className="mx-5 mt-4 px-3 py-2 rounded-xl text-xs"
+          style={{
+            background: banner.type === 'error' ? 'rgba(255,71,87,0.1)' : 'rgba(0,229,160,0.1)',
+            border: `1px solid ${banner.type === 'error' ? 'rgba(255,71,87,0.2)' : 'rgba(0,229,160,0.2)'}`,
+            color: banner.type === 'error' ? '#ff4757' : '#00e5a0',
+          }}
+        >
+          {banner.text}
+        </div>
+      )}
 
       <div className="flex items-center gap-3 px-5 py-3 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
         <div className="relative flex-1 max-w-xs">

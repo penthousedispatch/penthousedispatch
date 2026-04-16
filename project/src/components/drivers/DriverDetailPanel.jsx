@@ -22,6 +22,8 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
   const [payRateSaving, setPayRateSaving] = useState(false);
   const [payRateSaved, setPayRateSaved] = useState(false);
   const [payRateError, setPayRateError] = useState('');
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState('');
 
   useEffect(() => {
     if (!driver?.id) return;
@@ -60,6 +62,29 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
     setDisplayPay({ pay_rate: data.pay_rate, pay_rate_type: data.pay_rate_type });
     setEditingPay(false);
     setTimeout(() => setPayRateSaved(false), 3000);
+    if (onDriverUpdated) onDriverUpdated();
+  }
+
+  async function changeDriverStatus(nextStatus) {
+    if (!driver?.id) return;
+    setStatusSaving(true);
+    setStatusError('');
+    const { error } = await supabase
+      .from('drivers')
+      .update({
+        status: nextStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', driver.id);
+
+    if (error) {
+      logFailure('DriverDetailPanel:changeDriverStatus', error);
+      setStatusError(error.message || 'Status update failed');
+      setStatusSaving(false);
+      return;
+    }
+
+    setStatusSaving(false);
     if (onDriverUpdated) onDriverUpdated();
   }
 
@@ -231,7 +256,22 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
                   ? `$${parseFloat(displayPay.pay_rate).toFixed(2)}/${displayPay.pay_rate_type === 'per_trip' ? 'trip' : 'hr'}`
                   : 'Set pay rate'}
             </button>
+            <button
+              onClick={() => changeDriverStatus(driver.status === 'offline' ? 'online' : 'offline')}
+              disabled={statusSaving}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all"
+              style={{
+                background: driver.status === 'offline' ? 'rgba(0,229,160,0.08)' : 'rgba(255,71,87,0.08)',
+                border: `1px solid ${driver.status === 'offline' ? 'rgba(0,229,160,0.2)' : 'rgba(255,71,87,0.2)'}`,
+                color: driver.status === 'offline' ? '#00e5a0' : '#ff4757',
+              }}
+            >
+              {statusSaving ? 'Saving...' : driver.status === 'offline' ? 'Bring Online' : 'Take Offline'}
+            </button>
           </div>
+          {statusError && (
+            <p className="text-xs mt-2" style={{ color: '#ff4757' }}>{statusError}</p>
+          )}
         </div>
 
         {editingPay && (
