@@ -4,39 +4,13 @@ import {
   AlertCircle, RefreshCw, Car, ArrowDown, Route
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-
-const BOROUGH_COLORS = {
-  manhattan: '#c9a84c',
-  brooklyn: '#0ea5e9',
-  queens: '#00e5a0',
-  bronx: '#f59e0b',
-  'staten island': '#a78bfa',
-  'long island': '#f472b6',
-  default: 'rgba(255,255,255,0.5)',
-};
-
-const BOROUGH_KEYWORDS = {
-  manhattan: ['manhattan', 'new york, ny', ' ny 10', 'midtown', 'harlem', 'upper east', 'upper west', 'lower east', 'tribeca', 'soho', 'chelsea', 'greenwich', 'battery'],
-  brooklyn: ['brooklyn', 'bk', ' ny 112', 'bedford', 'williamsburg', 'bushwick', 'park slope', 'crown heights', 'flatbush', 'bay ridge', 'bensonhurst', 'coney island'],
-  queens: ['queens', 'flushing', 'astoria', 'jackson heights', 'jamaica', 'long island city', 'lic', 'forest hills', 'bayside', 'ozone park', 'richmond hill', 'woodside'],
-  bronx: ['bronx', ' ny 104', 'riverdale', 'fordham', 'pelham', 'hunts point', 'morrisania', 'co-op city'],
-  'staten island': ['staten island', 'si ', ' ny 103'],
-  'long island': ['long island', 'nassau', 'suffolk', 'hempstead', 'garden city', 'great neck', 'jericho', 'mineola', 'valley stream', 'hicksville', 'plainview', 'syosset', 'huntington', 'islip', 'babylon'],
-};
-
-function detectBorough(address) {
-  if (!address) return 'default';
-  const lower = address.toLowerCase();
-  for (const [borough, keywords] of Object.entries(BOROUGH_KEYWORDS)) {
-    if (keywords.some(kw => lower.includes(kw))) return borough;
-  }
-  return 'default';
-}
+import { detectServiceZone, formatServiceZone, getServiceZoneMeta } from '../../lib/serviceZones';
 
 function BoroughBadge({ address }) {
-  const borough = detectBorough(address);
-  const color = BOROUGH_COLORS[borough];
-  const label = borough === 'default' ? 'Unknown' : borough.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+  const borough = detectServiceZone(address);
+  const meta = getServiceZoneMeta(borough);
+  const color = meta.color;
+  const label = borough === 'default' ? 'Unknown' : formatServiceZone(borough);
   return (
     <span
       className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0"

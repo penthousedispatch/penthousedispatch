@@ -1,3 +1,5 @@
+import { detectServiceZone, getZonePreferenceBonus, normalizePreferredZones } from '../lib/serviceZones';
+
 // Penthouse Dispatch — AI Scheduler v4.0
 // Full-day schedule generation with traffic buffer, shared ride detection,
 // $60/hr minimum revenue quota, and 2+ trips/hr density target.
@@ -83,6 +85,11 @@ const AI_SCHED = {
         const shortTripBonus = miles <= shortTripMaxMiles
           ? shortTripBonusWeight * Math.max(1, shortTripMaxMiles - miles + 1)
           : 0;
+        const zonePreferenceBonus = getZonePreferenceBonus(
+          t.serviceZone,
+          normalizePreferredZones(driver.preferred_zones),
+          12
+        );
         const nearbyFutureTrips = allTrips.filter(candidate => {
           if (!candidate?.coords || candidate.tripId === t.tripId || alreadyTakenIds.has(candidate.tripId)) return false;
           if (!candidate.startMin || candidate.startMin < t.startMin) return false;
@@ -104,6 +111,7 @@ const AI_SCHED = {
           + (revenuePerMile * 1.75)
           + earlyBonus
           + shortTripBonus
+          + zonePreferenceBonus
           + (nearbyFutureTrips * chainingWeight)
           + sharedRideBonus
           - (dist * 0.5);
@@ -114,6 +122,7 @@ const AI_SCHED = {
           revenuePerMile,
           nearbyFutureTrips,
           shortTripBonus,
+          zonePreferenceBonus,
           sharedRideBonus,
           score,
         };
@@ -290,6 +299,7 @@ const AI_SCHED = {
 
     const driversWithCoords = drivers.map(d => ({
       ...d,
+      preferred_zones: normalizePreferredZones(d.preferred_zones),
       startCoords: d.current_lat && d.current_lng
         ? { lat: parseFloat(d.current_lat), lng: parseFloat(d.current_lng) }
         : null,
@@ -306,6 +316,7 @@ const AI_SCHED = {
       doAddress: t.do_address,
       puTime: t.pu_time,
       doTime: t.do_time,
+      serviceZone: detectServiceZone(t.pu_address || ''),
       status: t.status,
       raw: t,
     })).filter(t => t.coords && t.startMin !== null);

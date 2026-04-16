@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
 import { useApp } from '../../context/AppContext';
 import { logFailure } from '../../utils/errorHandler';
+import { detectServiceZone } from '../../lib/serviceZones';
 
 async function uploadDriverPhoto(file, driverNum) {
   const ext = file.name.split('.').pop().toLowerCase() || 'jpg';
@@ -62,6 +63,7 @@ export default function AddDriverModal({ onClose }) {
       email: form.email,
       shift_hours: form.shift_hours,
       home_address: form.home_address,
+      preferred_zones: detectServiceZone(form.home_address || '') !== 'default' ? [detectServiceZone(form.home_address || '')] : [],
       photo_data: photoUrl,
       company_id: profile?.role === 'company' ? company?.id || null : null,
       status: 'offline',

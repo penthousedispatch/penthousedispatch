@@ -8,6 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
 import { haversineDistance } from '../../lib/geocode';
 import { fbSet } from '../../lib/firebase';
+import { detectServiceZone, getZonePreferenceBonus, normalizePreferredZones } from '../../lib/serviceZones';
 import DriverCard from '../../components/drivers/DriverCard';
 import DriverDetailPanel from '../../components/drivers/DriverDetailPanel';
 import TripCard from '../../components/trips/TripCard';
@@ -139,6 +140,7 @@ export default function LiveDispatch() {
 
   const scoredTrips = availableTrips.map(t => {
     let score = parseFloat(t.delivery_price) || 0;
+    const serviceZone = detectServiceZone(t.pu_address || '');
     if (selectedDriver?.start_coords && t.coords) {
       const dist = haversineDistance(
         selectedDriver.start_coords.lat, selectedDriver.start_coords.lng,
@@ -146,7 +148,8 @@ export default function LiveDispatch() {
       );
       score += Math.max(0, 10 - dist) * 2;
     }
-    return { ...t, score };
+    score += getZonePreferenceBonus(serviceZone, normalizePreferredZones(selectedDriver?.preferred_zones), 10);
+    return { ...t, score, serviceZone };
   }).sort((a, b) => b.score - a.score);
 
   const activeAssignments = assignments.filter(a => !['completed', 'cancelled', 'rejected'].includes(a.status));

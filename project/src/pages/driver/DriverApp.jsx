@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight, Trophy } from 'lucide-react';
+import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight, Trophy, MapPin } from 'lucide-react';
 import { fbSet, fbGet } from '../../lib/firebase';
 import { supabase } from '../../lib/supabase';
 import { getMotivationMessage } from '../../utils/aiMotivation';
@@ -17,6 +17,8 @@ import DriverGuide from './DriverGuide';
 import DriverCommunityHub from './DriverCommunityHub';
 import IncentiveGoalToast from '../../components/drivers/IncentiveGoalToast';
 import IncentiveCelebrationOverlay from '../../components/drivers/IncentiveCelebrationOverlay';
+import DriverZonePreferences from '../../components/drivers/DriverZonePreferences';
+import { formatServiceZone, normalizePreferredZones } from '../../lib/serviceZones';
 
 export default function DriverApp() {
   const [driverData, setDriverData] = useState(null);
@@ -44,6 +46,9 @@ export default function DriverApp() {
   const [showMenu, setShowMenu] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [showCommunity, setShowCommunity] = useState(false);
+  const [showZonePreferences, setShowZonePreferences] = useState(false);
+  const [zoneSaving, setZoneSaving] = useState(false);
+  const [zoneSavedMessage, setZoneSavedMessage] = useState('');
   const [driverWaitMins, setDriverWaitMins] = useState(5);
   const [waitRemaining, setWaitRemaining] = useState(null);
   const watchRef = useRef(null);
@@ -107,6 +112,7 @@ export default function DriverApp() {
     setShowSchedule(false);
     setShowPaymentSetup(false);
     setShowGuide(false);
+    setShowZonePreferences(false);
     setCurrentTrip(null);
     setSheetState('waiting');
     setLoggedIn(false);
@@ -253,6 +259,35 @@ export default function DriverApp() {
     }
     const hoursWorked = (Date.now() - shiftStartRef.current) / 3600000;
     return { ...rawEarnings, today: rate * hoursWorked };
+  }
+
+  async function savePreferredZones(preferredZones) {
+    if (!driverRecord?.id) return;
+    setZoneSaving(true);
+    setZoneSavedMessage('');
+    const normalizedZones = normalizePreferredZones(preferredZones);
+
+    const { data, error } = await supabase
+      .from('drivers')
+      .update({ preferred_zones: normalizedZones })
+      .eq('id', driverRecord.id)
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      logFailure('DriverApp:savePreferredZones', error);
+      setZoneSavedMessage('Saving failed. Please try again.');
+      setZoneSaving(false);
+      return;
+    }
+
+    if (data) {
+      setDriverRecord(data);
+      setZoneSavedMessage('Preferred zones saved.');
+      setTimeout(() => setZoneSavedMessage(''), 2500);
+    }
+
+    setZoneSaving(false);
   }
 
   function startShift(driver) {
@@ -935,6 +970,16 @@ export default function DriverApp() {
         />
       )}
 
+      {showZonePreferences && (
+        <DriverZonePreferences
+          initialZones={driverRecord?.preferred_zones || []}
+          saving={zoneSaving}
+          savedMessage={zoneSavedMessage}
+          onSave={savePreferredZones}
+          onClose={() => setShowZonePreferences(false)}
+        />
+      )}
+
       {showMenu && (
         <div className="fixed inset-0 z-50 flex" onClick={() => setShowMenu(false)}>
           <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} />
@@ -977,6 +1022,15 @@ export default function DriverApp() {
               {[
                 { icon: <Calendar className="w-5 h-5" />, color: '#00e5a0', label: 'My Schedule', sub: 'View today\'s trips', action: () => { setShowSchedule(true); setShowMenu(false); } },
                 { icon: <CreditCard className="w-5 h-5" />, color: '#c9a84c', label: 'Earnings & Pay', sub: 'Bank account & payouts', action: () => { setShowPaymentSetup(true); setShowMenu(false); } },
+                {
+                  icon: <MapPin className="w-5 h-5" />,
+                  color: '#0ea5e9',
+                  label: 'Preferred Zones',
+                  sub: driverRecord?.preferred_zones?.length
+                    ? driverRecord.preferred_zones.map(formatServiceZone).join(', ')
+                    : 'Choose boroughs you prefer to cover',
+                  action: () => { setShowZonePreferences(true); setShowMenu(false); },
+                },
                 { icon: <Coffee className="w-5 h-5" />, color: '#f59e0b', label: 'Take a Break', sub: '15-minute break timer', action: () => { setOnBreak(true); setShowMenu(false); } },
                 { icon: <Trophy className="w-5 h-5" />, color: '#c9a84c', label: 'Community & Leaderboard', sub: 'Compete, post tips, track riders', action: () => { setShowCommunity(true); setShowMenu(false); } },
                 { icon: <BookOpen className="w-5 h-5" />, color: '#0ea5e9', label: 'Driver Guide', sub: 'How to use this app', action: () => { setShowGuide(true); setShowMenu(false); } },

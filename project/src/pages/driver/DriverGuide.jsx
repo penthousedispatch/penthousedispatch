@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { X, ChevronRight, ChevronDown, AlertTriangle, MessageCircle, Coffee, DollarSign, Navigation, CheckCircle, Zap, Clock } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { X, ChevronRight, ChevronDown, AlertTriangle, MessageCircle, Coffee, DollarSign, Navigation, CheckCircle, Zap, Clock, Volume2, Pause, Square } from 'lucide-react';
+import { useDriverVoiceGuide } from '../../lib/driverVoiceGuide';
 
 const SECTIONS = [
   {
@@ -134,6 +135,13 @@ function Section({ section }) {
 
 export default function DriverGuide({ onClose }) {
   const [search, setSearch] = useState('');
+  const guideNarration = useMemo(() => {
+    return SECTIONS.map(section => {
+      const qas = section.items.map(item => `${item.q}. ${item.a}`).join(' ');
+      return `${section.title}. ${qas}`;
+    }).join(' ');
+  }, []);
+  const voice = useDriverVoiceGuide(guideNarration, { rate: 0.96 });
 
   const filtered = search.trim().length > 1
     ? SECTIONS.map(s => ({
@@ -151,16 +159,45 @@ export default function DriverGuide({ onClose }) {
           <p className="font-700 text-base" style={{ color: '#e5e7eb', fontWeight: 700 }}>Driver Guide</p>
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>How to use the Penthouse app</p>
         </div>
-        <button
-          onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center rounded-full"
-          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-        >
-          <X className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />
-        </button>
+        <div className="flex items-center gap-2">
+          {voice.supported && (
+            <>
+              <button
+                onClick={voice.toggle}
+                className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
+              >
+                {voice.speaking && !voice.paused ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                {voice.speaking ? (voice.paused ? 'Resume guide' : 'Pause guide') : 'Listen to guide'}
+              </button>
+              {voice.speaking && (
+                <button
+                  onClick={voice.stop}
+                  className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.72)' }}
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  Stop
+                </button>
+              )}
+            </>
+          )}
+          <button
+            onClick={onClose}
+            className="w-9 h-9 flex items-center justify-center rounded-full"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            <X className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />
+          </button>
+        </div>
       </div>
 
       <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        {voice.supported && (
+          <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.35)' }}>
+            Perry voice helper can read the full guide aloud while drivers follow along.
+          </p>
+        )}
         <input
           type="text"
           placeholder="Search the guide..."
