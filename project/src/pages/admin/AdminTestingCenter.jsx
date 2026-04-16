@@ -18,7 +18,7 @@ const TEST_DEFS = [
 ];
 
 export default function AdminTestingCenter() {
-  const { sentryConfig } = useApp();
+  const { sentryConfig, org } = useApp();
   const [results, setResults] = useState({});
   const [logs, setLogs] = useState({});
   const [running, setRunning] = useState(null);
@@ -134,7 +134,40 @@ export default function AdminTestingCenter() {
     }
 
     addLog(testId, 'Testing Sentry API connection...');
-    const result = await sentryApi.healthCheck();
+    let result = await sentryApi.healthCheck();
+
+    if (result.error === 'Failed to fetch' && cfg) {
+      addLog(testId, 'Browser direct-connect test was blocked. Falling back to server-side diagnostic...', 'warn');
+      try {
+        const fnRes = await fetch(`${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1/sentry-diagnostics/health-check`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            base_url: cfg.base_url,
+            username: cfg.username,
+            password_enc: cfg.password_enc,
+            api_key: cfg.api_key,
+            auth_type: cfg.auth_type,
+          }),
+        });
+
+        const fallback = await fnRes.json().catch(() => ({}));
+        result = {
+          authenticated: !!fallback.authenticated,
+          latencyMs: fallback.latencyMs,
+          error: fallback.error || null,
+          hint: fallback.hint || null,
+          status: fallback.status,
+          data: fallback.data,
+        };
+      } catch (fallbackError) {
+        addLog(testId, `Server-side diagnostic failed: ${fallbackError.message}`, 'error');
+      }
+    }
     addLog(testId, `Auth: ${result.authenticated ? 'SUCCESS' : 'FAILED'}`, result.authenticated ? 'success' : 'error');
     if (result.latencyMs) addLog(testId, `Latency: ${result.latencyMs}ms`);
     if (result.error) addLog(testId, `Error: ${result.error}`, 'error');
@@ -396,11 +429,28 @@ export default function AdminTestingCenter() {
 
   async function runAITest(testId) {
     addLog(testId, 'Checking AI settings...');
-    const { data: settings } = await supabase.from('ai_settings').select('*').maybeSingle();
+    if (!org?.id) {
+      addLog(testId, 'No active organization was found for this admin session.', 'error');
+      setResult(testId, 'fail');
+      return;
+    }
 
-    if (!settings || settings.provider === 'disabled') {
-      addLog(testId, 'AI provider is disabled or not configured', 'warn');
-      addLog(testId, 'Configure an AI provider in Settings → AI to enable this test', 'info');
+    const { data: settings } = await supabase
+      .from('ai_settings')
+      .select('*')
+      .eq('org_id', org.id)
+      .maybeSingle();
+
+    if (!settings) {
+      addLog(testId, 'No AI settings row exists for this organization yet.', 'warn');
+      addLog(testId, 'Open Admin → AI Settings and save at least one provider configuration.', 'info');
+      setResult(testId, 'pass');
+      return;
+    }
+
+    if (settings.provider === 'disabled') {
+      addLog(testId, 'AI provider is currently set to Disabled.', 'warn');
+      addLog(testId, 'Open Admin → AI Settings and change Provider from Disabled to OpenAI, Anthropic, or Gemini.', 'info');
       setResult(testId, 'pass');
       return;
     }
@@ -409,6 +459,13 @@ export default function AdminTestingCenter() {
     addLog(testId, `Model: ${settings.model}`, 'success');
     addLog(testId, `Motivation enabled: ${settings.motivation_enabled}`, 'info');
     addLog(testId, `Scheduling enabled: ${settings.scheduling_enabled}`, 'info');
+
+    if (!settings.api_key && settings.provider !== 'disabled') {
+      addLog(testId, 'Provider selected but API key is empty. Save a valid provider key in AI Settings.', 'warn');
+      setResult(testId, 'pass');
+      return;
+    }
+
     addLog(testId, 'AI configuration looks valid', 'success');
     setResult(testId, 'pass');
   }
