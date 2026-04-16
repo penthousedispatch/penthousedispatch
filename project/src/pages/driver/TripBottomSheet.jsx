@@ -4,8 +4,8 @@ import { Navigation, Users, ExternalLink, Zap, CheckCircle, AlertTriangle, MoreV
 export default function TripBottomSheet({
   state, trip, open, onToggle,
   onRequestRides, onAccept, onReject,
-  onConfirmPickup, onComplete,
-  driverData, earnings, countdown,
+  onArrive, onConfirmPickup, onNoShow, onComplete,
+  driverData, earnings, countdown, pickupArrived, waitRemaining, waitTargetMins,
 }) {
   const [confirmingComplete, setConfirmingComplete] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -21,6 +21,8 @@ export default function TripBottomSheet({
   }
 
   const destAddr = state === 'navigation' ? trip?.puAddress : trip?.doAddress;
+  const waitMinutes = String(Math.floor((waitRemaining || 0) / 60)).padStart(2, '0');
+  const waitSeconds = String((waitRemaining || 0) % 60).padStart(2, '0');
   const googleMapsUrl = (addr) => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr || '')}`;
   const appleMapsUrl = (addr) => `https://maps.apple.com/?daddr=${encodeURIComponent(addr || '')}`;
   const wazeUrl = (addr) => `https://waze.com/ul?q=${encodeURIComponent(addr || '')}&navigate=yes`;
@@ -393,17 +395,57 @@ export default function TripBottomSheet({
               )}
 
               {state === 'navigation' && (
-                <button
-                  onClick={onConfirmPickup}
-                  className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
-                  style={{
-                    background: 'linear-gradient(135deg, #00e5a0, #00c88c)',
-                    color: '#07090d',
-                    fontWeight: 700,
-                  }}
-                >
-                  <CheckCircle className="w-5 h-5" /> Arrived — Confirm Pickup
-                </button>
+                pickupArrived ? (
+                  <div className="space-y-3">
+                    <div className="rounded-2xl p-4" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.18)' }}>
+                      <p className="text-xs font-700 uppercase tracking-wider mb-1" style={{ color: '#c9a84c', fontWeight: 700 }}>
+                        Waiting At Pickup
+                      </p>
+                      <p className="text-sm mb-2" style={{ color: '#e5e7eb' }}>
+                        Wait before marking no-show. Current policy: {waitTargetMins} minute{waitTargetMins === 1 ? '' : 's'}.
+                      </p>
+                      <p className="text-lg font-700" style={{ color: waitRemaining > 0 ? '#c9a84c' : '#00e5a0', fontWeight: 700 }}>
+                        {waitRemaining > 0 ? `${waitMinutes}:${waitSeconds} remaining` : 'Wait complete'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={onConfirmPickup}
+                      className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
+                      style={{
+                        background: 'linear-gradient(135deg, #00e5a0, #00c88c)',
+                        color: '#07090d',
+                        fontWeight: 700,
+                      }}
+                    >
+                      <CheckCircle className="w-5 h-5" /> Rider Received
+                    </button>
+                    <button
+                      onClick={onNoShow}
+                      disabled={waitRemaining > 0}
+                      className="w-full py-3.5 rounded-2xl text-sm font-700 flex items-center justify-center gap-2"
+                      style={{
+                        background: waitRemaining > 0 ? 'rgba(255,255,255,0.05)' : 'rgba(255,71,87,0.1)',
+                        border: `1px solid ${waitRemaining > 0 ? 'rgba(255,255,255,0.08)' : 'rgba(255,71,87,0.2)'}`,
+                        color: waitRemaining > 0 ? 'rgba(255,255,255,0.35)' : '#ff4757',
+                        fontWeight: 700,
+                      }}
+                    >
+                      <AlertTriangle className="w-4 h-4" /> Mark No-Show
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={onArrive}
+                    className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
+                    style={{
+                      background: 'linear-gradient(135deg, #00e5a0, #00c88c)',
+                      color: '#07090d',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <CheckCircle className="w-5 h-5" /> Arrived At Pickup
+                  </button>
+                )
               )}
 
               {state === 'to_dropoff' && !confirmingComplete && (
@@ -411,12 +453,12 @@ export default function TripBottomSheet({
                   onClick={() => setConfirmingComplete(true)}
                   className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
                   style={{
-                    background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
-                    color: '#ffffff',
-                    fontWeight: 700,
+                        background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                        color: '#ffffff',
+                        fontWeight: 700,
                   }}
                 >
-                  <CheckCircle className="w-5 h-5" /> Trip Complete
+                  <CheckCircle className="w-5 h-5" /> Rider Dropped Off
                 </button>
               )}
 

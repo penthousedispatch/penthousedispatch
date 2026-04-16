@@ -21,9 +21,9 @@ function AppRoutes() {
   React.useEffect(() => {
     const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
     const queryParams = new URLSearchParams(location.search);
+    const authType = hashParams.get('type') || queryParams.get('type');
     const recoveryInUrl =
-      hashParams.get('type') === 'recovery' ||
-      queryParams.get('type') === 'recovery' ||
+      authType === 'recovery' ||
       sessionStorage.getItem('pd_password_recovery') === 'true';
 
     if (recoveryInUrl) {
@@ -31,6 +31,14 @@ function AppRoutes() {
       if (location.pathname !== '/change-password') {
         navigate('/change-password', { replace: true });
       }
+      return;
+    }
+
+    if (authType === 'signup' || authType === 'magiclink') {
+      sessionStorage.removeItem('pd_password_recovery');
+      supabase.auth.signOut().finally(() => {
+        navigate(`/auth?auth=${authType === 'signup' ? 'verified' : 'magic'}`, { replace: true });
+      });
     }
   }, [location.hash, location.pathname, location.search, navigate]);
 
@@ -41,6 +49,7 @@ function AppRoutes() {
   if (!user) {
     return (
       <Routes>
+        <Route path="/auth" element={<AuthPage />} />
         <Route path="/driver" element={<DriverApp />} />
         <Route path="/rider" element={<RiderTracking />} />
         <Route path="/change-password" element={<ChangeMyPassword />} />

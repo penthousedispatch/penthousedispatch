@@ -71,6 +71,7 @@ export default function TestModeSandbox() {
   const [testDrivers, setTestDrivers] = useState([]);
   const [testTrips, setTestTrips] = useState([]);
   const [schedulerRunning, setSchedulerRunning] = useState(false);
+  const [simulating, setSimulating] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
@@ -123,6 +124,26 @@ export default function TestModeSandbox() {
   function addLog(msg, level = 'info') {
     const colors = { info: 'rgba(255,255,255,0.5)', success: '#00e5a0', error: '#ff4757', warn: '#f59e0b' };
     setLogs(prev => [...prev, { msg, level, color: colors[level], ts: new Date().toLocaleTimeString() }]);
+  }
+
+  async function createSandboxAlert(companyId, driver, trip, alertType, message, severity = 'info') {
+    const { error } = await supabase.from('supervisor_alerts').insert({
+      bot_name: 'TestModeSandbox',
+      alert_type: alertType,
+      message,
+      severity,
+      payload: {
+        company_id: companyId,
+        driver_id: driver?.id || null,
+        driver_name: driver?.full_name || '',
+        trip_id: trip?.trip_id || null,
+        pickup_address: trip?.pu_address || '',
+        dropoff_address: trip?.do_address || '',
+        sandbox: true,
+      },
+    });
+
+    if (error) addLog(`Alert write failed: ${error.message}`, 'error');
   }
 
   async function seedTripsForTemplates(companyId, driverIds, templates, scenarioLabel = 'Full Coverage') {
@@ -279,6 +300,8 @@ export default function TestModeSandbox() {
               layer2_status: 'approved_internal',
               layer3_status: 'ready',
               driver_number: `TST-${String(i + 1).padStart(3, '0')}`,
+              login_username: `tst${String(i + 1).padStart(3, '0')}`,
+              login_password: td.tlc,
               hire_date: '2024-01-01',
               rating: (4.5 + Math.random() * 0.5).toFixed(1),
             })
@@ -310,6 +333,8 @@ export default function TestModeSandbox() {
             layer2_status: 'approved_internal',
             layer3_status: 'ready',
             driver_number: `TST-${String(i + 1).padStart(3, '0')}`,
+            login_username: `tst${String(i + 1).padStart(3, '0')}`,
+            login_password: td.tlc,
             hire_date: '2024-01-01',
             rating: (4.5 + Math.random() * 0.5).toFixed(1),
           })
@@ -329,6 +354,7 @@ export default function TestModeSandbox() {
       addLog(`Seeding ${selectedTemplates.length} test trips for ${scenarioLabel}...`, 'info');
       const successfulTrips = await seedTripsForTemplates(testCompany.id, seededDriverIds, selectedTemplates, scenarioLabel.toLowerCase().replace(/\s+/g, '_'));
       addLog(`${successfulTrips}/${selectedTemplates.length} trips seeded`, successfulTrips === selectedTemplates.length ? 'success' : 'warn');
+      addLog('Driver login credentials seeded. Username format: tst001 / password: TLC-TST-001', 'success');
 
       const sessionData = {
         user_id: user.id,
@@ -498,6 +524,66 @@ export default function TestModeSandbox() {
     setSchedulerRunning(false);
   }
 
+  async function simulateRouteActivity() {
+    if (!session?.test_company_id) return;
+    setSimulating(true);
+    addLog('Simulating live trip progress for sandbox drivers...', 'info');
+
+    const sandboxTrips = [...testTrips].sort((a, b) => new Date(a.scheduled_pickup_time || 0) - new Date(b.scheduled_pickup_time || 0));
+    const accepted = sandboxTrips.find(trip => trip.status === 'pending' && trip.driver_id);
+    const pickedUp = sandboxTrips.find(trip => trip.status === 'picked_up' || trip.status === 'in_progress');
+    const arrived = sandboxTrips.find(trip => trip.status === 'accepted');
+    const fallbackAssigned = sandboxTrips.find(trip => trip.driver_id);
+
+    const tripToArrive = arrived || accepted || fallbackAssigned;
+    const tripToPickup = pickedUp || arrived || accepted || fallbackAssigned;
+    const tripToComplete = pickedUp || tripToPickup;
+    const tripToNoShow = sandboxTrips.find(trip => trip.status === 'arrived') || sandboxTrips.find(trip => trip.status === 'pending' && trip.driver_id && trip.id !== tripToComplete?.id);
+
+    const driverMap = new Map(testDrivers.map(driver => [driver.id, driver]));
+
+    if (!tripToArrive && !tripToPickup && !tripToComplete && !tripToNoShow) {
+      addLog('No assigned sandbox trips found yet. Run the AI scheduler first.', 'warn');
+      setSimulating(false);
+      return;
+    }
+
+    if (tripToArrive?.trip_id) {
+      const { error } = await supabase.from('trip_assignments').update({ status: 'arrived' }).eq('id', tripToArrive.id);
+      if (!error) {
+        await createSandboxAlert(session.test_company_id, driverMap.get(tripToArrive.driver_id), tripToArrive, 'sandbox_driver_arrived', `${tripToArrive.driver_name || 'Sandbox driver'} arrived at pickup.`, 'info');
+        addLog(`Simulated arrival for ${tripToArrive.driver_name || 'driver'}`, 'success');
+      }
+    }
+
+    if (tripToPickup?.trip_id) {
+      const { error } = await supabase.from('trip_assignments').update({ status: 'picked_up' }).eq('id', tripToPickup.id);
+      if (!error) {
+        await createSandboxAlert(session.test_company_id, driverMap.get(tripToPickup.driver_id), tripToPickup, 'sandbox_rider_picked_up', `${tripToPickup.driver_name || 'Sandbox driver'} picked up the rider.`, 'info');
+        addLog(`Simulated pickup for ${tripToPickup.driver_name || 'driver'}`, 'success');
+      }
+    }
+
+    if (tripToComplete?.trip_id) {
+      const { error } = await supabase.from('trip_assignments').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', tripToComplete.id);
+      if (!error) {
+        await createSandboxAlert(session.test_company_id, driverMap.get(tripToComplete.driver_id), tripToComplete, 'sandbox_rider_dropped_off', `${tripToComplete.driver_name || 'Sandbox driver'} dropped off the rider.`, 'info');
+        addLog(`Simulated dropoff for ${tripToComplete.driver_name || 'driver'}`, 'success');
+      }
+    }
+
+    if (tripToNoShow?.trip_id) {
+      const { error } = await supabase.from('trip_assignments').update({ status: 'no_show' }).eq('id', tripToNoShow.id);
+      if (!error) {
+        await createSandboxAlert(session.test_company_id, driverMap.get(tripToNoShow.driver_id), tripToNoShow, 'sandbox_rider_no_show', `${tripToNoShow.driver_name || 'Sandbox driver'} marked the rider as no-show.`, 'warning');
+        addLog(`Simulated no-show for ${tripToNoShow.driver_name || 'driver'}`, 'warn');
+      }
+    }
+
+    await loadTestData(session.test_company_id);
+    setSimulating(false);
+  }
+
   async function purgeAllTestData() {
     if (!session) return;
     setSeeding(true);
@@ -608,6 +694,15 @@ export default function TestModeSandbox() {
                     Run AI Scheduler
                   </button>
                   <button
+                    onClick={simulateRouteActivity}
+                    disabled={simulating}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-all"
+                    style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', fontWeight: 600 }}
+                  >
+                    {simulating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Route className="w-3.5 h-3.5" />}
+                    Simulate Route Activity
+                  </button>
+                  <button
                     onClick={purgeAllTestData}
                     disabled={seeding}
                     className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-all"
@@ -627,7 +722,7 @@ export default function TestModeSandbox() {
                 { label: 'Test Drivers', value: testDrivers.length, icon: Users, color: '#0ea5e9' },
                 { label: 'Total Trips', value: testTrips.length, icon: Route, color: '#c9a84c' },
                 { label: 'Completed', value: completedTrips, icon: CheckCircle, color: '#00e5a0' },
-                { label: 'Pending', value: pendingTripsCount, icon: Clock, color: '#f59e0b' },
+                { label: 'Pending', value: pendingTripsCount + inProgressTrips, icon: Clock, color: '#f59e0b' },
               ].map(s => (
                 <div key={s.label} className="rounded-xl p-3" style={{ background: `${s.color}08`, border: `1px solid ${s.color}20` }}>
                   <div className="flex items-center gap-1.5 mb-1">
@@ -664,6 +759,13 @@ export default function TestModeSandbox() {
                   {scenario.label}
                 </button>
               ))}
+            </div>
+            <div className="rounded-xl p-3" style={{ background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.2)' }}>
+              <p className="text-xs font-700 mb-1" style={{ color: '#0ea5e9', fontWeight: 700 }}>Sandbox Driver Login</p>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                Username pattern: <span style={{ color: '#e5e7eb' }}>tst001</span>, <span style={{ color: '#e5e7eb' }}>tst002</span>, etc.
+                Password: each driver&apos;s TLC number, for example <span style={{ color: '#e5e7eb' }}>TLC-TST-001</span>.
+              </p>
             </div>
           </div>
         )}
@@ -768,6 +870,7 @@ export default function TestModeSandbox() {
             <li>All test records are tagged — they never mix with your real dispatch data</li>
             <li>Use "Run AI Scheduler" to see the autonomous scheduling engine assign trips to drivers</li>
             <li>Driver App at <span style={{ color: '#0ea5e9' }}>/driver</span> — select any "TST-" driver to test the full driver experience</li>
+            <li>Use "Simulate Route Activity" after scheduling to fire pickup, dropoff, and no-show alerts into admin/company dashboards</li>
             <li>Reset Data wipes all test trips and re-seeds fresh data at any time</li>
             <li>Purge All removes test drivers and trips entirely — start completely fresh</li>
           </ul>

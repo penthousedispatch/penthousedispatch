@@ -20,7 +20,7 @@ export default function SettingsPanel() {
   const { org, checkSentryHealth, sentryStatus, syncDriversFromSentry } = useApp();
   const { theme, toggle: toggleTheme } = useTheme();
   const [sentryForm, setSentryForm] = useState({ base_url: 'https://dsp-integration.test.sentryms.com', username: '', password_enc: '', api_key: '', auth_type: 'basic', sandbox: true, enabled: true });
-  const [generalForm, setGeneralForm] = useState({ google_maps_key: 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4', revenue_target: 60, mile_threshold: 25 });
+  const [generalForm, setGeneralForm] = useState({ google_maps_key: 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4', revenue_target: 60, mile_threshold: 25, driver_wait_mins: 5 });
   const [cloudConfigs, setCloudConfigs] = useState({});
   const [showPass, setShowPass] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -37,6 +37,17 @@ export default function SettingsPanel() {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (!org) return;
+    setGeneralForm(prev => ({
+      ...prev,
+      google_maps_key: org.google_maps_key || prev.google_maps_key,
+      revenue_target: org.revenue_target ?? prev.revenue_target,
+      mile_threshold: org.mile_threshold ?? prev.mile_threshold,
+      driver_wait_mins: org.driver_wait_mins ?? prev.driver_wait_mins,
+    }));
+  }, [org]);
 
   useEffect(() => {
     if (activeSection === 'sentry') loadSyncLogs();
@@ -173,6 +184,7 @@ export default function SettingsPanel() {
         revenue_target: parseFloat(generalForm.revenue_target) || 60,
         mile_threshold: parseFloat(generalForm.mile_threshold) || 25,
         google_maps_key: generalForm.google_maps_key,
+        driver_wait_mins: Math.max(1, parseInt(generalForm.driver_wait_mins, 10) || 5),
       }).eq('id', org.id);
       if (error) { handleSupabaseError(error, 'SettingsPanel:saveGeneralSettings', { fallback: 'Failed to save general settings.' }); return; }
       toastSuccess('General settings saved.');
@@ -561,6 +573,13 @@ export default function SettingsPanel() {
             <div>
               <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Max Trip Distance (miles)</label>
               <input type="number" value={generalForm.mile_threshold} onChange={e => setGeneralForm({ ...generalForm, mile_threshold: e.target.value })} className="w-full" />
+            </div>
+            <div>
+              <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Driver No-Show Wait Time (mins)</label>
+              <input type="number" min="1" max="60" value={generalForm.driver_wait_mins} onChange={e => setGeneralForm({ ...generalForm, driver_wait_mins: e.target.value })} className="w-full" />
+              <p className="text-[11px] mt-1.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                Drivers must wait this long at pickup before they can mark a rider as a no-show.
+              </p>
             </div>
             <button onClick={saveGeneralSettings} className="btn-gold flex items-center gap-2 py-2.5 px-5">
               <Save className="w-4 h-4" /> Save General

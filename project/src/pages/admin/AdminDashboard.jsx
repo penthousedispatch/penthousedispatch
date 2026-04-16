@@ -10,6 +10,7 @@ import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { useTheme } from '../../context/ThemeContext';
 import SupervisorBadge from '../../components/supervisor/SupervisorBadge';
+import AlertInboxButton from '../../components/ui/AlertInboxButton';
 import { BUILD_INFO } from '../../lib/buildInfo';
 
 const AdminCompanies = lazy(() => import('./AdminCompanies'));
@@ -249,6 +250,7 @@ export default function AdminDashboard() {
         </nav>
 
         <div className="flex items-center gap-3">
+          <AlertInboxButton scope="admin" />
           <div className="hidden lg:flex items-center gap-2 px-2.5 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
             <span className="text-[10px] uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.4)' }}>Build</span>
             <span className="text-[11px] font-semibold" style={{ color: '#c9a84c' }}>v{BUILD_INFO.version}</span>

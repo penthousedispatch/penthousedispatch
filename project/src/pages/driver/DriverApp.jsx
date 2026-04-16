@@ -44,6 +44,8 @@ export default function DriverApp() {
   const [showMenu, setShowMenu] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [showCommunity, setShowCommunity] = useState(false);
+  const [driverWaitMins, setDriverWaitMins] = useState(5);
+  const [waitRemaining, setWaitRemaining] = useState(null);
   const watchRef = useRef(null);
   const pollRef = useRef(null);
   const sheetStateRef = useRef(sheetState);
@@ -53,6 +55,7 @@ export default function DriverApp() {
   const lastMotivationRef = useRef(0);
   const sosTimerRef = useRef(null);
   const countdownRef = useRef(null);
+  const pickupWaitRef = useRef(null);
   const locationRef = useRef(location);
   const incentiveSnapshotRef = useRef([]);
 
@@ -68,6 +71,7 @@ export default function DriverApp() {
       if (motivationTimerRef.current) clearInterval(motivationTimerRef.current);
       if (sosTimerRef.current) clearInterval(sosTimerRef.current);
       if (countdownRef.current) clearInterval(countdownRef.current);
+      if (pickupWaitRef.current) clearInterval(pickupWaitRef.current);
     };
   }, []);
 
@@ -119,6 +123,13 @@ export default function DriverApp() {
       if (memErr) logFailure('DriverApp:loadDriverRecord:membership', memErr);
       if (membership) {
         setOrgId(membership.org_id);
+        const { data: orgRow, error: orgErr } = await supabase
+          .from('organizations')
+          .select('driver_wait_mins')
+          .eq('id', membership.org_id)
+          .maybeSingle();
+        if (orgErr) logFailure('DriverApp:loadDriverRecord:organization', orgErr);
+        if (orgRow?.driver_wait_mins) setDriverWaitMins(orgRow.driver_wait_mins);
         setTimeout(() => triggerMotivation({ driver, orgId: membership.org_id, trigger: 'shift_start' }), 3000);
         const progress = await getIncentiveProgress(driver.id);
         if (progress.length > 0) {
@@ -324,6 +335,47 @@ export default function DriverApp() {
     setCountdown(null);
   }
 
+  function stopPickupWait() {
+    if (pickupWaitRef.current) clearInterval(pickupWaitRef.current);
+    pickupWaitRef.current = null;
+    setWaitRemaining(null);
+  }
+
+  function startPickupWait(totalMinutes) {
+    stopPickupWait();
+    const totalSeconds = Math.max(1, Math.round((totalMinutes || 5) * 60));
+    let remaining = totalSeconds;
+    setWaitRemaining(remaining);
+    pickupWaitRef.current = setInterval(() => {
+      remaining -= 1;
+      setWaitRemaining(Math.max(remaining, 0));
+      if (remaining <= 0) stopPickupWait();
+    }, 1000);
+  }
+
+  async function publishTripAlert(alertType, message, severity = 'info', extraPayload = {}) {
+    const activeTripId = currentTrip?.tripId || currentTrip?.trip_id || null;
+    const payload = {
+      company_id: driverRecord?.company_id || null,
+      driver_id: driverRecord?.id || driverData?.id || null,
+      driver_name: driverRecord?.full_name || driverData?.name || '',
+      trip_id: activeTripId,
+      pickup_address: currentTrip?.puAddress || currentTrip?.pu_address || '',
+      dropoff_address: currentTrip?.doAddress || currentTrip?.do_address || '',
+      ...extraPayload,
+    };
+
+    const { error } = await supabase.from('supervisor_alerts').insert({
+      bot_name: 'DriverApp',
+      alert_type: alertType,
+      message,
+      severity,
+      payload,
+    });
+
+    if (error) logFailure(`DriverApp:${alertType}:supervisor_alerts`, error);
+  }
+
   function handleSosPress(down) {
     if (down) {
       setSosPressed(true);
@@ -357,12 +409,18 @@ export default function DriverApp() {
       status: 'active',
     });
     await supabase.from('supervisor_alerts').insert({
-      org_id: orgId,
+      bot_name: 'DriverApp',
       alert_type: 'sos',
       message: `SOS activated by driver ${driverData?.name || 'Unknown'}`,
-      driver_id: driverRecord?.id || null,
       severity: 'critical',
-      metadata: { lat: loc?.lat, lng: loc?.lng, driver_name: driverData?.name },
+      payload: {
+        org_id: orgId,
+        company_id: driverRecord?.company_id || null,
+        driver_id: driverRecord?.id || null,
+        lat: loc?.lat,
+        lng: loc?.lng,
+        driver_name: driverData?.name,
+      },
     }).then(({ error }) => { if (error) logFailure('DriverApp:triggerSOS:supervisor_alerts', error); });
     if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
     if (sosTimerRef.current) clearInterval(sosTimerRef.current);
@@ -407,6 +465,7 @@ export default function DriverApp() {
       }
     }
 
+    setCurrentTrip(prev => ({ ...prev, acceptedAt }));
     setSheetState('navigation');
   }
 
@@ -443,9 +502,80 @@ export default function DriverApp() {
     setSheetState('waiting');
   }
 
+  async function markArrivedAtPickup() {
+    if (!currentTrip) return;
+    const arrivedAt = new Date().toISOString();
+
+    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'arrived', driverId: driverData.id, arrivedAt: Date.now() });
+    if (currentTrip?.tripId) {
+      const { error } = await supabase
+        .from('trip_assignments')
+        .update({ status: 'arrived' })
+        .eq('trip_id', currentTrip.tripId);
+      if (error) logFailure('DriverApp:markArrivedAtPickup:trip_assignments', error);
+    }
+
+    setCurrentTrip(prev => ({ ...prev, arrivedAt }));
+    await publishTripAlert(
+      'driver_arrived_pickup',
+      `${driverData?.name || 'Driver'} arrived at pickup for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      'info',
+      { status: 'arrived', arrived_at: arrivedAt }
+    );
+    startPickupWait(driverWaitMins);
+  }
+
   async function confirmPickup() {
-    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'picked_up', driverId: driverData.id });
+    const pickedUpAt = new Date().toISOString();
+    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'picked_up', driverId: driverData.id, pickedUpAt: Date.now() });
+    if (currentTrip?.tripId) {
+      const { error } = await supabase
+        .from('trip_assignments')
+        .update({ status: 'picked_up' })
+        .eq('trip_id', currentTrip.tripId);
+      if (error) logFailure('DriverApp:confirmPickup:trip_assignments', error);
+    }
+    stopPickupWait();
+    await publishTripAlert(
+      'driver_picked_up_rider',
+      `${driverData?.name || 'Driver'} picked up the rider for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      'info',
+      { status: 'picked_up', picked_up_at: pickedUpAt }
+    );
+    setCurrentTrip(prev => ({ ...prev, pickedUpAt }));
     setSheetState('to_dropoff');
+  }
+
+  async function markNoShow() {
+    if (!currentTrip) return;
+    const noShowAt = new Date().toISOString();
+
+    await fbSet(`trip_assignments/${currentTrip?.tripId}`, { status: 'no_show', driverId: driverData.id, noShowAt: Date.now() });
+    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'no_show', driverId: driverData.id, noShowAt: Date.now() });
+    await fbSet(`driver_notifications/${driverData.id}`, null);
+
+    if (currentTrip?.tripId) {
+      const { error } = await supabase
+        .from('trip_assignments')
+        .update({ status: 'no_show' })
+        .eq('trip_id', currentTrip.tripId);
+      if (error) logFailure('DriverApp:markNoShow:trip_assignments', error);
+    }
+
+    if (driverRecord?.id) {
+      const { error } = await supabase.from('drivers').update({ status: 'online' }).eq('id', driverRecord.id);
+      if (error) logFailure('DriverApp:markNoShow:drivers', error);
+    }
+
+    stopPickupWait();
+    await publishTripAlert(
+      'driver_marked_no_show',
+      `${driverData?.name || 'Driver'} marked a rider as no-show for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      'warning',
+      { status: 'no_show', no_show_at: noShowAt, waited_mins: driverWaitMins }
+    );
+    setCurrentTrip(null);
+    setSheetState('waiting');
   }
 
   async function completeTrip() {
@@ -484,6 +614,13 @@ export default function DriverApp() {
     if (driverRecord?.id) {
       await supabase.from('drivers').update({ status: 'online' }).eq('id', driverRecord.id);
     }
+
+    await publishTripAlert(
+      'driver_dropped_off_rider',
+      `${driverData?.name || 'Driver'} dropped off the rider for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      'info',
+      { status: 'completed', completed_at: completedAt }
+    );
 
     consecutiveTripsRef.current += 1;
 
@@ -719,11 +856,16 @@ export default function DriverApp() {
         onRequestRides={requestRides}
         onAccept={acceptTrip}
         onReject={rejectTrip}
+        onArrive={markArrivedAtPickup}
         onConfirmPickup={confirmPickup}
+        onNoShow={markNoShow}
         onComplete={completeTrip}
         driverData={driverData}
         earnings={displayEarnings}
         countdown={countdown}
+        pickupArrived={Boolean(currentTrip?.arrivedAt)}
+        waitRemaining={waitRemaining}
+        waitTargetMins={driverWaitMins}
       />
 
       {incentiveGoals && (

@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useLocation } from 'react-router-dom';
 import { Eye, EyeOff, Lock, Mail, User, Building2, Database } from 'lucide-react';
 
 export default function AuthPage() {
+  const location = useLocation();
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -14,6 +16,19 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const authState = params.get('auth');
+
+    if (authState === 'verified') {
+      setMode('login');
+      setInfo('Email confirmed. Please sign in with your password.');
+    } else if (authState === 'magic') {
+      setMode('login');
+      setInfo('Magic link confirmed. Please continue from the sign-in screen.');
+    }
+  }, [location.search]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -33,7 +48,7 @@ export default function AuthPage() {
         email: cleanEmail,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/`,
+          emailRedirectTo: `${window.location.origin}/auth?auth=verified`,
           data: {
             full_name: cleanName,
             role: nextRole,
@@ -73,7 +88,10 @@ export default function AuthPage() {
         setMode('login');
         setPassword('');
       } else {
-        setInfo('Account created successfully. You can sign in now.');
+        await supabase.auth.signOut();
+        setMode('login');
+        setPassword('');
+        setInfo('Account created successfully. Please sign in with your password.');
       }
     }
     setLoading(false);
@@ -287,6 +305,41 @@ export default function AuthPage() {
             >
               {loading ? 'Please wait...' : (mode === 'login' ? 'Sign In' : 'Create Account')}
             </button>
+
+            {mode === 'login' && (
+              <button
+                type="button"
+                disabled={loading}
+                className="btn-ghost w-full py-3"
+                onClick={async () => {
+                  setError('');
+                  setInfo('');
+
+                  if (!email.trim()) {
+                    setError('Enter your email first, then tap Send Magic Link.');
+                    return;
+                  }
+
+                  setLoading(true);
+                  const { error: otpError } = await supabase.auth.signInWithOtp({
+                    email: email.trim(),
+                    options: {
+                      emailRedirectTo: `${window.location.origin}/auth?auth=magic`,
+                    },
+                  });
+
+                  if (otpError) {
+                    setError(otpError.message);
+                  } else {
+                    setInfo('Magic link sent. Open it, then continue from the sign-in screen.');
+                  }
+
+                  setLoading(false);
+                }}
+              >
+                Send Magic Link
+              </button>
+            )}
           </form>
 
           {mode === 'signup' && (
