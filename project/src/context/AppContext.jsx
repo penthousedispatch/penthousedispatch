@@ -32,6 +32,73 @@ export function AppProvider({ children }) {
   const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
   const isCompanyRole = normalizedRole === 'company';
 
+  async function fetchProfileWithRetry(userId, attempts = 3) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const result = await Promise.race([
+          supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Profile lookup timed out (attempt ${attempt + 1})`)), 10000)
+          ),
+        ]);
+
+        if (result?.error) {
+          lastError = result.error;
+        } else if (result?.data) {
+          return result.data;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+
+      if (attempt < attempts - 1) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+    }
+
+    if (lastError) {
+      logFailure('fetchProfileWithRetry', lastError);
+    }
+
+    return null;
+  }
+
+  async function ensureFallbackProfile(u) {
+    const fallbackRole =
+      normalizeAppRole(u?.user_metadata?.role) ||
+      normalizeAppRole(u?.app_metadata?.role);
+
+    if (!fallbackRole) return null;
+
+    const fallbackProfile = {
+      id: u.id,
+      email: u.email || '',
+      full_name:
+        u?.user_metadata?.full_name ||
+        u?.user_metadata?.name ||
+        (u.email ? u.email.split('@')[0] : 'User'),
+      role: fallbackRole,
+      company_id: u?.user_metadata?.company_id || null,
+    };
+
+    setProfile(fallbackProfile);
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert(fallbackProfile, { onConflict: 'id' })
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      logFailure('ensureFallbackProfile', error);
+      return fallbackProfile;
+    }
+
+    return data || fallbackProfile;
+  }
+
   async function fetchLatestSentryConfig() {
     const { data, error } = await supabase
       .from('sentry_config')
@@ -115,15 +182,12 @@ export function AppProvider({ children }) {
 
   async function loadUserData(u) {
     try {
-      const PROFILE_TIMEOUT_MS = 3500;
-      const profileResult = await Promise.race([
-        supabase.from('profiles').select('*').eq('id', u.id).maybeSingle(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Profile lookup timed out')), PROFILE_TIMEOUT_MS)
-        ),
-      ]);
-      const { data: prof, error: profErr } = profileResult;
-      if (profErr) logFailure('loadUserData:profiles', profErr);
+      let prof = await fetchProfileWithRetry(u.id);
+
+      if (!prof) {
+        prof = await ensureFallbackProfile(u);
+      }
+
       setProfile(prof);
 
       const normalizedProfRole = normalizeAppRole(prof?.role);
@@ -166,16 +230,26 @@ export function AppProvider({ children }) {
         if (compErr) logFailure('loadUserData:companies', compErr);
         setCompany(comp);
         if (comp) {
-          await loadDrivers({ companyId: comp.id });
-          await loadTrips({ companyId: comp.id });
-          await loadAssignments({ companyId: comp.id });
+          setLoading(false);
+          Promise.allSettled([
+            loadDrivers({ companyId: comp.id }),
+            loadTrips({ companyId: comp.id }),
+            loadAssignments({ companyId: comp.id }),
+          ]).then(results => {
+            results.forEach((result, index) => {
+              if (result.status === 'rejected') {
+                const labels = ['drivers', 'trips', 'assignments'];
+                logFailure(`loadUserData:company:${labels[index]}`, result.reason);
+              }
+            });
+          });
         }
         if (!comp) {
           setDrivers([]);
           setTrips([]);
           setAssignments([]);
+          setLoading(false);
         }
-        setLoading(false);
       } else {
         setCompany(null);
         const { data: membership, error: memErr } = await supabase.from('org_members').select('*, organizations(*)').eq('user_id', u.id).maybeSingle();
