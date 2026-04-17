@@ -253,7 +253,7 @@ function AppRoutes() {
     }
   }, [location.hash, location.pathname, location.search, navigate]);
 
-  if (loading) return <LoadingScreen />;
+  if (loading && !user) return <LoadingScreen />;
 
   const role = normalizeAppRole(profile?.role);
 

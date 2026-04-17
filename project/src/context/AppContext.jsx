@@ -180,6 +180,7 @@ export function AppProvider({ children }) {
         if (error) logFailure('getSession', error);
         setUser(session?.user ?? null);
         if (session?.user) {
+          setLoading(false);
           loadUserData(session.user);
         } else {
           setLoading(false);
@@ -203,6 +204,7 @@ export function AppProvider({ children }) {
       initialSessionResolvedRef.current = true;
       setUser(session?.user ?? null);
       if (session?.user) {
+        setLoading(false);
         (async () => { await loadUserData(session.user); })();
       } else {
         setProfile(null);
