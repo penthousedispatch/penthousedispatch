@@ -614,7 +614,7 @@ export default function BotTeamPanel() {
 
       if (role === 'admin' || isPlatformOwner) {
         try {
-          const platformOrg = await ensurePlatformAdminOrg(user);
+          const platformOrg = await ensurePlatformAdminOrg(user, { forceBootstrap: role === 'admin' });
           if (platformOrg?.id) {
             if (mounted) {
               setResolvedOrgId(platformOrg.id);
