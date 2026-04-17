@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { Building2, CheckCircle, XCircle, Clock, Eye, Users, AlertTriangle, Route } from 'lucide-react';
 import DriverRouteView from '../../components/drivers/DriverRouteView';
@@ -12,6 +13,7 @@ const STATUS_COLORS = {
 };
 
 export default function AdminCompanies() {
+  const navigate = useNavigate();
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
@@ -106,6 +108,7 @@ export default function AdminCompanies() {
                   key={company.id}
                   company={company}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
+                  onOpenDashboard={() => navigate(`/admin/company-preview/${company.id}`)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
@@ -131,6 +134,7 @@ export default function AdminCompanies() {
                   key={company.id}
                   company={company}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
+                  onOpenDashboard={() => navigate(`/admin/company-preview/${company.id}`)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
@@ -222,7 +226,7 @@ export default function AdminCompanies() {
   );
 }
 
-function CompanyRow({ company, onView, onSuspend }) {
+function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
   const st = STATUS_COLORS[company.onboarding_status] || STATUS_COLORS.pending;
   return (
     <div className="flex items-center gap-4 p-4 rounded-xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -244,6 +248,13 @@ function CompanyRow({ company, onView, onSuspend }) {
         </span>
         <button onClick={onView} className="btn-ghost px-3 py-1.5 text-xs flex items-center gap-1.5">
           <Eye className="w-3 h-3" /> Review
+        </button>
+        <button
+          onClick={onOpenDashboard}
+          className="px-3 py-1.5 text-xs rounded-lg"
+          style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c' }}
+        >
+          Open Dashboard
         </button>
         <button
           onClick={onSuspend}

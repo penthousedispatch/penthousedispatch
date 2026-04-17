@@ -12,6 +12,7 @@ export function AppProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [org, setOrg] = useState(null);
   const [company, setCompany] = useState(null);
+  const [adminPreviewCompany, setAdminPreviewCompany] = useState(null);
   const [drivers, setDrivers] = useState([]);
   const [trips, setTrips] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -25,6 +26,7 @@ export function AppProvider({ children }) {
   const billingSyncRef = useRef(0);
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
+  const activeCompany = profile?.role === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
 
   async function fetchLatestSentryConfig() {
     const { data, error } = await supabase
@@ -54,6 +56,7 @@ export function AppProvider({ children }) {
         setProfile(null);
         setOrg(null);
         setCompany(null);
+        setAdminPreviewCompany(null);
         setLoading(false);
         if (autoPullRef.current) { clearInterval(autoPullRef.current); autoPullRef.current = null; }
       }
@@ -102,6 +105,7 @@ export function AppProvider({ children }) {
           await loadAssignments({ companyId: comp.id });
         }
       } else {
+        setCompany(null);
         const { data: membership, error: memErr } = await supabase.from('org_members').select('*, organizations(*)').eq('user_id', u.id).maybeSingle();
         if (memErr) logFailure('loadUserData:org_members', memErr);
         if (membership?.organizations) {
@@ -144,7 +148,12 @@ export function AppProvider({ children }) {
       if (!autoPullRef.current) {
         autoPullRef.current = setInterval(async () => {
           if (!sentryApi.enabled) return;
-          const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
+          const scopedCompanyId =
+            profile?.role === 'company'
+              ? activeCompany?.id || null
+              : profile?.role === 'admin'
+                ? adminPreviewCompany?.id || null
+                : null;
 
           function mapTrip(t) {
             return {
@@ -229,7 +238,13 @@ export function AppProvider({ children }) {
   }
 
   async function loadDrivers(options = {}) {
-    const scopedCompanyId = options.companyId || (profile?.role === 'company' ? company?.id : null);
+    const scopedCompanyId =
+      options.companyId ||
+      (profile?.role === 'company'
+        ? activeCompany?.id
+        : profile?.role === 'admin'
+          ? adminPreviewCompany?.id
+          : null);
     let query = supabase.from('drivers').select('*').eq('is_active', true);
     if (scopedCompanyId) query = query.eq('company_id', scopedCompanyId);
     const { data, error } = await query.order('full_name');
@@ -242,7 +257,13 @@ export function AppProvider({ children }) {
   }
 
   async function loadTrips(options = {}) {
-    const scopedCompanyId = options.companyId || (profile?.role === 'company' ? company?.id : null);
+    const scopedCompanyId =
+      options.companyId ||
+      (profile?.role === 'company'
+        ? activeCompany?.id
+        : profile?.role === 'admin'
+          ? adminPreviewCompany?.id
+          : null);
     let query = supabase
       .from('marketplace_trips')
       .select('*')
@@ -263,7 +284,13 @@ export function AppProvider({ children }) {
   }
 
   async function loadAssignments(options = {}) {
-    const scopedCompanyId = options.companyId || (profile?.role === 'company' ? company?.id : null);
+    const scopedCompanyId =
+      options.companyId ||
+      (profile?.role === 'company'
+        ? activeCompany?.id
+        : profile?.role === 'admin'
+          ? adminPreviewCompany?.id
+          : null);
     let query = supabase
       .from('trip_assignments')
       .select('*, drivers(full_name, photo_data, status, company_id)')
@@ -347,7 +374,12 @@ export function AppProvider({ children }) {
   async function refreshTripsFromSentry() {
     let totalCount = 0;
     let lastError = null;
-    const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
+    const scopedCompanyId =
+      profile?.role === 'company'
+        ? activeCompany?.id || null
+        : profile?.role === 'admin'
+          ? adminPreviewCompany?.id || null
+          : null;
 
     if (sentryApi.features.marketplaceTrips) {
       const result = await sentryApi.getMarketplaceTrips();
@@ -397,7 +429,12 @@ export function AppProvider({ children }) {
     const list = Array.isArray(result.data) ? result.data : (result.data?.drivers || []);
     let created = 0;
     let updated = 0;
-    const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
+    const scopedCompanyId =
+      profile?.role === 'company'
+        ? activeCompany?.id || null
+        : profile?.role === 'admin'
+          ? adminPreviewCompany?.id || null
+          : null;
 
     for (const sd of list) {
       const sentryId = String(sd.id || sd.driver_id || '');
@@ -455,8 +492,8 @@ export function AppProvider({ children }) {
     schedRunningRef.current = true;
     try {
       const { data: cfg } = await supabase.from('auto_scheduler_config').select('*').maybeSingle();
-      if (profile?.role === 'company' && company) {
-        if (company.ai_routing_enabled === false || company.ai_auto_assign_enabled === false) return;
+      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany) {
+        if (activeCompany.ai_routing_enabled === false || activeCompany.ai_auto_assign_enabled === false) return;
       }
       if (!cfg?.enabled || !cfg?.auto_assign) return;
 
@@ -466,8 +503,8 @@ export function AppProvider({ children }) {
         .eq('is_active', true)
         .in('status', ['online', 'on_trip']);
 
-      if (profile?.role === 'company' && company?.id) {
-        driverQuery = driverQuery.eq('company_id', company.id);
+      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany?.id) {
+        driverQuery = driverQuery.eq('company_id', activeCompany.id);
       }
 
       const { data: currentDrivers } = await driverQuery;
@@ -478,14 +515,14 @@ export function AppProvider({ children }) {
         .eq('status', 'available')
         .order('loaded_at', { ascending: true });
 
-      if (profile?.role === 'company' && company?.id) {
-        tripQuery = tripQuery.eq('company_id', company.id);
+      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany?.id) {
+        tripQuery = tripQuery.eq('company_id', activeCompany.id);
       }
 
       const { data: availableTrips } = await tripQuery;
 
       let currentAssignments = [];
-      if (profile?.role === 'company' && company?.id) {
+      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany?.id) {
         const companyDriverIds = (currentDrivers || []).map(driver => driver.id).filter(Boolean);
         if (companyDriverIds.length) {
           const { data } = await supabase
@@ -593,16 +630,16 @@ export function AppProvider({ children }) {
       Object.values(liveRefreshTimersRef.current).forEach(timer => clearTimeout(timer));
       liveRefreshTimersRef.current = {};
     };
-  }, [user?.id, profile?.role, company?.id]);
+  }, [user?.id, profile?.role, activeCompany?.id, adminPreviewCompany?.id]);
 
   const value = {
-    user, profile, org, company, drivers, trips, assignments, schedules,
+    user, profile, org, company: activeCompany, platformCompany: company, adminPreviewCompany, drivers, trips, assignments, schedules,
     sentryConfig, sentryStatus, loading,
     loadDrivers, loadTrips, loadAssignments,
     refreshTripsFromSentry, checkSentryHealth,
     syncDriversFromSentry, pushAllLocationsToSentry,
     runAISchedulerPipeline,
-    setSchedules, setSentryConfig, setCompany,
+    setSchedules, setSentryConfig, setCompany, setAdminPreviewCompany,
     supabase,
     role: profile?.role || null,
     isAdmin: profile?.role === 'admin',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
+import { Routes, Route, NavLink, Link, useLocation, useParams } from 'react-router-dom';
 import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
@@ -28,6 +28,7 @@ const ApiKeyManager = lazy(() => import('./ApiKeyManager'));
 const TenantManager = lazy(() => import('./TenantManager'));
 const TestModeSandbox = lazy(() => import('./TestModeSandbox'));
 const LiveDispatch = lazy(() => import('../dispatcher/LiveDispatch'));
+const CompanyDashboard = lazy(() => import('../company/CompanyDashboard'));
 const AdminChatbot = lazy(() => import('../dispatcher/AdminChatbot'));
 const AutoSchedulerPanel = lazy(() => import('../dispatcher/AutoSchedulerPanel'));
 const BotTeamPanel = lazy(() => import('../dispatcher/BotTeamPanel'));
@@ -59,6 +60,8 @@ const PRIMARY_TABS = [
   { path: '/admin/ops', label: 'Ops Center', icon: RadioTower },
   { path: '/', label: 'Dispatch', icon: LayoutGrid, exact: true },
   { path: '/admin/companies', label: 'Companies', icon: Building2 },
+  { path: '/admin/ai', label: 'AI Settings', icon: ShieldCheck },
+  { path: '/admin/bots', label: 'Bot Team', icon: Bot },
 ];
 
 const PLATFORM_TABS = [
@@ -68,11 +71,9 @@ const PLATFORM_TABS = [
   { path: '/admin/security', label: 'Security', icon: Shield },
   { path: '/admin/payroll', label: 'Payroll', icon: Banknote },
   { path: '/admin/incentives', label: 'Incentives', icon: Zap },
-  { path: '/admin/ai', label: 'AI Settings', icon: ShieldCheck },
   { path: '/admin/sentry-guide', label: 'Setup Guide', icon: BookOpen },
   { path: '/admin/chatbot', label: 'Chat AI', icon: MessageSquare },
   { path: '/admin/auto-scheduler', label: 'Auto-Scheduler', icon: Zap },
-  { path: '/admin/bots', label: 'Bot Team', icon: Bot },
   { path: '/admin/settings', label: 'Ops Settings', icon: Settings },
   { path: '/admin/users', label: 'Users', icon: Users },
   { path: '/admin/logs', label: 'Logs', icon: FileText },
@@ -179,8 +180,59 @@ function MobileDrawer({ open, onClose }) {
   );
 }
 
+function AdminCompanyPreview() {
+  const { companyId } = useParams();
+  const { loadDrivers, loadTrips, loadAssignments, setAdminPreviewCompany } = useApp();
+  const [previewCompany, setPreviewCompany] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadPreviewCompany() {
+      setLoading(true);
+      const { data, error } = await supabase.from('companies').select('*').eq('id', companyId).maybeSingle();
+      if (!mounted) return;
+      if (error || !data) {
+        setPreviewCompany(null);
+        setAdminPreviewCompany(null);
+        setLoading(false);
+        return;
+      }
+      setPreviewCompany(data);
+      setAdminPreviewCompany(data);
+      await Promise.all([
+        loadDrivers({ companyId: data.id }),
+        loadTrips({ companyId: data.id }),
+        loadAssignments({ companyId: data.id }),
+      ]);
+      setLoading(false);
+    }
+
+    loadPreviewCompany();
+
+    return () => {
+      mounted = false;
+      setAdminPreviewCompany(null);
+      loadDrivers();
+      loadTrips();
+      loadAssignments();
+    };
+  }, [companyId, loadAssignments, loadDrivers, loadTrips, setAdminPreviewCompany]);
+
+  if (loading) {
+    return <div className="h-full flex items-center justify-center" style={{ color: 'rgba(255,255,255,0.45)' }}>Loading company workspace...</div>;
+  }
+
+  if (!previewCompany) {
+    return <div className="h-full flex items-center justify-center" style={{ color: '#ff4757' }}>Company workspace could not be loaded.</div>;
+  }
+
+  return <CompanyDashboard previewMode />;
+}
+
 export default function AdminDashboard() {
-  const { sentryStatus, drivers } = useApp();
+  const { sentryStatus, drivers, adminPreviewCompany } = useApp();
   const [mobileNav, setMobileNav] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef(null);
@@ -241,7 +293,7 @@ export default function AdminDashboard() {
                 fontWeight: isPlatformActive ? 600 : 400,
               }}
             >
-              Platform
+              More
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
             </button>
             {moreOpen && <MoreMenu tabs={PLATFORM_TABS} onClose={() => setMoreOpen(false)} />}
@@ -250,6 +302,15 @@ export default function AdminDashboard() {
 
         <div className="flex items-center gap-2 flex-shrink-0">
           <AlertInboxButton scope="admin" />
+          {adminPreviewCompany && (
+            <Link
+              to={`/admin/company-preview/${adminPreviewCompany.id}`}
+              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+              style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none', fontWeight: 600 }}
+            >
+              Previewing {adminPreviewCompany.company_name}
+            </Link>
+          )}
           <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.55)' }}>
             <div className="status-dot online" />
             <span>{onlineDrivers} online</span>
@@ -291,6 +352,7 @@ export default function AdminDashboard() {
             <Route path="/" element={<LiveDispatch />} />
             <Route path="/admin/ops" element={<AdminOpsCenter />} />
             <Route path="/admin/companies" element={<AdminCompanies />} />
+            <Route path="/admin/company-preview/:companyId/*" element={<AdminCompanyPreview />} />
             <Route path="/admin/billing" element={<AdminBilling />} />
             <Route path="/admin/payroll" element={<AdminPayroll />} />
             <Route path="/admin/incentives" element={<AdminIncentives />} />

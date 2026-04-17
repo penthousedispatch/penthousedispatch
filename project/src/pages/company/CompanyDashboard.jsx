@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, Routes, Route } from 'react-router-dom';
+import { NavLink, Routes, Route, Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
@@ -643,23 +643,24 @@ function CompanyGuides() {
   );
 }
 
-export default function CompanyDashboard() {
+export default function CompanyDashboard({ previewMode = false }) {
   const { company, setCompany, profile } = useApp();
   const [mobileNav, setMobileNav] = useState(false);
   const importSource = React.useMemo(() => {
     const match = company?.notes?.match(/IMPORT_SOURCE:([A-Z_]+)/);
     return match?.[1] || 'MANUAL';
   }, [company?.notes]);
+  const basePath = previewMode && company?.id ? `/admin/company-preview/${company.id}` : '';
 
   const tabs = [
-    { path: '/', label: 'Dispatch', icon: LayoutGrid, exact: true },
-    { path: '/marketplace', label: 'Marketplace', icon: Layers },
-    { path: '/drivers', label: 'Drivers', icon: Users },
-    { path: '/trips', label: 'Trip History', icon: Navigation },
-    { path: '/invoices', label: 'Invoices', icon: FileText },
-    { path: '/ai-controls', label: 'AI Controls', icon: Bot },
-    { path: '/guides', label: 'Guides', icon: BookOpen },
-    { path: '/settings', label: 'Settings', icon: Settings },
+    { path: basePath || '/', routePath: '/', label: 'Dispatch', icon: LayoutGrid, exact: true },
+    { path: `${basePath}/marketplace`, routePath: 'marketplace', label: 'Marketplace', icon: Layers },
+    { path: `${basePath}/drivers`, routePath: 'drivers', label: 'Drivers', icon: Users },
+    { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
+    { path: `${basePath}/invoices`, routePath: 'invoices', label: 'Invoices', icon: FileText },
+    { path: `${basePath}/ai-controls`, routePath: 'ai-controls', label: 'AI Controls', icon: Bot },
+    { path: `${basePath}/guides`, routePath: 'guides', label: 'Guides', icon: BookOpen },
+    { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
   ];
 
   if (!company?.is_approved && company?.onboarding_status !== 'approved') {
@@ -705,6 +706,15 @@ export default function CompanyDashboard() {
             <p style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700 }}>PENTHOUSE DISPATCH</p>
             {company && <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>{company.company_name}</p>}
           </div>
+          {previewMode && company?.id && (
+            <Link
+              to="/admin/companies"
+              className="hidden md:inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+              style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none', fontWeight: 600 }}
+            >
+              Back To Companies
+            </Link>
+          )}
         </div>
 
         <nav className="hidden md:flex items-center gap-0.5">
@@ -763,14 +773,14 @@ export default function CompanyDashboard() {
 
       <main className="flex-1 overflow-y-auto">
         <Routes>
-          <Route path="/" element={<LiveDispatch />} />
-          <Route path="/marketplace" element={<CompanyMarketplace company={company} />} />
-          <Route path="/drivers" element={<CompanyDrivers company={company} />} />
-          <Route path="/trips" element={<CompanyTrips company={company} />} />
-          <Route path="/invoices" element={<CompanyInvoices company={company} />} />
-          <Route path="/ai-controls" element={<CompanyAIControls company={company} setCompany={setCompany} />} />
-          <Route path="/guides" element={<CompanyGuides />} />
-          <Route path="/settings" element={<CompanySettings company={company} setCompany={setCompany} />} />
+          <Route index element={<LiveDispatch />} />
+          <Route path="marketplace" element={<CompanyMarketplace company={company} />} />
+          <Route path="drivers" element={<CompanyDrivers company={company} />} />
+          <Route path="trips" element={<CompanyTrips company={company} />} />
+          <Route path="invoices" element={<CompanyInvoices company={company} />} />
+          <Route path="ai-controls" element={<CompanyAIControls company={company} setCompany={setCompany} />} />
+          <Route path="guides" element={<CompanyGuides />} />
+          <Route path="settings" element={<CompanySettings company={company} setCompany={setCompany} />} />
           <Route path="/*" element={<LiveDispatch />} />
         </Routes>
       </main>
