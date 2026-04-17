@@ -18,6 +18,9 @@ function AppRoutes() {
   const { user, loading, profile, org, company } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
+  const searchParams = React.useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const nextPath = searchParams.get('next');
+  const safeNextPath = nextPath && nextPath.startsWith('/') ? nextPath : '/';
 
   React.useEffect(() => {
     const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
@@ -48,13 +51,18 @@ function AppRoutes() {
   const role = profile?.role;
 
   if (!user) {
+    const requestedPath = `${location.pathname}${location.search}${location.hash}`;
+
     return (
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/driver" element={<DriverApp />} />
         <Route path="/rider" element={<RiderTracking />} />
         <Route path="/change-password" element={<ChangeMyPassword />} />
-        <Route path="/*" element={<AuthPage />} />
+        <Route
+          path="/*"
+          element={<Navigate to={`/auth?next=${encodeURIComponent(requestedPath)}`} replace />}
+        />
       </Routes>
     );
   }
@@ -67,7 +75,7 @@ function AppRoutes() {
       <Route path="/rider" element={<RiderTracking />} />
       <Route path="/company/onboarding" element={<CompanyOnboarding />} />
       <Route path="/change-password" element={<ChangeMyPassword />} />
-      <Route path="/auth" element={<Navigate to="/" />} />
+      <Route path="/auth" element={<Navigate to={safeNextPath} replace />} />
 
       {role === 'admin' && <Route path="/*" element={<AdminDashboard />} />}
       {role === 'company' && <Route path="/*" element={<CompanyDashboard />} />}

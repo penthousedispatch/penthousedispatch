@@ -20,6 +20,7 @@ export default function AuthPage() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const authState = params.get('auth');
+    const requestedPath = params.get('next');
 
     if (authState === 'verified') {
       setMode('login');
@@ -27,6 +28,9 @@ export default function AuthPage() {
     } else if (authState === 'magic') {
       setMode('login');
       setInfo('Magic link confirmed. Please continue from the sign-in screen.');
+    } else if (requestedPath && requestedPath.startsWith('/')) {
+      setMode('login');
+      setInfo('Please sign in to continue.');
     }
   }, [location.search]);
 
