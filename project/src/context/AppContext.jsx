@@ -115,11 +115,37 @@ export function AppProvider({ children }) {
 
   async function loadUserData(u) {
     try {
-      const { data: prof, error: profErr } = await supabase.from('profiles').select('*').eq('id', u.id).maybeSingle();
+      const PROFILE_TIMEOUT_MS = 3500;
+      const profileResult = await Promise.race([
+        supabase.from('profiles').select('*').eq('id', u.id).maybeSingle(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Profile lookup timed out')), PROFILE_TIMEOUT_MS)
+        ),
+      ]);
+      const { data: prof, error: profErr } = profileResult;
       if (profErr) logFailure('loadUserData:profiles', profErr);
       setProfile(prof);
 
       const normalizedProfRole = normalizeAppRole(prof?.role);
+
+      if (!normalizedProfRole) {
+        setOrg(null);
+        setCompany(null);
+        setAdminPreviewCompany(null);
+        setDrivers([]);
+        setTrips([]);
+        setAssignments([]);
+        return;
+      }
+
+      if (normalizedProfRole === 'admin') {
+        setOrg(null);
+        setCompany(null);
+        setDrivers([]);
+        setTrips([]);
+        setAssignments([]);
+        setLoading(false);
+      }
 
       if (normalizedProfRole === 'company') {
         let comp = null;
@@ -144,6 +170,12 @@ export function AppProvider({ children }) {
           await loadTrips({ companyId: comp.id });
           await loadAssignments({ companyId: comp.id });
         }
+        if (!comp) {
+          setDrivers([]);
+          setTrips([]);
+          setAssignments([]);
+        }
+        setLoading(false);
       } else {
         setCompany(null);
         const { data: membership, error: memErr } = await supabase.from('org_members').select('*, organizations(*)').eq('user_id', u.id).maybeSingle();
@@ -194,6 +226,7 @@ export function AppProvider({ children }) {
             },
           });
         }
+        setLoading(false);
       }
       if (!autoPullRef.current) {
         autoPullRef.current = setInterval(async () => {
