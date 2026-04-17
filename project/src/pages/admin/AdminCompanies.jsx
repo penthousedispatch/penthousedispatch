@@ -71,6 +71,23 @@ export default function AdminCompanies() {
     await loadCompanies();
   }
 
+  async function handleSaveCompanyEdits() {
+    if (!selected?.id) return;
+    setSaving(true);
+    await supabase.from('companies').update({
+      company_name: selected.company_name || '',
+      legal_entity: selected.legal_entity || '',
+      phone: selected.phone || '',
+      billing_contact_name: selected.billing_contact_name || '',
+      billing_contact_email: selected.billing_contact_email || '',
+      address: selected.address || '',
+      tax_id: selected.tax_id || '',
+      updated_at: new Date().toISOString(),
+    }).eq('id', selected.id);
+    setSaving(false);
+    await loadCompanies();
+  }
+
   const pending = companies.filter(c => !c.is_approved && c.onboarding_status !== 'rejected');
   const approved = companies.filter(c => c.is_approved);
   const rejected = companies.filter(c => c.onboarding_status === 'rejected');
@@ -187,6 +204,31 @@ export default function AdminCompanies() {
                 </div>
               )}
               <div>
+                <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>Company Data</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    ['Company Name', 'company_name'],
+                    ['Legal Entity', 'legal_entity'],
+                    ['Phone', 'phone'],
+                    ['Billing Contact', 'billing_contact_name'],
+                    ['Billing Email', 'billing_contact_email'],
+                    ['Address', 'address'],
+                    ['Tax ID', 'tax_id'],
+                  ].map(([label, key]) => (
+                    <div key={key} className={key === 'address' ? 'sm:col-span-2' : ''}>
+                      <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)' }}>{label}</p>
+                      <input
+                        type="text"
+                        value={selected[key] || ''}
+                        onChange={e => setSelected(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="w-full text-sm"
+                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 12px', color: '#e5e7eb' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
                 <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)' }}>Admin Note</p>
                 <textarea
                   value={note}
@@ -199,6 +241,14 @@ export default function AdminCompanies() {
               </div>
             </div>
             <div className="flex gap-3 px-5 pb-5">
+              <button
+                onClick={handleSaveCompanyEdits}
+                disabled={saving}
+                className="px-4 py-2.5 rounded-xl text-sm font-600"
+                style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.3)', color: '#c9a84c', fontWeight: 600 }}
+              >
+                {saving ? 'Saving...' : 'Save Company Data'}
+              </button>
               <button
                 onClick={() => handleReject(selected)}
                 disabled={saving}

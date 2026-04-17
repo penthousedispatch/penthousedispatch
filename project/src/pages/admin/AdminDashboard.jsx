@@ -4,7 +4,7 @@ import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
   Sun, Moon, Globe, Key, Car, FlaskConical, Bot, MessageSquare,
-  ChevronDown, Menu, X, RadioTower
+  Menu, X, RadioTower
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
@@ -87,39 +87,71 @@ const PLATFORM_TABS = [
 
 const ALL_TABS = [...PRIMARY_TABS, ...PLATFORM_TABS];
 
-function MoreMenu({ tabs, onClose }) {
-  const location = useLocation();
+function AdminPlatformHome() {
+  const sections = [
+    {
+      title: 'Core Platform',
+      items: [
+        { path: '/admin/sentry', label: 'Sentry', desc: 'Receiver URLs, webhook bearer secret, sandbox driver credentials.' },
+        { path: '/admin/testing', label: 'Testing', desc: 'Run diagnostics, sandbox flow checks, and webhook verification.' },
+        { path: '/admin/security', label: 'Security', desc: 'MITRE, alerts, research, and active threats.' },
+      ],
+    },
+    {
+      title: 'Operations',
+      items: [
+        { path: '/admin/hub', label: 'Integration Hub', desc: 'Partner/provider health, credentials, and connection status.' },
+        { path: '/admin/api-keys', label: 'API Keys', desc: 'Manage internal API access and downstream integrations.' },
+        { path: '/admin/sandbox', label: 'Test Mode', desc: 'Seed test trips, test drivers, and scheduler scenarios.' },
+      ],
+    },
+    {
+      title: 'Administration',
+      items: [
+        { path: '/admin/users', label: 'Users', desc: 'Platform users, roles, and subscriber access.' },
+        { path: '/admin/logs', label: 'Logs', desc: 'Audit activity, sync history, and operational traces.' },
+        { path: '/admin/permissions', label: 'Permissions', desc: 'Role matrix and platform access reference.' },
+        { path: '/admin/tenants', label: 'Tenants', desc: 'Subscriber tenant registry and platform tenancy view.' },
+      ],
+    },
+  ];
+
   return (
-    <div
-      className="absolute top-full right-0 mt-1 rounded-2xl overflow-hidden shadow-2xl z-50 py-1"
-      style={{
-        background: '#0d1117',
-        border: '1px solid rgba(255,255,255,0.08)',
-        minWidth: 220,
-        boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-      }}
-    >
-      {tabs.map(({ path, label, icon: Icon, exact }) => {
-        const isActive = exact ? location.pathname === path : location.pathname.startsWith(path);
-        return (
-          <NavLink
-            key={path}
-            to={path}
-            end={exact}
-            onClick={onClose}
-            className="flex items-center gap-3 px-4 py-2.5 text-sm transition-all"
-            style={{
-              color: isActive ? '#c9a84c' : 'rgba(255,255,255,0.55)',
-              background: isActive ? 'rgba(201,168,76,0.08)' : 'transparent',
-              fontWeight: isActive ? 600 : 400,
-              textDecoration: 'none',
-            }}
-          >
-            <Icon className="w-4 h-4 flex-shrink-0" />
-            {label}
-          </NavLink>
-        );
-      })}
+    <div className="h-full overflow-y-auto p-6" style={{ color: '#e5e7eb' }}>
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-xl font-700 mb-1" style={{ color: '#c9a84c', fontWeight: 700 }}>Platform Tools</h1>
+          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
+            Admin-only configuration, testing, and security pages are grouped here so the dispatch workflow stays cleaner.
+          </p>
+        </div>
+
+        {sections.map(section => (
+          <section key={section.title} className="space-y-3">
+            <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.42)', fontWeight: 700 }}>
+              {section.title}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {section.items.map(item => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className="rounded-2xl p-4 transition-all"
+                  style={{
+                    background: '#0d1117',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    textDecoration: 'none',
+                    color: '#e5e7eb',
+                  }}
+                >
+                  <p className="text-sm font-700 mb-1" style={{ color: '#c9a84c', fontWeight: 700 }}>{item.label}</p>
+                  <p className="text-sm leading-6" style={{ color: 'rgba(255,255,255,0.45)' }}>{item.desc}</p>
+                </Link>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
@@ -234,20 +266,12 @@ function AdminCompanyPreview() {
 export default function AdminDashboard() {
   const { sentryStatus, drivers, adminPreviewCompany } = useApp();
   const [mobileNav, setMobileNav] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreRef = useRef(null);
   const location = useLocation();
 
-  useEffect(() => {
-    function handleClick(e) {
-      if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
-    }
-    if (moreOpen) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [moreOpen]);
-
   const onlineDrivers = drivers.filter(d => d.status === 'online' || d.status === 'on_trip').length;
-  const isPlatformActive = PLATFORM_TABS.some(t => t.exact ? location.pathname === t.path : location.pathname.startsWith(t.path));
+  const isPlatformActive =
+    location.pathname === '/admin/platform' ||
+    PLATFORM_TABS.some(t => t.exact ? location.pathname === t.path : location.pathname.startsWith(t.path));
 
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d' }}>
@@ -281,23 +305,20 @@ export default function AdminDashboard() {
               {label}
             </NavLink>
           ))}
-          <div className="relative" ref={moreRef}>
-            <button
-              onClick={() => setMoreOpen(p => !p)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap"
-              style={{
-                color: isPlatformActive ? '#c9a84c' : 'rgba(255,255,255,0.45)',
-                background: isPlatformActive || moreOpen ? 'rgba(201,168,76,0.1)' : 'transparent',
-                border: '1px solid',
-                borderColor: isPlatformActive || moreOpen ? 'rgba(201,168,76,0.2)' : 'transparent',
-                fontWeight: isPlatformActive ? 600 : 400,
-              }}
-            >
-              More
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {moreOpen && <MoreMenu tabs={PLATFORM_TABS} onClose={() => setMoreOpen(false)} />}
-          </div>
+          <NavLink
+            to="/admin/platform"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap"
+            style={({ isActive }) => ({
+              color: isActive || isPlatformActive ? '#c9a84c' : 'rgba(255,255,255,0.45)',
+              background: isActive || isPlatformActive ? 'rgba(201,168,76,0.1)' : 'transparent',
+              border: '1px solid',
+              borderColor: isActive || isPlatformActive ? 'rgba(201,168,76,0.2)' : 'transparent',
+              fontWeight: isActive || isPlatformActive ? 600 : 400,
+              textDecoration: 'none',
+            })}
+          >
+            More
+          </NavLink>
         </nav>
 
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -351,6 +372,7 @@ export default function AdminDashboard() {
           <Routes>
             <Route path="/" element={<LiveDispatch />} />
             <Route path="/admin/ops" element={<AdminOpsCenter />} />
+            <Route path="/admin/platform" element={<AdminPlatformHome />} />
             <Route path="/admin/companies" element={<AdminCompanies />} />
             <Route path="/admin/company-preview/:companyId/*" element={<AdminCompanyPreview />} />
             <Route path="/admin/billing" element={<AdminBilling />} />
