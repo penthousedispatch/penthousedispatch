@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { calcBearing, getPCarIcon } from '../../components/map/PCarMarker';
 
 const GMAPS_KEY = 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4';
 
@@ -12,14 +13,6 @@ const DARK_STYLE = [
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
 ];
-
-const CAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <circle cx="16" cy="16" r="15" fill="#c9a84c" stroke="#07090d" stroke-width="2"/>
-  <path d="M10 20 L12 13 L20 13 L22 20 Z" fill="#07090d"/>
-  <path d="M12 13 L13 10 L19 10 L20 13 Z" fill="#07090d"/>
-  <circle cx="12" cy="21" r="2" fill="#07090d"/>
-  <circle cx="20" cy="21" r="2" fill="#07090d"/>
-</svg>`;
 
 let mapsReady = false;
 let mapsPromise = null;
@@ -43,6 +36,7 @@ export default function DriverMapView({ location, trip, sheetState }) {
   const mapInstanceRef = useRef(null);
   const markerRef = useRef(null);
   const routeRef = useRef(null);
+  const prevLocationRef = useRef(null);
   const [mapsLoaded, setMapsLoaded] = useState(mapsReady);
 
   useEffect(() => {
@@ -74,24 +68,35 @@ export default function DriverMapView({ location, trip, sheetState }) {
   useEffect(() => {
     if (!mapsLoaded || !mapInstanceRef.current || !location || !window.google) return;
 
+    const previous = prevLocationRef.current;
+    const heading = previous ? calcBearing(previous, location) : 0;
+    prevLocationRef.current = location;
+
     if (markerRef.current) {
       markerRef.current.setPosition(location);
+      markerRef.current.setIcon(
+        getPCarIcon(window.google, {
+          isSelected: true,
+          isOnTrip: Boolean(trip),
+          heading,
+        })
+      );
     } else {
-      const icon = {
-        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(CAR_SVG),
-        scaledSize: new window.google.maps.Size(40, 40),
-        anchor: new window.google.maps.Point(20, 20),
-      };
       markerRef.current = new window.google.maps.Marker({
         position: location,
         map: mapInstanceRef.current,
-        icon,
+        icon: getPCarIcon(window.google, {
+          isSelected: true,
+          isOnTrip: Boolean(trip),
+          heading,
+        }),
         zIndex: 100,
+        optimized: false,
       });
     }
 
     mapInstanceRef.current.panTo(location);
-  }, [location, mapsLoaded]);
+  }, [location, mapsLoaded, trip]);
 
   useEffect(() => {
     if (!mapsLoaded || !mapInstanceRef.current || !window.google) return;

@@ -118,6 +118,93 @@ html, body, #root {
   border-color: rgba(184,134,11,0.25);
 }
 
+[data-theme="light"] .glass {
+  background: rgba(255,255,255,0.88);
+}
+
+[data-theme="light"] [style*="background: #07090d"],
+[data-theme="light"] [style*="background:#07090d"],
+[data-theme="light"] [style*="background: '#07090d'"],
+[data-theme="light"] [style*="background:'#07090d'"] {
+  background: #ffffff !important;
+}
+
+[data-theme="light"] [style*="background: #0d1117"],
+[data-theme="light"] [style*="background:#0d1117"],
+[data-theme="light"] [style*="background: '#0d1117'"],
+[data-theme="light"] [style*="background:'#0d1117'"] {
+  background: #ffffff !important;
+}
+
+[data-theme="light"] [style*="background: #141b24"],
+[data-theme="light"] [style*="background:#141b24"],
+[data-theme="light"] [style*="background: '#141b24'"],
+[data-theme="light"] [style*="background:'#141b24'"] {
+  background: #f7f8fa !important;
+}
+
+[data-theme="light"] [style*="background: #161819"],
+[data-theme="light"] [style*="background:#161819"],
+[data-theme="light"] [style*="background: '#161819'"],
+[data-theme="light"] [style*="background:'#161819'"] {
+  background: #f7f8fa !important;
+}
+
+[data-theme="light"] [style*="background: rgba(255,255,255,0.01)"],
+[data-theme="light"] [style*="background: rgba(255,255,255,0.02)"],
+[data-theme="light"] [style*="background: rgba(255,255,255,0.03)"],
+[data-theme="light"] [style*="background: rgba(255,255,255,0.04)"],
+[data-theme="light"] [style*="background: rgba(255,255,255,0.05)"],
+[data-theme="light"] [style*="background: rgba(255,255,255,0.06)"],
+[data-theme="light"] [style*="background: rgba(255,255,255,0.08)"] {
+  background: rgba(0,0,0,0.04) !important;
+}
+
+[data-theme="light"] [style*="color: #e5e7eb"],
+[data-theme="light"] [style*="color:#e5e7eb"],
+[data-theme="light"] [style*="color: '#e5e7eb'"],
+[data-theme="light"] [style*="color:'#e5e7eb'"] {
+  color: #111827 !important;
+}
+
+[data-theme="light"] [style*="color: rgba(255,255,255,0.7)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.6)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.55)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.5)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.48)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.45)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.42)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.4)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.38)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.35)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.3)"],
+[data-theme="light"] [style*="color: rgba(255,255,255,0.25)"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.7)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.6)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.55)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.5)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.48)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.45)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.42)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.4)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.38)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.35)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.3)'"],
+[data-theme="light"] [style*="color: 'rgba(255,255,255,0.25)'"] {
+  color: rgba(17,24,39,0.72) !important;
+}
+
+[data-theme="light"] [style*="border: 1px solid rgba(255,255,255,0.06)"],
+[data-theme="light"] [style*="border: 1px solid rgba(255,255,255,0.07)"],
+[data-theme="light"] [style*="border: 1px solid rgba(255,255,255,0.08)"],
+[data-theme="light"] [style*="border: 1px solid rgba(255,255,255,0.1)"],
+[data-theme="light"] [style*="border-bottom: '1px solid rgba(255,255,255,0.07)'"],
+[data-theme="light"] [style*="borderColor: 'rgba(255,255,255,0.07)'"],
+[data-theme="light"] [style*="borderColor: 'rgba(255,255,255,0.08)'"],
+[data-theme="light"] [style*="borderColor: 'rgba(255,255,255,0.1)'"] {
+  border-color: rgba(0,0,0,0.1) !important;
+}
+
 [data-theme="light"] ::-webkit-scrollbar-thumb {
   background: rgba(184,134,11,0.3);
 }

@@ -494,8 +494,8 @@ export default function AISettingsPanel() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden" style={{ background: '#07090d' }}>
-      <div className="flex-1 overflow-y-auto p-5 max-w-2xl">
+    <div className="flex h-full min-h-0 overflow-hidden" style={{ background: '#07090d' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto p-5 pb-28 max-w-2xl">
 
         <div className="mb-5">
           <h2 className="text-base mb-1" style={{ fontWeight: 700 }}>AI Configuration</h2>
@@ -898,25 +898,36 @@ export default function AISettingsPanel() {
           </div>
         )}
 
-        <div className="flex gap-2 mb-8">
-          {form.provider !== 'disabled' && (
-            <button
-              onClick={handleTest}
-              disabled={testing || !aiProviderReady}
-              className="btn-ghost flex items-center gap-2 py-2.5 px-4 flex-1"
-            >
-              <TestTube className={`w-4 h-4 ${testing ? 'animate-spin' : ''}`} />
-              {testing ? 'Testing...' : 'Test Connection'}
-            </button>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={saving || (role === 'admin' && !isPlatformOwner)}
-            className="btn-gold flex items-center gap-2 py-2.5 px-5 flex-1"
+        <div
+          className="sticky bottom-0 z-10 -mx-5 mt-6 mb-8 px-5 pt-3 pb-3"
+          style={{
+            background: 'linear-gradient(180deg, rgba(7,9,13,0), rgba(7,9,13,0.94) 18%, #07090d 100%)',
+            backdropFilter: 'blur(10px)',
+          }}
+        >
+          <div
+            className="flex flex-col sm:flex-row gap-2 rounded-2xl p-3"
+            style={{ background: 'rgba(13,17,23,0.96)', border: '1px solid rgba(255,255,255,0.08)' }}
           >
-            {saved ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-            {saved ? 'Saved!' : saving ? 'Saving...' : 'Save Settings'}
-          </button>
+            {form.provider !== 'disabled' && (
+              <button
+                onClick={handleTest}
+                disabled={testing || !aiProviderReady}
+                className="btn-ghost flex items-center justify-center gap-2 py-2.5 px-4 flex-1 min-w-0"
+              >
+                <TestTube className={`w-4 h-4 ${testing ? 'animate-spin' : ''}`} />
+                {testing ? 'Testing...' : 'Test Connection'}
+              </button>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={saving || (role === 'admin' && !isPlatformOwner)}
+              className="btn-gold flex items-center justify-center gap-2 py-2.5 px-5 flex-1 min-w-0"
+            >
+              {saved ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+              {saved ? 'Saved!' : saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
         </div>
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 20 }}>
