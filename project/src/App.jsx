@@ -20,6 +20,10 @@ function defaultPathForRole(role) {
   return '/';
 }
 
+function normalizeAppRole(role) {
+  return role === 'dispatcher' ? 'company' : role;
+}
+
 function MissingProfileScreen() {
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -84,7 +88,7 @@ function AppRoutes() {
 
   if (loading) return <LoadingScreen />;
 
-  const role = profile?.role;
+  const role = normalizeAppRole(profile?.role);
 
   if (!user) {
     const requestedPath = `${location.pathname}${location.search}${location.hash}`;
@@ -107,7 +111,7 @@ function AppRoutes() {
     return <MissingProfileScreen />;
   }
 
-  const needsOnboarding = role === 'dispatcher' && !org && !company;
+  const needsOnboarding = role === 'company' && !org && !company;
   const defaultRolePath = defaultPathForRole(role);
 
   return (
@@ -125,7 +129,7 @@ function AppRoutes() {
         <Route path="/*" element={<Navigate to="/company/onboarding" replace />} />
       )}
 
-      {(role === 'dispatcher' || !role) && !needsOnboarding && (
+      {(!role) && !needsOnboarding && (
         <Route path="/*" element={<DispatcherDashboard />} />
       )}
     </Routes>

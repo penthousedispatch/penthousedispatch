@@ -10,7 +10,7 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [companyName, setCompanyName] = useState('');
-  const [signupRole, setSignupRole] = useState('dispatcher');
+  const [signupRole, setSignupRole] = useState('company');
   const [importSource, setImportSource] = useState('sentry');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -165,7 +165,6 @@ export default function AuthPage() {
               <>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { value: 'dispatcher', label: 'Dispatcher', icon: User },
                     { value: 'company', label: 'Company', icon: Building2 },
                   ].map(option => {
                     const Icon = option.icon;

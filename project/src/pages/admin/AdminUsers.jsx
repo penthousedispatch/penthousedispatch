@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Users, ShieldCheck, RefreshCw } from 'lucide-react';
 
-const ROLES = ['admin', 'dispatcher', 'company', 'driver'];
+const ROLES = ['admin', 'company', 'driver'];
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
@@ -25,7 +25,7 @@ export default function AdminUsers() {
     await loadUsers();
   }
 
-  const roleColor = { admin: '#c9a84c', dispatcher: '#0ea5e9', company: '#00e5a0', driver: '#f59e0b' };
+  const roleColor = { admin: '#c9a84c', company: '#00e5a0', driver: '#f59e0b' };
 
   return (
     <div className="h-full overflow-y-auto p-6" style={{ color: '#e5e7eb' }}>
@@ -63,7 +63,7 @@ export default function AdminUsers() {
                 <div className="flex items-center gap-2">
                   {user.role === 'admin' && <ShieldCheck className="w-4 h-4" style={{ color: '#c9a84c' }} />}
                   <select
-                    value={user.role || 'dispatcher'}
+                    value={user.role === 'dispatcher' ? 'company' : (user.role || 'company')}
                     onChange={e => updateRole(user.id, e.target.value)}
                     disabled={saving === user.id}
                     className="text-xs py-1.5 pl-2 pr-6"

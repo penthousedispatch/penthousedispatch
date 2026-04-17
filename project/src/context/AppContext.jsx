@@ -27,6 +27,7 @@ export function AppProvider({ children }) {
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
   const activeCompany = profile?.role === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
+  const isCompanyRole = profile?.role === 'company' || profile?.role === 'dispatcher';
 
   async function fetchLatestSentryConfig() {
     const { data, error } = await supabase
@@ -81,7 +82,7 @@ export function AppProvider({ children }) {
       if (profErr) logFailure('loadUserData:profiles', profErr);
       setProfile(prof);
 
-      if (prof?.role === 'company') {
+      if (prof?.role === 'company' || prof?.role === 'dispatcher') {
         let comp = null;
         let compErr = null;
 
@@ -159,7 +160,7 @@ export function AppProvider({ children }) {
         autoPullRef.current = setInterval(async () => {
           if (!sentryApi.enabled) return;
           const scopedCompanyId =
-            profile?.role === 'company'
+            isCompanyRole
               ? activeCompany?.id || null
               : profile?.role === 'admin'
                 ? adminPreviewCompany?.id || null
@@ -250,7 +251,7 @@ export function AppProvider({ children }) {
   async function loadDrivers(options = {}) {
     const scopedCompanyId =
       options.companyId ||
-      (profile?.role === 'company'
+      (isCompanyRole
         ? activeCompany?.id
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id
@@ -273,7 +274,7 @@ export function AppProvider({ children }) {
   async function loadTrips(options = {}) {
     const scopedCompanyId =
       options.companyId ||
-      (profile?.role === 'company'
+      (isCompanyRole
         ? activeCompany?.id
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id
@@ -304,7 +305,7 @@ export function AppProvider({ children }) {
   async function loadAssignments(options = {}) {
     const scopedCompanyId =
       options.companyId ||
-      (profile?.role === 'company'
+      (isCompanyRole
         ? activeCompany?.id
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id
@@ -397,7 +398,7 @@ export function AppProvider({ children }) {
     let totalCount = 0;
     let lastError = null;
     const scopedCompanyId =
-      profile?.role === 'company'
+      isCompanyRole
         ? activeCompany?.id || null
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id || null
@@ -452,7 +453,7 @@ export function AppProvider({ children }) {
     let created = 0;
     let updated = 0;
     const scopedCompanyId =
-      profile?.role === 'company'
+      isCompanyRole
         ? activeCompany?.id || null
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id || null
@@ -514,7 +515,7 @@ export function AppProvider({ children }) {
     schedRunningRef.current = true;
     try {
       const { data: cfg } = await supabase.from('auto_scheduler_config').select('*').maybeSingle();
-      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany) {
+      if ((isCompanyRole || profile?.role === 'admin') && activeCompany) {
         if (activeCompany.ai_routing_enabled === false || activeCompany.ai_auto_assign_enabled === false) return;
       }
       if (!cfg?.enabled || !cfg?.auto_assign) return;
@@ -525,7 +526,7 @@ export function AppProvider({ children }) {
         .eq('is_active', true)
         .in('status', ['online', 'on_trip']);
 
-      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany?.id) {
+      if ((isCompanyRole || profile?.role === 'admin') && activeCompany?.id) {
         driverQuery = driverQuery.eq('company_id', activeCompany.id);
       }
 
@@ -537,14 +538,14 @@ export function AppProvider({ children }) {
         .eq('status', 'available')
         .order('loaded_at', { ascending: true });
 
-      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany?.id) {
+      if ((isCompanyRole || profile?.role === 'admin') && activeCompany?.id) {
         tripQuery = tripQuery.eq('company_id', activeCompany.id);
       }
 
       const { data: availableTrips } = await tripQuery;
 
       let currentAssignments = [];
-      if ((profile?.role === 'company' || profile?.role === 'admin') && activeCompany?.id) {
+      if ((isCompanyRole || profile?.role === 'admin') && activeCompany?.id) {
         const companyDriverIds = (currentDrivers || []).map(driver => driver.id).filter(Boolean);
         if (companyDriverIds.length) {
           const { data } = await supabase
@@ -626,7 +627,7 @@ export function AppProvider({ children }) {
         scheduleLiveRefresh('assignments', loadAssignments);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'companies' }, () => {
-        if (profile?.role === 'company' || profile?.role === 'admin') {
+        if (isCompanyRole || profile?.role === 'admin') {
           scheduleLiveRefresh('company', () => loadUserData(user), 500);
         }
       })
@@ -665,8 +666,8 @@ export function AppProvider({ children }) {
     supabase,
     role: profile?.role || null,
     isAdmin: profile?.role === 'admin',
-    isCompany: profile?.role === 'company',
-    isDispatcher: profile?.role === 'dispatcher' || profile?.role === 'admin',
+    isCompany: isCompanyRole,
+    isDispatcher: isCompanyRole || profile?.role === 'admin',
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

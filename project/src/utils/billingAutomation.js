@@ -8,7 +8,7 @@ export async function syncCompletedTripBilling({
   daysBack = 45,
   ratePerMile = DEFAULT_BILLING_RATE_PER_MILE,
 }) {
-  if (!supabase || !['admin', 'dispatcher'].includes(role)) {
+  if (!supabase || !['admin', 'company', 'dispatcher'].includes(role)) {
     return { inserted: 0, skipped: 0 };
   }
 

@@ -1,18 +1,19 @@
 import React from 'react';
 import { ShieldCheck, XCircle, CheckCircle2 } from 'lucide-react';
 
-const ROLES = ['admin', 'dispatcher', 'company', 'driver'];
+const ROLES = ['admin', 'company', 'driver', 'rider'];
 const RULES = [
-  ['Live Dispatch', { admin: true, dispatcher: true, company: true, driver: false }],
-  ['Billing', { admin: true, dispatcher: false, company: false, driver: false }],
-  ['Sentry / Integrations', { admin: true, dispatcher: true, company: false, driver: false }],
-  ['AI Settings', { admin: true, dispatcher: false, company: false, driver: false }],
-  ['Security / MITRE', { admin: true, dispatcher: false, company: false, driver: false }],
-  ['Users & Companies', { admin: true, dispatcher: false, company: false, driver: false }],
-  ['Test Mode / Sandbox', { admin: true, dispatcher: true, company: false, driver: false }],
-  ['Driver App', { admin: true, dispatcher: true, company: true, driver: true }],
-  ['Company Onboarding', { admin: false, dispatcher: false, company: true, driver: false }],
-  ['Community / Leaderboard', { admin: false, dispatcher: false, company: false, driver: true }],
+  ['Live Dispatch', { admin: true, company: true, driver: false, rider: false }],
+  ['Billing', { admin: true, company: true, driver: false, rider: false }],
+  ['Sentry / Integrations', { admin: true, company: false, driver: false, rider: false }],
+  ['AI Settings', { admin: true, company: true, driver: false, rider: false }],
+  ['Security / MITRE', { admin: true, company: false, driver: false, rider: false }],
+  ['Users & Companies', { admin: true, company: false, driver: false, rider: false }],
+  ['Test Mode / Sandbox', { admin: true, company: false, driver: false, rider: false }],
+  ['Driver App', { admin: true, company: true, driver: true, rider: false }],
+  ['Rider Tracking', { admin: true, company: true, driver: false, rider: true }],
+  ['Company Onboarding', { admin: false, company: true, driver: false, rider: false }],
+  ['Community / Leaderboard', { admin: false, company: false, driver: true, rider: false }],
 ];
 
 export default function PermissionsMatrix() {
