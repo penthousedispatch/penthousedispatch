@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { Building2, CheckCircle, XCircle, Clock, Eye, Users, AlertTriangle, Route } from 'lucide-react';
@@ -99,6 +98,7 @@ export default function AdminCompanies() {
   function handleOpenDashboard(company) {
     setAdminPreviewCompany(company);
     setSelected(null);
+    window.location.assign(`/admin/company-preview/${company.id}/drivers`);
   }
 
   const pending = companies.filter(c => !c.is_approved && c.onboarding_status !== 'rejected');
@@ -321,14 +321,14 @@ function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
         <button onClick={onView} className="btn-ghost px-3 py-1.5 text-xs flex items-center gap-1.5">
           <Eye className="w-3 h-3" /> Review
         </button>
-        <Link
-          to={`/admin/company-preview/${company.id}/drivers`}
+        <button
+          type="button"
           onClick={onOpenDashboard}
           className="px-3 py-1.5 text-xs rounded-lg"
           style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none' }}
         >
           Open Dashboard
-        </Link>
+        </button>
         <button
           onClick={onSuspend}
           className="px-3 py-1.5 text-xs rounded-lg"

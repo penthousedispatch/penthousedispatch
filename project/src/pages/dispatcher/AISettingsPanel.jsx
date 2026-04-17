@@ -157,6 +157,36 @@ export default function AISettingsPanel() {
   const [filterType, setFilterType] = useState('all');
   const [syncingBot, setSyncingBot] = useState(null);
 
+  async function persistCoreBotFlags(nextForm) {
+    if (!org?.id) return;
+    const payload = {
+      sentry_bot_enabled: nextForm.sentry_bot_enabled,
+      scheduler_bot_enabled: nextForm.scheduler_bot_enabled,
+      health_bot_enabled: nextForm.health_bot_enabled,
+      security_bot_enabled: nextForm.security_bot_enabled,
+      all_bots_paused: nextForm.all_bots_paused,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', org.id).maybeSingle();
+    if (existing) {
+      await supabase.from('ai_settings').update(payload).eq('org_id', org.id);
+    } else {
+      await supabase.from('ai_settings').insert({
+        org_id: org.id,
+        provider: nextForm.provider || 'disabled',
+        api_key: nextForm.api_key || '',
+        base_url: nextForm.base_url || '',
+        model: nextForm.model || 'gpt-4o-mini',
+        temperature: nextForm.temperature ?? 0.7,
+        max_tokens: nextForm.max_tokens || 200,
+        motivation_enabled: nextForm.motivation_enabled ?? true,
+        scheduling_enabled: nextForm.scheduling_enabled ?? true,
+        ...payload,
+      });
+    }
+  }
+
   useEffect(() => {
     loadSettings();
     loadLogs();
@@ -321,6 +351,10 @@ export default function AISettingsPanel() {
     const newValue = !form[field];
     const newForm = { ...form, [field]: newValue };
     setForm(newForm);
+    if (['sentry_bot', 'scheduler_bot', 'health_bot', 'security_bot'].includes(botId)) {
+      await persistCoreBotFlags(newForm);
+      return;
+    }
     await syncBotKillSwitch(botId, newValue);
   }
 
@@ -331,8 +365,28 @@ export default function AISettingsPanel() {
     };
     setForm(newForm);
     if (!org?.id) return;
+    await persistCoreBotFlags(newForm);
     for (const bot of BOT_SERVICES) {
       await syncBotKillSwitch(bot.id, !pause);
+    }
+  }
+
+  async function setAllBotsEnabled(enabled) {
+    const newForm = {
+      ...form,
+      sentry_bot_enabled: enabled,
+      scheduler_bot_enabled: enabled,
+      health_bot_enabled: enabled,
+      security_bot_enabled: enabled,
+      codex_bot_enabled: enabled,
+      claude_bot_enabled: enabled,
+      all_bots_paused: false,
+    };
+    setForm(newForm);
+    if (!org?.id) return;
+    await persistCoreBotFlags(newForm);
+    for (const bot of BOT_SERVICES) {
+      await syncBotKillSwitch(bot.id, enabled);
     }
   }
 
@@ -541,21 +595,47 @@ export default function AISettingsPanel() {
               <p className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bot Services</p>
               <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>Enable or disable autonomous bots individually</p>
             </div>
-            <button
-              onClick={() => toggleAllBots(!form.all_bots_paused)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all"
-              style={{
-                background: form.all_bots_paused ? 'rgba(0,229,160,0.1)' : 'rgba(255,71,87,0.1)',
-                border: `1px solid ${form.all_bots_paused ? 'rgba(0,229,160,0.25)' : 'rgba(255,71,87,0.25)'}`,
-                color: form.all_bots_paused ? '#00e5a0' : '#ff4757',
-                fontWeight: 600,
-              }}
-            >
-              {form.all_bots_paused
-                ? <><PlayCircle className="w-3.5 h-3.5" /> Resume All</>
-                : <><PauseCircle className="w-3.5 h-3.5" /> Pause All</>
-              }
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setAllBotsEnabled(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all"
+                style={{
+                  background: 'rgba(0,229,160,0.1)',
+                  border: '1px solid rgba(0,229,160,0.25)',
+                  color: '#00e5a0',
+                  fontWeight: 600,
+                }}
+              >
+                <PlayCircle className="w-3.5 h-3.5" /> All On
+              </button>
+              <button
+                onClick={() => setAllBotsEnabled(false)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: 'rgba(255,255,255,0.72)',
+                  fontWeight: 600,
+                }}
+              >
+                <PauseCircle className="w-3.5 h-3.5" /> All Off
+              </button>
+              <button
+                onClick={() => toggleAllBots(!form.all_bots_paused)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all"
+                style={{
+                  background: form.all_bots_paused ? 'rgba(0,229,160,0.1)' : 'rgba(255,71,87,0.1)',
+                  border: `1px solid ${form.all_bots_paused ? 'rgba(0,229,160,0.25)' : 'rgba(255,71,87,0.25)'}`,
+                  color: form.all_bots_paused ? '#00e5a0' : '#ff4757',
+                  fontWeight: 600,
+                }}
+              >
+                {form.all_bots_paused
+                  ? <><PlayCircle className="w-3.5 h-3.5" /> Resume</>
+                  : <><Power className="w-3.5 h-3.5" /> Kill Switch</>
+                }
+              </button>
+            </div>
           </div>
 
           {form.all_bots_paused && (
