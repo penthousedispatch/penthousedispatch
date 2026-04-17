@@ -275,8 +275,6 @@ export default function TestModeSandbox() {
               driver_number: `TST-${String(i + 1).padStart(3, '0')}`,
               login_username: `tst${String(i + 1).padStart(3, '0')}`,
               login_password: td.tlc,
-              hire_date: '2024-01-01',
-              rating: (4.5 + Math.random() * 0.5).toFixed(1),
             })
             .eq('id', existing.id);
           if (existingDriverErr) {
@@ -309,8 +307,6 @@ export default function TestModeSandbox() {
             driver_number: `TST-${String(i + 1).padStart(3, '0')}`,
             login_username: `tst${String(i + 1).padStart(3, '0')}`,
             login_password: td.tlc,
-            hire_date: '2024-01-01',
-            rating: (4.5 + Math.random() * 0.5).toFixed(1),
           })
           .select()
           .maybeSingle();
