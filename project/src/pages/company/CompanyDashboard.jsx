@@ -3,6 +3,7 @@ import { NavLink, Routes, Route, Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
+import ModuleBoundary from '../../components/app/ModuleBoundary';
 import {
   Users, Navigation, FileText, Settings, LogOut,
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers
@@ -642,6 +643,10 @@ function CompanyGuides() {
   );
 }
 
+function renderCompanyModule(name, element) {
+  return <ModuleBoundary moduleName={name}>{element}</ModuleBoundary>;
+}
+
 export default function CompanyDashboard({ previewMode = false }) {
   const { company, setCompany, profile } = useApp();
   const [mobileNav, setMobileNav] = useState(false);
@@ -771,15 +776,15 @@ export default function CompanyDashboard({ previewMode = false }) {
 
       <main className="flex-1 overflow-y-auto">
         <Routes>
-          <Route index element={<LiveDispatch />} />
-          <Route path="marketplace" element={<CompanyMarketplace company={company} />} />
-          <Route path="drivers" element={<CompanyDrivers company={company} />} />
-          <Route path="trips" element={<CompanyTrips company={company} />} />
-          <Route path="invoices" element={<CompanyInvoices company={company} />} />
-          <Route path="ai-controls" element={<CompanyAIControls company={company} setCompany={setCompany} />} />
-          <Route path="guides" element={<CompanyGuides />} />
-          <Route path="settings" element={<CompanySettings company={company} setCompany={setCompany} />} />
-          <Route path="/*" element={<LiveDispatch />} />
+          <Route index element={renderCompanyModule('Dispatch', <LiveDispatch />)} />
+          <Route path="marketplace" element={renderCompanyModule('Marketplace', <CompanyMarketplace company={company} />)} />
+          <Route path="drivers" element={renderCompanyModule('Drivers', <CompanyDrivers company={company} />)} />
+          <Route path="trips" element={renderCompanyModule('Trip History', <CompanyTrips company={company} />)} />
+          <Route path="invoices" element={renderCompanyModule('Invoices', <CompanyInvoices company={company} />)} />
+          <Route path="ai-controls" element={renderCompanyModule('AI Controls', <CompanyAIControls company={company} setCompany={setCompany} />)} />
+          <Route path="guides" element={renderCompanyModule('Guides', <CompanyGuides />)} />
+          <Route path="settings" element={renderCompanyModule('Settings', <CompanySettings company={company} setCompany={setCompany} />)} />
+          <Route path="/*" element={renderCompanyModule('Dispatch', <LiveDispatch />)} />
         </Routes>
       </main>
     </div>

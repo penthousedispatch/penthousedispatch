@@ -9,30 +9,9 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { useTheme } from '../../context/ThemeContext';
-import AdminCompanies from './AdminCompanies';
-import AdminBilling from './AdminBilling';
-import AdminIncentives from './AdminIncentives';
-import AdminSentryConfig from './AdminSentryConfig';
-import AdminSentryGuide from './AdminSentryGuide';
-import AdminTestingCenter from './AdminTestingCenter';
-import AdminAuditLogs from './AdminAuditLogs';
-import AdminUsers from './AdminUsers';
-import AdminSecurity from './AdminSecurity';
-import AdminIntegrations from './AdminIntegrations';
-import AdminPayroll from './AdminPayroll';
-import IntegrationHub from './IntegrationHub';
-import ApiKeyManager from './ApiKeyManager';
-import TenantManager from './TenantManager';
-import TestModeSandbox from './TestModeSandbox';
-import LiveDispatch from '../dispatcher/LiveDispatch';
 import CompanyDashboard from '../company/CompanyDashboard';
-import AdminChatbot from '../dispatcher/AdminChatbot';
-import AutoSchedulerPanel from '../dispatcher/AutoSchedulerPanel';
-import BotTeamPanel from '../dispatcher/BotTeamPanel';
-import AISettingsPanel from '../dispatcher/AISettingsPanel';
-import SettingsPanel from '../dispatcher/SettingsPanel';
-import AdminOpsCenter from './AdminOpsCenter';
-import PermissionsMatrix from './PermissionsMatrix';
+import ModuleBoundary from '../../components/app/ModuleBoundary';
+import { adminModules } from '../../modules/adminModules';
 
 function ThemeToggle({ showLabel = false }) {
   const { theme, toggle } = useTheme();
@@ -83,6 +62,24 @@ const PLATFORM_TABS = [
 ];
 
 const ALL_TABS = [...PRIMARY_TABS, ...PLATFORM_TABS];
+
+function renderAdminModule(key, extraProps = {}) {
+  const moduleEntry = adminModules[key];
+  if (!moduleEntry) {
+    return (
+      <div className="h-full flex items-center justify-center" style={{ color: '#ff4757' }}>
+        Unknown admin module: {key}
+      </div>
+    );
+  }
+
+  const ModuleComponent = moduleEntry.component;
+  return (
+    <ModuleBoundary moduleName={moduleEntry.name}>
+      <ModuleComponent {...extraProps} />
+    </ModuleBoundary>
+  );
+}
 
 function AdminPlatformHome() {
   const sections = [
@@ -365,32 +362,32 @@ export default function AdminDashboard() {
 
       <main className="flex-1 overflow-hidden">
         <Routes>
-          <Route path="/" element={<LiveDispatch />} />
-          <Route path="/admin/ops" element={<AdminOpsCenter />} />
+          <Route path="/" element={renderAdminModule('dispatch')} />
+          <Route path="/admin/ops" element={renderAdminModule('ops')} />
           <Route path="/admin/platform" element={<AdminPlatformHome />} />
-          <Route path="/admin/companies" element={<AdminCompanies />} />
+          <Route path="/admin/companies" element={renderAdminModule('companies')} />
           <Route path="/admin/company-preview/:companyId/*" element={<AdminCompanyPreview />} />
-          <Route path="/admin/billing" element={<AdminBilling />} />
-          <Route path="/admin/payroll" element={<AdminPayroll />} />
-          <Route path="/admin/incentives" element={<AdminIncentives />} />
-          <Route path="/admin/sentry" element={<AdminSentryConfig />} />
-          <Route path="/admin/sentry-guide" element={<AdminSentryGuide />} />
-          <Route path="/admin/testing" element={<AdminTestingCenter />} />
-          <Route path="/admin/chatbot" element={<AdminChatbot />} />
-          <Route path="/admin/auto-scheduler" element={<AutoSchedulerPanel />} />
-          <Route path="/admin/bots" element={<BotTeamPanel />} />
-          <Route path="/admin/ai" element={<AISettingsPanel />} />
-          <Route path="/admin/settings" element={<SettingsPanel />} />
-          <Route path="/admin/users" element={<AdminUsers />} />
-          <Route path="/admin/logs" element={<AdminAuditLogs />} />
-          <Route path="/admin/security/*" element={<AdminSecurity />} />
-          <Route path="/admin/integrations" element={<AdminIntegrations />} />
-          <Route path="/admin/hub" element={<IntegrationHub />} />
-          <Route path="/admin/api-keys" element={<ApiKeyManager />} />
-          <Route path="/admin/permissions" element={<PermissionsMatrix />} />
-          <Route path="/admin/tenants" element={<TenantManager />} />
-          <Route path="/admin/sandbox" element={<TestModeSandbox />} />
-          <Route path="/*" element={<LiveDispatch />} />
+          <Route path="/admin/billing" element={renderAdminModule('billing')} />
+          <Route path="/admin/payroll" element={renderAdminModule('payroll')} />
+          <Route path="/admin/incentives" element={renderAdminModule('incentives')} />
+          <Route path="/admin/sentry" element={renderAdminModule('sentry')} />
+          <Route path="/admin/sentry-guide" element={renderAdminModule('sentryGuide')} />
+          <Route path="/admin/testing" element={renderAdminModule('testing')} />
+          <Route path="/admin/chatbot" element={renderAdminModule('chatbot')} />
+          <Route path="/admin/auto-scheduler" element={renderAdminModule('autoScheduler')} />
+          <Route path="/admin/bots" element={renderAdminModule('bots')} />
+          <Route path="/admin/ai" element={renderAdminModule('ai')} />
+          <Route path="/admin/settings" element={renderAdminModule('settings')} />
+          <Route path="/admin/users" element={renderAdminModule('users')} />
+          <Route path="/admin/logs" element={renderAdminModule('logs')} />
+          <Route path="/admin/security/*" element={renderAdminModule('security')} />
+          <Route path="/admin/integrations" element={renderAdminModule('integrations')} />
+          <Route path="/admin/hub" element={renderAdminModule('hub')} />
+          <Route path="/admin/api-keys" element={renderAdminModule('apiKeys')} />
+          <Route path="/admin/permissions" element={renderAdminModule('permissions')} />
+          <Route path="/admin/tenants" element={renderAdminModule('tenants')} />
+          <Route path="/admin/sandbox" element={renderAdminModule('sandbox')} />
+          <Route path="/*" element={renderAdminModule('dispatch')} />
         </Routes>
       </main>
 
