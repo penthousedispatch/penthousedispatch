@@ -32,7 +32,7 @@ export function AppProvider({ children }) {
   const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
   const isCompanyRole = normalizedRole === 'company';
 
-  async function fetchProfileWithRetry(userId, attempts = 3) {
+  async function fetchProfileWithRetry(userId, attempts = 2) {
     let lastError = null;
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -40,7 +40,7 @@ export function AppProvider({ children }) {
         const result = await Promise.race([
           supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`Profile lookup timed out (attempt ${attempt + 1})`)), 10000)
+            setTimeout(() => reject(new Error(`Profile lookup timed out (attempt ${attempt + 1})`)), 1500)
           ),
         ]);
 
@@ -54,7 +54,7 @@ export function AppProvider({ children }) {
       }
 
       if (attempt < attempts - 1) {
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise(resolve => setTimeout(resolve, 150));
       }
     }
 
@@ -232,6 +232,23 @@ export function AppProvider({ children }) {
 
   async function loadUserData(u) {
     try {
+      const metadataRole =
+        normalizeAppRole(u?.user_metadata?.role) ||
+        normalizeAppRole(u?.app_metadata?.role);
+
+      if (metadataRole && !profile) {
+        setProfile(prev => prev || {
+          id: u.id,
+          email: u.email || '',
+          full_name:
+            u?.user_metadata?.full_name ||
+            u?.user_metadata?.name ||
+            (u.email ? u.email.split('@')[0] : 'User'),
+          role: metadataRole,
+          company_id: u?.user_metadata?.company_id || null,
+        });
+      }
+
       let prof = await fetchProfileWithRetry(u.id);
 
       if (!prof) {
