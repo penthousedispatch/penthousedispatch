@@ -14,29 +14,36 @@ export function SecurityProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [researching, setResearching] = useState(false);
+  const [error, setError] = useState(null);
   const [stats, setStats] = useState({ critical: 0, high: 0, medium: 0, low: 0, active: 0, mitigated: 0 });
 
   const loadAll = useCallback(async () => {
-    const [t, a, m, r] = await Promise.all([
-      supabase.from('security_threats').select('*').order('created_at', { ascending: false }).limit(100),
-      supabase.from('security_alerts').select('*').order('created_at', { ascending: false }).limit(50),
-      supabase.from('mitre_techniques').select('*').order('tactic').eq('is_active', true),
-      supabase.from('threat_research_jobs').select('*').order('created_at', { ascending: false }).limit(30),
-    ]);
-    const threatData = t.data || [];
-    setThreats(threatData);
-    setAlerts(a.data || []);
-    setMitreMap(m.data || []);
-    setResearchJobs(r.data || []);
-    setStats({
-      critical: threatData.filter(x => x.severity === 'critical' && x.status === 'active').length,
-      high: threatData.filter(x => x.severity === 'high' && x.status === 'active').length,
-      medium: threatData.filter(x => x.severity === 'medium' && x.status === 'active').length,
-      low: threatData.filter(x => x.severity === 'low' && x.status === 'active').length,
-      active: threatData.filter(x => x.status === 'active').length,
-      mitigated: threatData.filter(x => x.status === 'mitigated' || x.status === 'resolved').length,
-    });
-    setLoading(false);
+    try {
+      setError(null);
+      const [t, a, m, r] = await Promise.all([
+        supabase.from('security_threats').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase.from('security_alerts').select('*').order('created_at', { ascending: false }).limit(50),
+        supabase.from('mitre_techniques').select('*').order('tactic').eq('is_active', true),
+        supabase.from('threat_research_jobs').select('*').order('created_at', { ascending: false }).limit(30),
+      ]);
+      const threatData = t.data || [];
+      setThreats(threatData);
+      setAlerts(a.data || []);
+      setMitreMap(m.data || []);
+      setResearchJobs(r.data || []);
+      setStats({
+        critical: threatData.filter(x => x.severity === 'critical' && x.status === 'active').length,
+        high: threatData.filter(x => x.severity === 'high' && x.status === 'active').length,
+        medium: threatData.filter(x => x.severity === 'medium' && x.status === 'active').length,
+        low: threatData.filter(x => x.severity === 'low' && x.status === 'active').length,
+        active: threatData.filter(x => x.status === 'active').length,
+        mitigated: threatData.filter(x => x.status === 'mitigated' || x.status === 'resolved').length,
+      });
+    } catch (loadError) {
+      setError(loadError.message || 'Failed to load security data');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -49,9 +56,16 @@ export function SecurityProvider({ children }) {
         headers: { Authorization: `Bearer ${ANON_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Threat scan failed with ${res.status}`);
+      }
       const data = await res.json();
       await loadAll();
       return data;
+    } catch (scanError) {
+      setError(scanError.message || 'Threat scan failed');
+      return { error: scanError.message || 'Threat scan failed', threats_created: 0 };
     } finally {
       setScanning(false);
     }
@@ -72,9 +86,16 @@ export function SecurityProvider({ children }) {
         headers: { Authorization: `Bearer ${ANON_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic, query, job_id: job?.id }),
       });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Threat research failed with ${res.status}`);
+      }
       const result = await res.json();
       await loadAll();
       return result;
+    } catch (researchError) {
+      setError(researchError.message || 'Threat research failed');
+      return { error: researchError.message || 'Threat research failed' };
     } finally {
       setResearching(false);
     }
@@ -124,7 +145,7 @@ export function SecurityProvider({ children }) {
   return (
     <SecurityContext.Provider value={{
       threats, alerts, mitreMap, researchJobs, stats,
-      loading, scanning, researching, unacknowledgedAlerts,
+      loading, scanning, researching, error, unacknowledgedAlerts,
       loadAll, runScan, startResearch,
       updateThreatStatus, acknowledgeAlert, ingestEvent,
     }}>

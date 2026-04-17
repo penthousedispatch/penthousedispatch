@@ -18,7 +18,7 @@ const TEST_DEFS = [
 ];
 
 export default function AdminTestingCenter() {
-  const { org, company, adminPreviewCompany } = useApp();
+  const { org, user, company, adminPreviewCompany } = useApp();
   const [results, setResults] = useState({});
   const [logs, setLogs] = useState({});
   const [running, setRunning] = useState(null);
@@ -26,6 +26,61 @@ export default function AdminTestingCenter() {
   const [runningAll, setRunningAll] = useState(false);
   const [sandboxStatus, setSandboxStatus] = useState({ active: false, companyId: null, resetAt: '' });
   const [recentWebhookLogs, setRecentWebhookLogs] = useState([]);
+  const [resolvedOrgId, setResolvedOrgId] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function resolveOrgId() {
+      if (org?.id) {
+        if (mounted) setResolvedOrgId(org.id);
+        return;
+      }
+
+      if (!user?.id) {
+        if (mounted) setResolvedOrgId(null);
+        return;
+      }
+
+      const { data: membership } = await supabase
+        .from('org_members')
+        .select('org_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (membership?.org_id) {
+        if (mounted) setResolvedOrgId(membership.org_id);
+        return;
+      }
+
+      const { data: latestAiRow } = await supabase
+        .from('ai_settings')
+        .select('org_id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestAiRow?.org_id) {
+        if (mounted) setResolvedOrgId(latestAiRow.org_id);
+        return;
+      }
+
+      const { data: fallbackOrg } = await supabase
+        .from('organizations')
+        .select('id')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (mounted) setResolvedOrgId(fallbackOrg?.id || null);
+    }
+
+    resolveOrgId();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, user?.id]);
 
   function addLog(testId, msg, level = 'info') {
     setLogs(prev => ({
@@ -473,11 +528,11 @@ export default function AdminTestingCenter() {
   async function runAITest(testId) {
     addLog(testId, 'Checking AI settings...');
     let settings = null;
-    if (org?.id) {
+    if (resolvedOrgId) {
       const result = await supabase
         .from('ai_settings')
         .select('*')
-        .eq('org_id', org.id)
+        .eq('org_id', resolvedOrgId)
         .maybeSingle();
       settings = result.data || null;
     } else {

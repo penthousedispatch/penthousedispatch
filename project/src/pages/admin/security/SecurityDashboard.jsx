@@ -23,7 +23,7 @@ const STATUS_COLOR = {
 };
 
 export default function SecurityDashboard({ onViewThreat }) {
-  const { threats, alerts, stats, scanning, runScan, acknowledgeAlert, unacknowledgedAlerts } = useSecurity();
+  const { threats, alerts, stats, scanning, runScan, acknowledgeAlert, unacknowledgedAlerts, error } = useSecurity();
   const [scanResult, setScanResult] = useState(null);
 
   async function handleScan() {
@@ -45,9 +45,14 @@ export default function SecurityDashboard({ onViewThreat }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {error && (
+            <span className="text-xs px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,71,87,0.1)', color: '#ff7a7a', border: '1px solid rgba(255,71,87,0.2)' }}>
+              {error}
+            </span>
+          )}
           {scanResult && (
             <span className="text-xs px-3 py-1.5 rounded-lg" style={{ background: 'rgba(0,229,160,0.1)', color: '#00e5a0', border: '1px solid rgba(0,229,160,0.2)' }}>
-              Scan complete &mdash; {scanResult.threats_created || 0} new threats
+              {scanResult.error ? scanResult.error : `Scan complete — ${scanResult.threats_created || 0} new threats`}
             </span>
           )}
           <button

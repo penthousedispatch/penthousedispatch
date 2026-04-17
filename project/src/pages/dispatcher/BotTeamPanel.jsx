@@ -181,11 +181,18 @@ function useBot(botId, intervalSecs, enabled, runFn) {
     async function tick() {
       setRunning(true);
       setStatus('running');
-      const result = await runFn();
-      setLastRun(new Date());
-      setLastResult(result);
-      setRunning(false);
-      setStatus(result?.error ? 'error' : 'ok');
+      try {
+        const result = await runFn();
+        setLastRun(new Date());
+        setLastResult(result);
+        setStatus(result?.error ? 'error' : 'ok');
+      } catch (error) {
+        setLastRun(new Date());
+        setLastResult({ error: error.message || `Bot ${botId} failed`, summary: error.message || `Bot ${botId} failed` });
+        setStatus('error');
+      } finally {
+        setRunning(false);
+      }
     }
 
     tick();
@@ -542,7 +549,7 @@ function PendingActionsPanel({ pendingActions, onApprove, onReject }) {
 }
 
 export default function BotTeamPanel() {
-  const { org, profile, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadDrivers, loadTrips } = useApp();
+  const { org, user, profile, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadDrivers, loadTrips } = useApp();
   const [botEnabled, setBotEnabled] = useState({
     sentry_bot: false,
     scheduler_bot: false,
@@ -563,19 +570,125 @@ export default function BotTeamPanel() {
   const [schedulerConfig, setSchedulerConfig] = useState(null);
   const [pendingActions, setPendingActions] = useState([]);
   const [globalKillSwitch, setGlobalKillSwitch] = useState(false);
+  const [resolvedOrgId, setResolvedOrgId] = useState(null);
+  const [resolvingOrgId, setResolvingOrgId] = useState(true);
+  const [panelError, setPanelError] = useState(null);
 
   useEffect(() => {
-    if (org?.id) {
-      loadConfig();
-      loadBotConfigs();
-      loadPendingActions();
-      loadAiSettings();
+    let mounted = true;
+
+    async function resolveOrgId() {
+      setResolvingOrgId(true);
+
+      if (org?.id) {
+        if (mounted) {
+          setResolvedOrgId(org.id);
+          setResolvingOrgId(false);
+        }
+        return;
+      }
+
+      if (!user?.id) {
+        if (mounted) {
+          setResolvedOrgId(null);
+          setResolvingOrgId(false);
+        }
+        return;
+      }
+
+      const { data: membership } = await supabase
+        .from('org_members')
+        .select('org_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (membership?.org_id) {
+        if (mounted) {
+          setResolvedOrgId(membership.org_id);
+          setResolvingOrgId(false);
+        }
+        return;
+      }
+
+      const { data: latestBotRow } = await supabase
+        .from('bot_config')
+        .select('org_id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestBotRow?.org_id) {
+        if (mounted) {
+          setResolvedOrgId(latestBotRow.org_id);
+          setResolvingOrgId(false);
+        }
+        return;
+      }
+
+      const { data: latestAiRow } = await supabase
+        .from('ai_settings')
+        .select('org_id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestAiRow?.org_id) {
+        if (mounted) {
+          setResolvedOrgId(latestAiRow.org_id);
+          setResolvingOrgId(false);
+        }
+        return;
+      }
+
+      const { data: fallbackOrg } = await supabase
+        .from('organizations')
+        .select('id')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (mounted) {
+        setResolvedOrgId(fallbackOrg?.id || null);
+        setResolvingOrgId(false);
+      }
     }
-  }, [org?.id]);
+
+    resolveOrgId();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, user?.id]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadPanelData() {
+      if (!resolvedOrgId) return;
+      try {
+        setPanelError(null);
+        await Promise.all([
+          loadConfig(),
+          loadBotConfigs(),
+          loadPendingActions(),
+          loadAiSettings(),
+        ]);
+      } catch (error) {
+        if (active) {
+          setPanelError(error.message || 'Bot Team failed to load');
+        }
+      }
+    }
+
+    loadPanelData();
+    return () => {
+      active = false;
+    };
+  }, [resolvedOrgId]);
 
   async function loadAiSettings() {
-    if (!org?.id) return;
-    const { data } = await supabase.from('ai_settings').select('*').eq('org_id', org.id).maybeSingle();
+    if (!resolvedOrgId) return;
+    const { data } = await supabase.from('ai_settings').select('*').eq('org_id', resolvedOrgId).maybeSingle();
     if (!data) return;
     const paused = data.all_bots_paused ?? false;
     if (paused) {
@@ -601,26 +714,28 @@ export default function BotTeamPanel() {
   }
 
   async function persistAiSettings(patch) {
-    if (!org?.id) return;
-    const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', org.id).maybeSingle();
+    if (!resolvedOrgId) return;
+    const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', resolvedOrgId).maybeSingle();
     if (existing) {
-      await supabase.from('ai_settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('org_id', org.id);
+      await supabase.from('ai_settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('org_id', resolvedOrgId);
     } else {
-      await supabase.from('ai_settings').insert({ ...patch, org_id: org.id });
+      await supabase.from('ai_settings').insert({ ...patch, org_id: resolvedOrgId });
     }
   }
 
   async function loadConfig() {
-    const { data } = await supabase.from('auto_scheduler_config').select('*').eq('org_id', org.id).maybeSingle();
+    if (!resolvedOrgId) return;
+    const { data } = await supabase.from('auto_scheduler_config').select('*').eq('org_id', resolvedOrgId).maybeSingle();
     setSchedulerConfig(data);
   }
 
   async function loadBotConfigs() {
-    const { data } = await supabase.from('bot_config').select('*').eq('org_id', org.id);
+    if (!resolvedOrgId) return;
+    const { data } = await supabase.from('bot_config').select('*').eq('org_id', resolvedOrgId);
     const map = {};
     (data || []).forEach(c => { map[c.bot_id] = c; });
 
-    const missing = BOT_DEFS.filter(def => !map[def.id]).map(def => getDefaultBotConfig(def, org.id));
+    const missing = BOT_DEFS.filter(def => !map[def.id]).map(def => getDefaultBotConfig(def, resolvedOrgId));
     if (missing.length > 0) {
       await supabase.from('bot_config').upsert(missing, { onConflict: 'org_id,bot_id' });
       missing.forEach(config => { map[config.bot_id] = config; });
@@ -635,19 +750,21 @@ export default function BotTeamPanel() {
   }
 
   async function loadPendingActions() {
+    if (!resolvedOrgId) return;
     const { data } = await supabase
       .from('pending_bot_actions')
       .select('*')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
     setPendingActions(data || []);
   }
 
   async function saveConfig(botId, config) {
+    if (!resolvedOrgId) return;
     const botDef = BOT_DEFS.find(b => b.id === botId);
     const payload = {
-      org_id: org.id,
+      org_id: resolvedOrgId,
       bot_id: botId,
       bot_name: botDef.name,
       autonomy_level: config.autonomy_level || botDef.defaultAutonomyLevel || 'observe',
@@ -662,8 +779,9 @@ export default function BotTeamPanel() {
   }
 
   async function logBotAction(botId, botName, triggerReason, actionType, riskLevel, outcome, detail) {
+    if (!resolvedOrgId) return;
     await supabase.from('bot_actions').insert({
-      org_id: org.id,
+      org_id: resolvedOrgId,
       bot_id: botId,
       bot_name: botName,
       trigger_reason: triggerReason,
@@ -675,8 +793,9 @@ export default function BotTeamPanel() {
   }
 
   async function escalateBotAction(botId, botName, triggerReason, actionType, riskLevel, actionPayload = {}) {
+    if (!resolvedOrgId) return;
     await supabase.from('pending_bot_actions').insert({
-      org_id: org.id,
+      org_id: resolvedOrgId,
       bot_id: botId,
       bot_name: botName,
       trigger_reason: triggerReason,
@@ -796,8 +915,9 @@ export default function BotTeamPanel() {
   }
 
   async function logAIReview(botId, botName, prompt, response, model, contextType = 'operations_review') {
+    if (!resolvedOrgId) return;
     await supabase.from('ai_logs').insert({
-      org_id: org.id,
+      org_id: resolvedOrgId,
       driver_id: null,
       driver_name: botName,
       context_type: contextType,
@@ -875,7 +995,7 @@ export default function BotTeamPanel() {
           trips,
           assignments,
           config: cfg,
-          orgId: org?.id,
+          orgId: resolvedOrgId,
           dryRun: false,
         });
         await Promise.all([loadAssignments(), loadTrips()]);
@@ -954,7 +1074,7 @@ export default function BotTeamPanel() {
     }
     for (const def of BOT_DEFS) {
       await supabase.from('bot_config').upsert({
-        org_id: org.id,
+        org_id: resolvedOrgId,
         bot_id: def.id,
         bot_name: def.name,
         kill_switch: next,
@@ -969,7 +1089,7 @@ export default function BotTeamPanel() {
   }
 
   async function runSentryBot() {
-    const config = botConfigs['sentry_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'sentry_bot'), org?.id);
+    const config = botConfigs['sentry_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'sentry_bot'), resolvedOrgId);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const result = await refreshTripsFromSentry();
     if (result?.error) {
@@ -981,7 +1101,7 @@ export default function BotTeamPanel() {
   }
 
   async function runSchedulerBot() {
-    const config = botConfigs['scheduler_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'scheduler_bot'), org?.id);
+    const config = botConfigs['scheduler_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'scheduler_bot'), resolvedOrgId);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const cfg = schedulerConfig || {
       revenue_target_per_hour: 60,
@@ -1012,7 +1132,7 @@ export default function BotTeamPanel() {
       trips,
       assignments,
       config: { ...cfg, auto_assign: canAutoAssign },
-      orgId: org?.id,
+      orgId: resolvedOrgId,
       dryRun: !canAutoAssign,
     });
     await logBotAction(
@@ -1037,7 +1157,7 @@ export default function BotTeamPanel() {
   }
 
   async function runHealthBot() {
-    const config = botConfigs['health_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'health_bot'), org?.id);
+    const config = botConfigs['health_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'health_bot'), resolvedOrgId);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const result = await checkSentryHealth();
     const issues = [];
@@ -1065,7 +1185,7 @@ export default function BotTeamPanel() {
   }
 
   async function runSecurityBot() {
-    const config = botConfigs['security_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'security_bot'), org?.id);
+    const config = botConfigs['security_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'security_bot'), resolvedOrgId);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const issues = [];
     const actionsTaken = [];
@@ -1196,11 +1316,11 @@ export default function BotTeamPanel() {
   }
 
   async function runCodexBot() {
-    const config = botConfigs['codex_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'codex_bot'), org?.id);
+    const config = botConfigs['codex_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'codex_bot'), resolvedOrgId);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
 
-    const aiSettings = await getAiSettings(org?.id);
-    const runtime = await getBotRuntimeSettings(org?.id, 'codex_bot', 'openai', aiSettings);
+    const aiSettings = await getAiSettings(resolvedOrgId);
+    const runtime = await getBotRuntimeSettings(resolvedOrgId, 'codex_bot', 'openai', aiSettings);
     if (!runtime?.api_key) {
       return { summary: 'CodexBot is waiting for an OpenAI API key', error: 'OpenAI is not configured for CodexBot' };
     }
@@ -1208,7 +1328,7 @@ export default function BotTeamPanel() {
     const { data: recentFailures } = await supabase
       .from('bot_actions')
       .select('bot_name, action_type, outcome_detail, created_at')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .eq('outcome', 'failed')
       .order('created_at', { ascending: false })
       .limit(8);
@@ -1272,11 +1392,11 @@ Only recommend actions that match the allowed action list. Prefer the smallest s
   }
 
   async function runClaudeBot() {
-    const config = botConfigs['claude_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'claude_bot'), org?.id);
+    const config = botConfigs['claude_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'claude_bot'), resolvedOrgId);
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
 
-    const aiSettings = await getAiSettings(org?.id);
-    const runtime = await getBotRuntimeSettings(org?.id, 'claude_bot', 'anthropic', aiSettings);
+    const aiSettings = await getAiSettings(resolvedOrgId);
+    const runtime = await getBotRuntimeSettings(resolvedOrgId, 'claude_bot', 'anthropic', aiSettings);
     if (!runtime?.api_key) {
       return { summary: 'ClaudeBot is waiting for an Anthropic API key', error: 'Anthropic is not configured for ClaudeBot' };
     }
@@ -1291,7 +1411,7 @@ Only recommend actions that match the allowed action list. Prefer the smallest s
     const { data: pendingRows } = await supabase
       .from('pending_bot_actions')
       .select('id, bot_name, action_type, risk_level, trigger_reason')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(10);
@@ -1377,10 +1497,56 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
     });
     for (const botId of ['codex_bot', 'claude_bot']) {
       await saveConfig(botId, {
-        ...(botConfigs[botId] || getDefaultBotConfig(BOT_DEFS.find(bot => bot.id === botId), org?.id)),
+        ...(botConfigs[botId] || getDefaultBotConfig(BOT_DEFS.find(bot => bot.id === botId), resolvedOrgId)),
         kill_switch: !on,
       });
     }
+  }
+
+  if (resolvingOrgId) {
+    return (
+      <div className="flex h-full items-center justify-center p-6" style={{ background: '#07090d' }}>
+        <div className="rounded-2xl p-6 text-center max-w-md" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <p className="text-sm font-700 mb-2" style={{ color: '#e5e7eb', fontWeight: 700 }}>Loading Bot Team</p>
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            Resolving the platform AI context for this admin session.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!resolvedOrgId) {
+    return (
+      <div className="flex h-full items-center justify-center p-6" style={{ background: '#07090d' }}>
+        <div className="rounded-2xl p-6 text-center max-w-md" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <p className="text-sm font-700 mb-2" style={{ color: '#ffcc66', fontWeight: 700 }}>Bot Team Needs an Admin Org</p>
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            No platform organization could be resolved for this session yet, so bot controls are paused instead of crashing.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (panelError) {
+    return (
+      <div className="flex h-full items-center justify-center p-6" style={{ background: '#07090d' }}>
+        <div className="rounded-2xl p-6 text-center max-w-md" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <p className="text-sm font-700 mb-2" style={{ color: '#ff7a7a', fontWeight: 700 }}>Bot Team Load Warning</p>
+          <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            {panelError}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 rounded-xl text-xs font-600"
+            style={{ background: 'rgba(201,168,76,0.15)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600 }}
+          >
+            Reload Bot Team
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1483,7 +1649,7 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
                   await persistAiSettings({ [def.id + '_enabled']: next });
                 }
                 await saveConfig(def.id, {
-                  ...(botConfigs[def.id] || getDefaultBotConfig(def, org?.id)),
+                  ...(botConfigs[def.id] || getDefaultBotConfig(def, resolvedOrgId)),
                   kill_switch: !next,
                 });
               }}
