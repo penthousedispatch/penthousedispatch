@@ -1,96 +1,118 @@
-import { lazy } from 'react';
+import LiveDispatch from '../pages/dispatcher/LiveDispatch';
+import AdminOpsCenter from '../pages/admin/AdminOpsCenter';
+import AdminCompanies from '../pages/admin/AdminCompanies';
+import AdminBilling from '../pages/admin/AdminBilling';
+import AdminPayroll from '../pages/admin/AdminPayroll';
+import AdminIncentives from '../pages/admin/AdminIncentives';
+import AdminSentryConfig from '../pages/admin/AdminSentryConfig';
+import AdminSentryGuide from '../pages/admin/AdminSentryGuide';
+import AdminTestingCenter from '../pages/admin/AdminTestingCenter';
+import AdminChatbot from '../pages/dispatcher/AdminChatbot';
+import AutoSchedulerPanel from '../pages/dispatcher/AutoSchedulerPanel';
+import BotTeamPanel from '../pages/dispatcher/BotTeamPanel';
+import AISettingsPanel from '../pages/dispatcher/AISettingsPanel';
+import SettingsPanel from '../pages/dispatcher/SettingsPanel';
+import AdminUsers from '../pages/admin/AdminUsers';
+import AdminAuditLogs from '../pages/admin/AdminAuditLogs';
+import AdminSecurity from '../pages/admin/AdminSecurity';
+import AdminIntegrations from '../pages/admin/AdminIntegrations';
+import IntegrationHub from '../pages/admin/IntegrationHub';
+import ApiKeyManager from '../pages/admin/ApiKeyManager';
+import PermissionsMatrix from '../pages/admin/PermissionsMatrix';
+import TenantManager from '../pages/admin/TenantManager';
+import TestModeSandbox from '../pages/admin/TestModeSandbox';
 
 export const adminModules = {
   dispatch: {
     name: 'Dispatch',
-    component: lazy(() => import('../pages/dispatcher/LiveDispatch')),
+    component: LiveDispatch,
   },
   ops: {
     name: 'Ops Center',
-    component: lazy(() => import('../pages/admin/AdminOpsCenter')),
+    component: AdminOpsCenter,
   },
   companies: {
     name: 'Companies',
-    component: lazy(() => import('../pages/admin/AdminCompanies')),
+    component: AdminCompanies,
   },
   billing: {
     name: 'Billing',
-    component: lazy(() => import('../pages/admin/AdminBilling')),
+    component: AdminBilling,
   },
   payroll: {
     name: 'Payroll',
-    component: lazy(() => import('../pages/admin/AdminPayroll')),
+    component: AdminPayroll,
   },
   incentives: {
     name: 'Incentives',
-    component: lazy(() => import('../pages/admin/AdminIncentives')),
+    component: AdminIncentives,
   },
   sentry: {
     name: 'Sentry',
-    component: lazy(() => import('../pages/admin/AdminSentryConfig')),
+    component: AdminSentryConfig,
   },
   sentryGuide: {
     name: 'Sentry Guide',
-    component: lazy(() => import('../pages/admin/AdminSentryGuide')),
+    component: AdminSentryGuide,
   },
   testing: {
     name: 'Testing',
-    component: lazy(() => import('../pages/admin/AdminTestingCenter')),
+    component: AdminTestingCenter,
   },
   chatbot: {
     name: 'Chat AI',
-    component: lazy(() => import('../pages/dispatcher/AdminChatbot')),
+    component: AdminChatbot,
   },
   autoScheduler: {
     name: 'Auto-Scheduler',
-    component: lazy(() => import('../pages/dispatcher/AutoSchedulerPanel')),
+    component: AutoSchedulerPanel,
   },
   bots: {
     name: 'Bot Team',
-    component: lazy(() => import('../pages/dispatcher/BotTeamPanel')),
+    component: BotTeamPanel,
   },
   ai: {
     name: 'AI Settings',
-    component: lazy(() => import('../pages/dispatcher/AISettingsPanel')),
+    component: AISettingsPanel,
   },
   settings: {
     name: 'Ops Settings',
-    component: lazy(() => import('../pages/dispatcher/SettingsPanel')),
+    component: SettingsPanel,
   },
   users: {
     name: 'Users',
-    component: lazy(() => import('../pages/admin/AdminUsers')),
+    component: AdminUsers,
   },
   logs: {
     name: 'Logs',
-    component: lazy(() => import('../pages/admin/AdminAuditLogs')),
+    component: AdminAuditLogs,
   },
   security: {
     name: 'Security',
-    component: lazy(() => import('../pages/admin/AdminSecurity')),
+    component: AdminSecurity,
   },
   integrations: {
     name: 'Partner Sandbox',
-    component: lazy(() => import('../pages/admin/AdminIntegrations')),
+    component: AdminIntegrations,
   },
   hub: {
     name: 'Integration Hub',
-    component: lazy(() => import('../pages/admin/IntegrationHub')),
+    component: IntegrationHub,
   },
   apiKeys: {
     name: 'API Keys',
-    component: lazy(() => import('../pages/admin/ApiKeyManager')),
+    component: ApiKeyManager,
   },
   permissions: {
     name: 'Permissions',
-    component: lazy(() => import('../pages/admin/PermissionsMatrix')),
+    component: PermissionsMatrix,
   },
   tenants: {
     name: 'Tenants',
-    component: lazy(() => import('../pages/admin/TenantManager')),
+    component: TenantManager,
   },
   sandbox: {
     name: 'Test Mode',
-    component: lazy(() => import('../pages/admin/TestModeSandbox')),
+    component: TestModeSandbox,
   },
 };

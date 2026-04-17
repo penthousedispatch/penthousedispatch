@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
 import ModuleBoundary from '../../components/app/ModuleBoundary';
+import { DEFAULT_COMPANY_SCHEDULER_PREFS, readCompanySchedulerPrefs, writeCompanySchedulerPrefs } from '../../lib/companySchedulerPrefs';
 import {
   Users, Navigation, FileText, Settings, LogOut,
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers
@@ -511,11 +512,13 @@ function CompanySettings({ company, setCompany }) {
 }
 
 function CompanyAIControls({ company, setCompany }) {
+  const { org } = useApp();
   const [form, setForm] = useState({
     ai_routing_enabled: company?.ai_routing_enabled ?? true,
     ai_auto_assign_enabled: company?.ai_auto_assign_enabled ?? true,
     ai_driver_nudges_enabled: company?.ai_driver_nudges_enabled ?? true,
   });
+  const [schedulerPrefs, setSchedulerPrefs] = useState(DEFAULT_COMPANY_SCHEDULER_PREFS);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -524,14 +527,16 @@ function CompanyAIControls({ company, setCompany }) {
       ai_auto_assign_enabled: company?.ai_auto_assign_enabled ?? true,
       ai_driver_nudges_enabled: company?.ai_driver_nudges_enabled ?? true,
     });
+    setSchedulerPrefs(readCompanySchedulerPrefs(company));
   }, [company?.id, company?.ai_routing_enabled, company?.ai_auto_assign_enabled, company?.ai_driver_nudges_enabled]);
 
   async function handleSave() {
     if (!company?.id) return;
     setSaving(true);
+    const notes = writeCompanySchedulerPrefs(company?.notes || '', schedulerPrefs);
     const { data, error } = await supabase
       .from('companies')
-      .update({ ...form, updated_at: new Date().toISOString() })
+      .update({ ...form, notes, updated_at: new Date().toISOString() })
       .eq('id', company.id)
       .select()
       .maybeSingle();
@@ -539,6 +544,41 @@ function CompanyAIControls({ company, setCompany }) {
       handleSupabaseError(error, 'CompanyAIControls:handleSave', { fallback: 'Failed to save AI controls.' });
       setSaving(false);
       return;
+    }
+    if (org?.id) {
+      const schedulerPayload = {
+        org_id: org.id,
+        price_weight: schedulerPrefs.price_weight,
+        proximity_weight: schedulerPrefs.proximity_weight,
+        shared_rides_enabled: schedulerPrefs.shared_rides_enabled,
+        auto_assign: form.ai_auto_assign_enabled,
+        updated_at: new Date().toISOString(),
+      };
+      const { data: existingScheduler } = await supabase
+        .from('auto_scheduler_config')
+        .select('id')
+        .eq('org_id', org.id)
+        .maybeSingle();
+      if (existingScheduler?.id) {
+        await supabase.from('auto_scheduler_config').update(schedulerPayload).eq('org_id', org.id);
+      } else {
+        await supabase.from('auto_scheduler_config').insert({
+          enabled: true,
+          revenue_target_per_hour: 60,
+          driver_pay_per_hour: 35,
+          billing_rate_per_mile: 0.13,
+          max_trip_distance_miles: 25,
+          mileage_weight: 5,
+          short_trip_max_miles: 4,
+          short_trip_bonus_weight: 9,
+          chaining_weight: 8,
+          shared_ride_bonus_weight: 6,
+          buffer_mins: 15,
+          traffic_buffer_pct: 20,
+          shift_hours: '7am-5pm',
+          ...schedulerPayload,
+        });
+      }
     }
     if (data) setCompany(data);
     toastSuccess('AI controls saved.');
@@ -563,11 +603,29 @@ function CompanyAIControls({ company, setCompany }) {
     },
   ];
 
+  const schedulerSliders = [
+    {
+      key: 'price_weight',
+      label: 'Trip Price Priority',
+      description: 'Higher values push the scheduler to favor higher-paying trips.',
+    },
+    {
+      key: 'proximity_weight',
+      label: 'Driver Proximity Priority',
+      description: 'Higher values push the scheduler to keep drivers closer to pickup locations.',
+    },
+    {
+      key: 'zone_weight',
+      label: 'Preferred Zone Priority',
+      description: 'Higher values give more weight to driver-selected work zones.',
+    },
+  ];
+
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-4">
       <div>
-        <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>AI Controls</h2>
-        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Company dispatchers can control route automation here without exposing the platform-level AI system.</p>
+        <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>AI Settings</h2>
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Company admins can control routing, auto-assignment, and scheduling weights here without exposing platform-level AI providers.</p>
       </div>
       {options.map(option => (
         <div key={option.key} className="rounded-xl p-4 flex items-start justify-between gap-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -590,8 +648,58 @@ function CompanyAIControls({ company, setCompany }) {
           </button>
         </div>
       ))}
+      <div className="rounded-xl p-4 space-y-4" style={{ background: '#0d1117', border: '1px solid rgba(201,168,76,0.14)' }}>
+        <div>
+          <p className="text-sm font-600" style={{ fontWeight: 600 }}>Scheduling Priorities</p>
+          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            Set how strongly your company favors price, proximity, preferred zones, and shared rides.
+          </p>
+        </div>
+        {schedulerSliders.map(slider => (
+          <div key={slider.key}>
+            <div className="flex items-center justify-between mb-1.5">
+              <div>
+                <p className="text-xs font-600" style={{ fontWeight: 600 }}>{slider.label}</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{slider.description}</p>
+              </div>
+              <span className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>
+                {schedulerPrefs[slider.key]}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={10}
+              step={1}
+              value={schedulerPrefs[slider.key]}
+              onChange={e => setSchedulerPrefs(prev => ({ ...prev, [slider.key]: parseInt(e.target.value, 10) || 0 }))}
+              className="w-full"
+              style={{ accentColor: '#c9a84c' }}
+            />
+          </div>
+        ))}
+        <div className="flex items-center justify-between rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div>
+            <p className="text-sm font-600" style={{ fontWeight: 600 }}>Shared Ride Suggestions</p>
+            <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>Allow AI routing to favor same-direction rides that can be stacked safely.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSchedulerPrefs(prev => ({ ...prev, shared_rides_enabled: !prev.shared_rides_enabled }))}
+            className="px-3 py-1.5 rounded-lg text-xs"
+            style={{
+              background: schedulerPrefs.shared_rides_enabled ? 'rgba(0,229,160,0.12)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${schedulerPrefs.shared_rides_enabled ? 'rgba(0,229,160,0.24)' : 'rgba(255,255,255,0.08)'}`,
+              color: schedulerPrefs.shared_rides_enabled ? '#00e5a0' : 'rgba(255,255,255,0.55)',
+              fontWeight: 600,
+            }}
+          >
+            {schedulerPrefs.shared_rides_enabled ? 'Enabled' : 'Disabled'}
+          </button>
+        </div>
+      </div>
       <button type="button" onClick={handleSave} disabled={saving} className="btn-gold px-5 py-2.5 text-sm">
-        {saving ? 'Saving...' : 'Save AI Controls'}
+        {saving ? 'Saving...' : 'Save AI Settings'}
       </button>
     </div>
   );
@@ -654,6 +762,7 @@ export default function CompanyDashboard({ previewMode = false }) {
     const match = company?.notes?.match(/IMPORT_SOURCE:([A-Z_]+)/);
     return match?.[1] || 'MANUAL';
   }, [company?.notes]);
+  const companyDisplayName = company?.app_display_name || company?.company_name || 'Penthouse Dispatch';
   const basePath = previewMode && company?.id ? `/admin/company-preview/${company.id}` : '';
 
   const tabs = [
@@ -662,7 +771,7 @@ export default function CompanyDashboard({ previewMode = false }) {
     { path: `${basePath}/drivers`, routePath: 'drivers', label: 'Drivers', icon: Users },
     { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
     { path: `${basePath}/invoices`, routePath: 'invoices', label: 'Invoices', icon: FileText },
-    { path: `${basePath}/ai-controls`, routePath: 'ai-controls', label: 'AI Controls', icon: Bot },
+    { path: `${basePath}/ai-controls`, routePath: 'ai-controls', label: 'AI Settings', icon: Bot },
     { path: `${basePath}/guides`, routePath: 'guides', label: 'Guides', icon: BookOpen },
     { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
   ];
@@ -695,7 +804,7 @@ export default function CompanyDashboard({ previewMode = false }) {
           borderBottom: '1px solid rgba(201,168,76,0.18)',
         }}
       >
-        <StatusChip label={`Company: ${company?.company_name || 'Subscriber'}`} color="#c9a84c" />
+        <StatusChip label={`Company Admin: ${company?.company_name || 'Subscriber'}`} color="#c9a84c" />
         <StatusChip label={`Import: ${importSource}`} color="#0ea5e9" />
         <StatusChip label={company?.white_label_enabled ? 'White-label enabled' : 'Platform branding active'} color={company?.white_label_enabled ? '#00e5a0' : 'rgba(255,255,255,0.6)'} />
         <StatusChip label={company?.ai_routing_enabled ? 'AI routing on' : 'AI routing off'} color={company?.ai_routing_enabled ? '#00e5a0' : '#ff4757'} />
@@ -707,8 +816,8 @@ export default function CompanyDashboard({ previewMode = false }) {
             <span style={{ color: '#c9a84c', fontSize: 16, fontWeight: 800 }}>P</span>
           </div>
           <div className="hidden sm:block">
-            <p style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700 }}>PENTHOUSE DISPATCH</p>
-            {company && <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>{company.company_name}</p>}
+            <p style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700 }}>{companyDisplayName.toUpperCase()}</p>
+            <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>Company Admin Dashboard</p>
           </div>
           {previewMode && company?.id && (
             <Link

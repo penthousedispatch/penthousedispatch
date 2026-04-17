@@ -5,6 +5,7 @@ import { handleSupabaseError, logFailure, toastError } from '../utils/errorHandl
 import { runAutoScheduler } from '../utils/autoScheduler';
 import { DEFAULT_BILLING_RATE_PER_MILE, syncCompletedTripBilling } from '../utils/billingAutomation';
 import { normalizeAppRole } from '../lib/roles';
+import { readCompanySchedulerPrefs } from '../lib/companySchedulerPrefs';
 
 const AppContext = createContext(null);
 const PLATFORM_OWNER_EMAILS = new Set([
@@ -867,11 +868,18 @@ export function AppProvider({ children }) {
 
       if (!currentDrivers?.length || !availableTrips?.length) return;
 
+      const companySchedulerPrefs = activeCompany ? readCompanySchedulerPrefs(activeCompany) : null;
+      const effectiveConfig = {
+        ...(cfg || {}),
+        ...(companySchedulerPrefs || {}),
+        auto_assign: activeCompany?.ai_auto_assign_enabled === false ? false : cfg?.auto_assign,
+      };
+
       await runAutoScheduler({
         drivers: currentDrivers,
         trips: availableTrips,
         assignments: currentAssignments || [],
-        config: cfg,
+        config: effectiveConfig,
         orgId: orgIdRef.current,
         dryRun: false,
       });

@@ -57,6 +57,9 @@ const AI_SCHED = {
     const shortTripBonusWeight = Number(options.shortTripBonusWeight ?? this.DEFAULT_SHORT_TRIP_BONUS_WEIGHT);
     const chainingWeight = Number(options.chainingWeight ?? this.DEFAULT_CHAINING_WEIGHT);
     const sharedRideBonusWeight = Number(options.sharedRideBonusWeight ?? this.DEFAULT_SHARED_RIDE_BONUS_WEIGHT);
+    const priceWeight = Number(options.priceWeight ?? 8);
+    const proximityWeight = Number(options.proximityWeight ?? 7);
+    const zoneWeight = Number(options.zoneWeight ?? 10);
     const { startMin, endMin } = this.parseShift(shiftStr);
     const shiftHours = (endMin - startMin) / 60;
     const targetTrips = Math.max(this.MIN_TRIPS_PER_DAY, shiftHours * this.MIN_TRIPS_PER_HOUR);
@@ -88,7 +91,7 @@ const AI_SCHED = {
         const zonePreferenceBonus = getZonePreferenceBonus(
           t.serviceZone,
           normalizePreferredZones(driver.preferred_zones),
-          12
+          zoneWeight
         );
         const nearbyFutureTrips = allTrips.filter(candidate => {
           if (!candidate?.coords || candidate.tripId === t.tripId || alreadyTakenIds.has(candidate.tripId)) return false;
@@ -107,14 +110,14 @@ const AI_SCHED = {
           && allTrips.some(candidate => candidate.tripId !== t.tripId && this.isSharedRideCandidate(t, candidate))
           ? sharedRideBonusWeight
           : 0;
-        const score = (price * 2)
+        const score = (price * Math.max(0.5, priceWeight / 4))
           + (revenuePerMile * 1.75)
           + earlyBonus
           + shortTripBonus
           + zonePreferenceBonus
           + (nearbyFutureTrips * chainingWeight)
           + sharedRideBonus
-          - (dist * 0.5);
+          - (dist * Math.max(0.1, proximityWeight / 4));
         return {
           ...t,
           dist,
@@ -330,6 +333,9 @@ const AI_SCHED = {
         {
           trafficBufferPct,
           sharedRidesEnabled,
+          priceWeight: config.price_weight,
+          proximityWeight: config.proximity_weight,
+          zoneWeight: config.zone_weight,
           shortTripMaxMiles: config.short_trip_max_miles,
           shortTripBonusWeight: config.short_trip_bonus_weight,
           chainingWeight: config.chaining_weight,

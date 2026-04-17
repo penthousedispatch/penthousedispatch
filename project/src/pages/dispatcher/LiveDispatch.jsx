@@ -8,6 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
 import { haversineDistance } from '../../lib/geocode';
 import { fbSet } from '../../lib/firebase';
+import { readCompanySchedulerPrefs } from '../../lib/companySchedulerPrefs';
 import { detectServiceZone, getZonePreferenceBonus, normalizePreferredZones } from '../../lib/serviceZones';
 import DriverCard from '../../components/drivers/DriverCard';
 import DriverDetailPanel from '../../components/drivers/DriverDetailPanel';
@@ -41,6 +42,7 @@ export default function LiveDispatch() {
   const [showDeleteSingleModal, setShowDeleteSingleModal] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteToast, setDeleteToast] = useState(null);
+  const schedulerPrefs = readCompanySchedulerPrefs(company);
 
   const isCompanyUser = profile?.role === 'company';
   const canManageFleet = isCompanyUser;
@@ -139,16 +141,20 @@ export default function LiveDispatch() {
   }
 
   const scoredTrips = availableTrips.map(t => {
-    let score = parseFloat(t.delivery_price) || 0;
+    let score = (parseFloat(t.delivery_price) || 0) * Math.max(0.5, (schedulerPrefs.price_weight || 8) / 8);
     const serviceZone = detectServiceZone(t.pu_address || '');
     if (selectedDriver?.start_coords && t.coords) {
       const dist = haversineDistance(
         selectedDriver.start_coords.lat, selectedDriver.start_coords.lng,
         t.coords.lat, t.coords.lng
       );
-      score += Math.max(0, 10 - dist) * 2;
+      score += Math.max(0, 10 - dist) * Math.max(0.25, (schedulerPrefs.proximity_weight || 7) / 3.5);
     }
-    score += getZonePreferenceBonus(serviceZone, normalizePreferredZones(selectedDriver?.preferred_zones), 10);
+    score += getZonePreferenceBonus(
+      serviceZone,
+      normalizePreferredZones(selectedDriver?.preferred_zones),
+      schedulerPrefs.zone_weight || 10
+    );
     return { ...t, score, serviceZone };
   }).sort((a, b) => b.score - a.score);
 
