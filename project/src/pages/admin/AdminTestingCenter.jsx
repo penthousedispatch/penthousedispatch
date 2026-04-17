@@ -222,14 +222,15 @@ export default function AdminTestingCenter() {
       return;
     }
     const secret = cfg?.webhook_secret || '';
-    const secretParam = secret ? `?secret=${encodeURIComponent(secret)}` : '';
+    const authMode = cfg?.webhook_auth_mode || 'bearer';
+    const secretParam = secret && authMode === 'query' ? `?secret=${encodeURIComponent(secret)}` : '';
     const EDGE_BASE = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
 
     if (!secret) {
       addLog(testId, 'No webhook secret is saved in Sentry config.', 'warn');
       addLog(testId, 'If your live receiver functions require Authorization: Bearer <secret>, this test will fail even though Sentry may already be configured correctly on their side.', 'warn');
     } else {
-      addLog(testId, 'Using saved webhook secret from Sentry config.', 'info');
+      addLog(testId, `Using saved webhook secret from Sentry config via ${authMode === 'query' ? 'token URL' : 'bearer header'}.`, 'info');
     }
 
     const endpoints = [
@@ -288,6 +289,7 @@ export default function AdminTestingCenter() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...(secret && authMode === 'bearer' ? { Authorization: `Bearer ${secret}` } : {}),
           },
           body: JSON.stringify(ep.payload),
         });
@@ -312,13 +314,15 @@ export default function AdminTestingCenter() {
   async function replayWebhook(log) {
     const cfg = await loadLatestSentryConfig();
     const secret = cfg?.webhook_secret || '';
+    const authMode = cfg?.webhook_auth_mode || 'bearer';
     const EDGE_BASE = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
-    const url = `${EDGE_BASE}/sentry-receivers/${log.endpoint}${secret ? `?secret=${encodeURIComponent(secret)}` : ''}`;
+    const url = `${EDGE_BASE}/sentry-receivers/${log.endpoint}${secret && authMode === 'query' ? `?secret=${encodeURIComponent(secret)}` : ''}`;
 
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(secret && authMode === 'bearer' ? { Authorization: `Bearer ${secret}` } : {}),
       },
       body: JSON.stringify(log.raw_payload || {}),
     });

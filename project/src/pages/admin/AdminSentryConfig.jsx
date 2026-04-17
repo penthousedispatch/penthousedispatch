@@ -98,6 +98,7 @@ export default function AdminSentryConfig() {
     max_trips_per_pull: 150,
     pull_interval_mins: 5,
     webhook_secret: '',
+    webhook_auth_mode: 'bearer',
     ...DEFAULT_FEATURES,
   });
 
@@ -128,6 +129,7 @@ export default function AdminSentryConfig() {
         max_trips_per_pull: sentryConfig.max_trips_per_pull || 150,
         pull_interval_mins: sentryConfig.pull_interval_mins || 5,
         webhook_secret: sentryConfig.webhook_secret || '',
+        webhook_auth_mode: sentryConfig.webhook_auth_mode || 'bearer',
         ...Object.fromEntries(FEATURE_DEFS.map(f => [f.key, sentryConfig[f.key] !== false])),
       }));
     }
@@ -294,7 +296,7 @@ export default function AdminSentryConfig() {
     );
   }
 
-  const secretUrl = form.webhook_secret
+  const secretUrl = form.webhook_secret && form.webhook_auth_mode === 'query'
     ? `?secret=${encodeURIComponent(form.webhook_secret)}`
     : '';
 
@@ -305,11 +307,11 @@ export default function AdminSentryConfig() {
   ];
 
   const providerEndpoints = [
-    { label: 'Fleet Vehicle Locations', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_locations.json` },
-    { label: 'Vehicle Location', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_location.json?vehicle_id=ID` },
-    { label: 'Vehicle Waypoint ETAs', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_waypoint_etas.json` },
-    { label: 'Retrieve TP Trips', url: `${EDGE_BASE}/sentry-provider/rest/gc/retrieve_trips.json` },
-    { label: 'Driver Work Shifts', url: `${EDGE_BASE}/sentry-provider/rest/transportation_provider_facade/v4.0/driver_work_shifts.json` },
+    { label: 'Fleet Vehicle Locations', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_locations.json${secretUrl}` },
+    { label: 'Vehicle Location', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_location.json?vehicle_id=ID${form.webhook_auth_mode === 'query' && form.webhook_secret ? `&secret=${encodeURIComponent(form.webhook_secret)}` : ''}` },
+    { label: 'Vehicle Waypoint ETAs', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_waypoint_etas.json${secretUrl}` },
+    { label: 'Retrieve TP Trips', url: `${EDGE_BASE}/sentry-provider/rest/gc/retrieve_trips.json${secretUrl}` },
+    { label: 'Driver Work Shifts', url: `${EDGE_BASE}/sentry-provider/rest/transportation_provider_facade/v4.0/driver_work_shifts.json${secretUrl}` },
   ];
 
   return (
@@ -398,11 +400,39 @@ export default function AdminSentryConfig() {
             <div className="space-y-3">
               <div>
                 <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                  Bearer Webhook Secret
+                  Webhook Secret
                 </label>
                 <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.35)' }}>
-                  Generate a secret and append it to your inbound auth flow. Save the exact secret Sentry will send in the <span className="font-mono">Authorization: Bearer ...</span> header.
+                  Save one secret and choose whether Sentry should send it in a bearer header or as a URL token.
                 </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setForm(prev => ({ ...prev, webhook_auth_mode: 'bearer' }))}
+                  className="px-3 py-2 rounded-lg text-xs"
+                  style={{
+                    background: form.webhook_auth_mode === 'bearer' ? 'rgba(201,168,76,0.1)' : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${form.webhook_auth_mode === 'bearer' ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.08)'}`,
+                    color: form.webhook_auth_mode === 'bearer' ? '#c9a84c' : 'rgba(255,255,255,0.55)',
+                    fontWeight: 600,
+                  }}
+                >
+                  Bearer Header
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm(prev => ({ ...prev, webhook_auth_mode: 'query' }))}
+                  className="px-3 py-2 rounded-lg text-xs"
+                  style={{
+                    background: form.webhook_auth_mode === 'query' ? 'rgba(201,168,76,0.1)' : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${form.webhook_auth_mode === 'query' ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.08)'}`,
+                    color: form.webhook_auth_mode === 'query' ? '#c9a84c' : 'rgba(255,255,255,0.55)',
+                    fontWeight: 600,
+                  }}
+                >
+                  Token URL
+                </button>
               </div>
               <div className="flex gap-2">
                 <input
@@ -430,14 +460,23 @@ export default function AdminSentryConfig() {
                   Generate
                 </button>
               </div>
-              <HeaderRow
-                label="Authorization Header Preview"
-                value={`Bearer ${form.webhook_secret || 'YOUR_WEBHOOK_SECRET'}`}
-                mask={!secretVisible}
-                onCopy={() => setSecretVisible(false)}
-              />
+              {form.webhook_auth_mode === 'bearer' ? (
+                <HeaderRow
+                  label="Authorization Header Preview"
+                  value={`Bearer ${form.webhook_secret || 'YOUR_WEBHOOK_SECRET'}`}
+                  mask={!secretVisible}
+                  onCopy={() => setSecretVisible(false)}
+                />
+              ) : (
+                <UrlRow
+                  label="Token URL Preview"
+                  url={`${EDGE_BASE}/sentry-receivers/trips_receiver${form.webhook_secret ? `?secret=${encodeURIComponent(form.webhook_secret)}` : '?secret=YOUR_WEBHOOK_SECRET'}`}
+                />
+              )}
               <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                Send this header to Sentry for both receiver and provider endpoints. Query-string secret support is still available, but header auth is cleaner for production.
+                {form.webhook_auth_mode === 'bearer'
+                  ? 'Send this bearer header to Sentry for both receiver and provider endpoints.'
+                  : 'Use the tokenized URLs for both receiver and provider endpoints so Sentry can authenticate with the secret in the URL.'}
               </p>
               <p className="text-xs" style={{ color: 'rgba(255,255,255,0.32)' }}>
                 The secret stays masked after save and after copy so it is not left exposed on screen.

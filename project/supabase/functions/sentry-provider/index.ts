@@ -21,6 +21,7 @@ Deno.serve(async (req: Request) => {
     const pathname = url.pathname;
     const authHeader = req.headers.get('authorization') || req.headers.get('Authorization') || '';
     const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const secret = url.searchParams.get('secret') || '';
 
     const respond = (data: unknown, status = 200) =>
       new Response(JSON.stringify(data), {
@@ -35,7 +36,9 @@ Deno.serve(async (req: Request) => {
       .limit(1)
       .maybeSingle();
 
-    if (cfg?.webhook_secret && cfg.webhook_secret !== '' && cfg.webhook_secret !== bearerToken) {
+    const providedSecret = secret || bearerToken;
+
+    if (cfg?.webhook_secret && cfg.webhook_secret !== '' && cfg.webhook_secret !== providedSecret) {
       return respond({ error: 'Unauthorized' }, 401);
     }
 

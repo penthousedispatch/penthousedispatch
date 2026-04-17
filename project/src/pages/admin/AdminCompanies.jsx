@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { useApp } from '../../context/AppContext';
 import { Building2, CheckCircle, XCircle, Clock, Eye, Users, AlertTriangle, Route } from 'lucide-react';
 import DriverRouteView from '../../components/drivers/DriverRouteView';
 
@@ -14,6 +15,7 @@ const STATUS_COLORS = {
 
 export default function AdminCompanies() {
   const navigate = useNavigate();
+  const { setAdminPreviewCompany } = useApp();
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
@@ -88,6 +90,12 @@ export default function AdminCompanies() {
     await loadCompanies();
   }
 
+  function handleOpenDashboard(company) {
+    setAdminPreviewCompany(company);
+    setSelected(null);
+    navigate(`/admin/company-preview/${company.id}`);
+  }
+
   const pending = companies.filter(c => !c.is_approved && c.onboarding_status !== 'rejected');
   const approved = companies.filter(c => c.is_approved);
   const rejected = companies.filter(c => c.onboarding_status === 'rejected');
@@ -125,7 +133,7 @@ export default function AdminCompanies() {
                   key={company.id}
                   company={company}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
-                  onOpenDashboard={() => navigate(`/admin/company-preview/${company.id}`)}
+                  onOpenDashboard={() => handleOpenDashboard(company)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
@@ -151,7 +159,7 @@ export default function AdminCompanies() {
                   key={company.id}
                   company={company}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
-                  onOpenDashboard={() => navigate(`/admin/company-preview/${company.id}`)}
+                  onOpenDashboard={() => handleOpenDashboard(company)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
