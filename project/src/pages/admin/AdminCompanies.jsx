@@ -321,14 +321,14 @@ function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
         <button onClick={onView} className="btn-ghost px-3 py-1.5 text-xs flex items-center gap-1.5">
           <Eye className="w-3 h-3" /> Review
         </button>
-        <button
-          type="button"
+        <a
+          href={`/admin/company-preview/${company.id}/drivers`}
           onClick={onOpenDashboard}
           className="px-3 py-1.5 text-xs rounded-lg"
           style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none' }}
         >
           Open Dashboard
-        </button>
+        </a>
         <button
           onClick={onSuspend}
           className="px-3 py-1.5 text-xs rounded-lg"

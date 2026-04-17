@@ -142,7 +142,7 @@ function Toggle({ value, onChange, color = '#c9a84c', disabled = false }) {
 }
 
 export default function AISettingsPanel() {
-  const { org, isPlatformOwner, role } = useApp();
+  const { org, user, isPlatformOwner, role } = useApp();
   const [form, setForm] = useState(DEFAULT_FORM);
   const [botProviderConfigs, setBotProviderConfigs] = useState(DEFAULT_BOT_PROVIDER_CONFIGS);
   const [showKey, setShowKey] = useState(false);
@@ -156,9 +156,64 @@ export default function AISettingsPanel() {
   const [expandedLog, setExpandedLog] = useState(null);
   const [filterType, setFilterType] = useState('all');
   const [syncingBot, setSyncingBot] = useState(null);
+  const [resolvedOrgId, setResolvedOrgId] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function resolveOrgId() {
+      if (org?.id) {
+        setResolvedOrgId(org.id);
+        return;
+      }
+
+      if (!user?.id) {
+        setResolvedOrgId(null);
+        return;
+      }
+
+      const { data: membership } = await supabase
+        .from('org_members')
+        .select('org_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (membership?.org_id) {
+        if (mounted) setResolvedOrgId(membership.org_id);
+        return;
+      }
+
+      const { data: latestAiRow } = await supabase
+        .from('ai_settings')
+        .select('org_id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestAiRow?.org_id) {
+        if (mounted) setResolvedOrgId(latestAiRow.org_id);
+        return;
+      }
+
+      const { data: fallbackOrg } = await supabase
+        .from('organizations')
+        .select('id')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (mounted) setResolvedOrgId(fallbackOrg?.id || null);
+    }
+
+    resolveOrgId();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, user?.id]);
 
   async function persistCoreBotFlags(nextForm) {
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     const payload = {
       sentry_bot_enabled: nextForm.sentry_bot_enabled,
       scheduler_bot_enabled: nextForm.scheduler_bot_enabled,
@@ -168,12 +223,12 @@ export default function AISettingsPanel() {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', org.id).maybeSingle();
+    const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', resolvedOrgId).maybeSingle();
     if (existing) {
-      await supabase.from('ai_settings').update(payload).eq('org_id', org.id);
+      await supabase.from('ai_settings').update(payload).eq('org_id', resolvedOrgId);
     } else {
       await supabase.from('ai_settings').insert({
-        org_id: org.id,
+        org_id: resolvedOrgId,
         provider: nextForm.provider || 'disabled',
         api_key: nextForm.api_key || '',
         base_url: nextForm.base_url || '',
@@ -190,11 +245,11 @@ export default function AISettingsPanel() {
   useEffect(() => {
     loadSettings();
     loadLogs();
-  }, [org?.id]);
+  }, [resolvedOrgId]);
 
   async function loadSettings() {
-    if (!org?.id) return;
-    const { data } = await supabase.from('ai_settings').select('*').eq('org_id', org.id).maybeSingle();
+    if (!resolvedOrgId) return;
+    const { data } = await supabase.from('ai_settings').select('*').eq('org_id', resolvedOrgId).maybeSingle();
     if (data) {
       setForm({
         provider: data.provider || 'disabled',
@@ -216,8 +271,8 @@ export default function AISettingsPanel() {
     }
 
     const [codexMemory, claudeMemory] = await Promise.all([
-      getBotMemory(org.id, 'codex_bot'),
-      getBotMemory(org.id, 'claude_bot'),
+      getBotMemory(resolvedOrgId, 'codex_bot'),
+      getBotMemory(resolvedOrgId, 'claude_bot'),
     ]);
 
     setBotProviderConfigs({
@@ -234,7 +289,7 @@ export default function AISettingsPanel() {
     const { data: botConfigs } = await supabase
       .from('bot_config')
       .select('bot_id, kill_switch')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .in('bot_id', ['codex_bot', 'claude_bot']);
 
     const botKillMap = Object.fromEntries((botConfigs || []).map(row => [row.bot_id, row.kill_switch]));
@@ -246,12 +301,12 @@ export default function AISettingsPanel() {
   }
 
   async function loadLogs() {
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     setLoadingLogs(true);
     const { data } = await supabase
       .from('ai_logs')
       .select('*')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .order('created_at', { ascending: false })
       .limit(50);
     setLogs(data || []);
@@ -259,7 +314,7 @@ export default function AISettingsPanel() {
   }
 
   async function handleSave() {
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     if (role === 'admin' && !isPlatformOwner) return;
     setSaving(true);
     const payload = {
@@ -279,16 +334,16 @@ export default function AISettingsPanel() {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', org.id).maybeSingle();
+    const { data: existing } = await supabase.from('ai_settings').select('id').eq('org_id', resolvedOrgId).maybeSingle();
     if (existing) {
-      await supabase.from('ai_settings').update(payload).eq('org_id', org.id);
+      await supabase.from('ai_settings').update(payload).eq('org_id', resolvedOrgId);
     } else {
-      await supabase.from('ai_settings').insert({ ...payload, org_id: org.id });
+      await supabase.from('ai_settings').insert({ ...payload, org_id: resolvedOrgId });
     }
 
     await Promise.all([
-      saveBotMemory(org.id, 'codex_bot', 'provider_config', botProviderConfigs.codex_bot),
-      saveBotMemory(org.id, 'claude_bot', 'provider_config', botProviderConfigs.claude_bot),
+      saveBotMemory(resolvedOrgId, 'codex_bot', 'provider_config', botProviderConfigs.codex_bot),
+      saveBotMemory(resolvedOrgId, 'claude_bot', 'provider_config', botProviderConfigs.claude_bot),
     ]);
 
     setSaved(true);
@@ -306,18 +361,18 @@ export default function AISettingsPanel() {
   }
 
   async function clearLogs() {
-    if (!org?.id) return;
-    await supabase.from('ai_logs').delete().eq('org_id', org.id);
+    if (!resolvedOrgId) return;
+    await supabase.from('ai_logs').delete().eq('org_id', resolvedOrgId);
     setLogs([]);
   }
 
   async function syncBotKillSwitch(botId, enabled) {
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     setSyncingBot(botId);
     const { data: existing } = await supabase
       .from('bot_config')
       .select('id')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .eq('bot_id', botId)
       .maybeSingle();
 
@@ -325,13 +380,13 @@ export default function AISettingsPanel() {
       await supabase
         .from('bot_config')
         .update({ kill_switch: !enabled, updated_at: new Date().toISOString() })
-        .eq('org_id', org.id)
+        .eq('org_id', resolvedOrgId)
         .eq('bot_id', botId);
     } else {
       await supabase
         .from('bot_config')
         .insert({
-          org_id: org.id,
+          org_id: resolvedOrgId,
           bot_id: botId,
           bot_name: BOT_SERVICES.find(bot => bot.id === botId)?.name || botId,
           autonomy_level: botId === 'claude_bot' ? 'suggest' : 'act',
@@ -364,7 +419,7 @@ export default function AISettingsPanel() {
       all_bots_paused: pause,
     };
     setForm(newForm);
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     await persistCoreBotFlags(newForm);
     for (const bot of BOT_SERVICES) {
       await syncBotKillSwitch(bot.id, !pause);
@@ -383,7 +438,7 @@ export default function AISettingsPanel() {
       all_bots_paused: false,
     };
     setForm(newForm);
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     await persistCoreBotFlags(newForm);
     for (const bot of BOT_SERVICES) {
       await syncBotKillSwitch(bot.id, enabled);
