@@ -8,7 +8,6 @@ import {
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers
 } from 'lucide-react';
 import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
-import AlertInboxButton from '../../components/ui/AlertInboxButton';
 
 function CompanyDrivers({ company }) {
   const [drivers, setDrivers] = useState([]);
@@ -739,7 +738,6 @@ export default function CompanyDashboard({ previewMode = false }) {
         </nav>
 
         <div className="flex items-center gap-2">
-          <AlertInboxButton scope="company" companyId={company?.id} />
           <button onClick={() => supabase.auth.signOut()} className="w-8 h-8 flex items-center justify-center rounded-lg btn-ghost" title="Sign out">
             <LogOut className="w-4 h-4" />
           </button>

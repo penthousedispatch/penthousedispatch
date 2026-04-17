@@ -9,8 +9,6 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { useTheme } from '../../context/ThemeContext';
-import SupervisorBadge from '../../components/supervisor/SupervisorBadge';
-import AlertInboxButton from '../../components/ui/AlertInboxButton';
 import AdminCompanies from './AdminCompanies';
 import AdminBilling from './AdminBilling';
 import AdminIncentives from './AdminIncentives';
@@ -321,7 +319,6 @@ export default function AdminDashboard() {
         </nav>
 
         <div className="flex items-center gap-2 flex-shrink-0">
-          <AlertInboxButton scope="admin" />
           {adminPreviewCompany && (
             <Link
               to={`/admin/company-preview/${adminPreviewCompany.id}`}
@@ -397,7 +394,6 @@ export default function AdminDashboard() {
         </Routes>
       </main>
 
-      <SupervisorBadge />
     </div>
   );
 }
