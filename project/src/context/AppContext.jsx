@@ -437,6 +437,21 @@ export function AppProvider({ children }) {
     }
   }
 
+  async function repairAccountProfile() {
+    if (!user?.id) return false;
+
+    try {
+      const repairedProfile = await ensureFallbackProfile(user);
+      if (!repairedProfile) return false;
+      setProfile(repairedProfile);
+      await loadUserData(user);
+      return true;
+    } catch (error) {
+      logFailure('repairAccountProfile', error);
+      return false;
+    }
+  }
+
   function configureSentry(organization) {
     if (organization?.sentry_base_url && (organization.sentry_username || organization.sentry_api_key)) {
       sentryApi.configure({
@@ -862,6 +877,7 @@ export function AppProvider({ children }) {
     refreshTripsFromSentry, checkSentryHealth,
     syncDriversFromSentry, pushAllLocationsToSentry,
     runAISchedulerPipeline,
+    repairAccountProfile,
     setSchedules, setSentryConfig, setCompany, setAdminPreviewCompany,
     supabase,
     role: normalizedRole,

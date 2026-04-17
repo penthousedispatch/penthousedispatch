@@ -21,6 +21,33 @@ function defaultPathForRole(role) {
 }
 
 function MissingProfileScreen() {
+  const { user, repairAccountProfile } = useApp();
+  const [repairing, setRepairing] = React.useState(false);
+  const [repairMessage, setRepairMessage] = React.useState('Trying to reconnect your account profile.');
+
+  React.useEffect(() => {
+    let mounted = true;
+
+    async function repair() {
+      setRepairing(true);
+      setRepairMessage('Trying to reconnect your account profile.');
+      const repaired = await repairAccountProfile();
+      if (!mounted) return;
+      if (repaired) {
+        setRepairMessage('Account profile repaired. Finishing sign-in...');
+      } else {
+        setRepairing(false);
+        setRepairMessage('We could not repair this account automatically yet.');
+      }
+    }
+
+    repair();
+
+    return () => {
+      mounted = false;
+    };
+  }, [repairAccountProfile]);
+
   async function handleSignOut() {
     await supabase.auth.signOut();
   }
@@ -36,8 +63,30 @@ function MissingProfileScreen() {
         </div>
         <p className="text-lg font-semibold mb-2" style={{ color: '#c9a84c' }}>Account Still Loading</p>
         <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
-          Your sign-in worked, but the app could not load your account profile cleanly. Please sign in again.
+          {repairMessage}
         </p>
+        <p className="text-xs mb-5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+          Signed in as {user?.email || 'unknown account'}
+        </p>
+        {!repairing && (
+          <button
+            onClick={async () => {
+              setRepairing(true);
+              setRepairMessage('Trying to reconnect your account profile.');
+              const repaired = await repairAccountProfile();
+              if (repaired) {
+                setRepairMessage('Account profile repaired. Finishing sign-in...');
+              } else {
+                setRepairing(false);
+                setRepairMessage('We could not repair this account automatically yet.');
+              }
+            }}
+            className="btn-ghost w-full py-3 mb-3 flex items-center justify-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Retry Account Repair
+          </button>
+        )}
         <button
           onClick={handleSignOut}
           className="btn-gold w-full py-3 flex items-center justify-center gap-2"
