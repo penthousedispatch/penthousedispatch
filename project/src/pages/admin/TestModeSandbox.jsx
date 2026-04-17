@@ -16,14 +16,14 @@ const NYC_BOROUGHS = [
 ];
 
 const TEST_DRIVERS = [
-  { full_name: 'Marcus Johnson', borough: 'Manhattan', tlc: 'TLC-TST-001', status: 'online' },
-  { full_name: 'Sarah Chen', borough: 'Brooklyn', tlc: 'TLC-TST-002', status: 'online' },
-  { full_name: 'David Rivera', borough: 'Queens', tlc: 'TLC-TST-003', status: 'online' },
-  { full_name: 'Angela Washington', borough: 'Bronx', tlc: 'TLC-TST-004', status: 'offline' },
-  { full_name: 'Kevin Okonkwo', borough: 'Staten Island', tlc: 'TLC-TST-005', status: 'online' },
-  { full_name: 'Priya Patel', borough: 'Long Island', tlc: 'TLC-TST-006', status: 'online' },
-  { full_name: 'James Martinez', borough: 'Manhattan', tlc: 'TLC-TST-007', status: 'online' },
-  { full_name: 'Lisa Thompson', borough: 'Brooklyn', tlc: 'TLC-TST-008', status: 'break' },
+  { full_name: 'Avery Stone', borough: 'Manhattan', tlc: 'DEMO-TLC-001', status: 'online' },
+  { full_name: 'Jordan Blake', borough: 'Brooklyn', tlc: 'DEMO-TLC-002', status: 'online' },
+  { full_name: 'Taylor Reed', borough: 'Queens', tlc: 'DEMO-TLC-003', status: 'online' },
+  { full_name: 'Morgan Vale', borough: 'Bronx', tlc: 'DEMO-TLC-004', status: 'offline' },
+  { full_name: 'Cameron Hale', borough: 'Staten Island', tlc: 'DEMO-TLC-005', status: 'online' },
+  { full_name: 'Riley Hart', borough: 'Long Island', tlc: 'DEMO-TLC-006', status: 'online' },
+  { full_name: 'Skyler Quinn', borough: 'Manhattan', tlc: 'DEMO-TLC-007', status: 'online' },
+  { full_name: 'Dakota Lane', borough: 'Brooklyn', tlc: 'DEMO-TLC-008', status: 'break' },
 ];
 
 const TRIP_TEMPLATES = [
@@ -50,6 +50,10 @@ const SCENARIOS = {
 
 function getSandboxMarker(companyId) {
   return `TEST_MODE_SANDBOX:${companyId}`;
+}
+
+function getSandboxMarketplacePrefix(companyId) {
+  return `TST-MKT-${companyId}`;
 }
 
 function StatusBadge({ status }) {
@@ -184,6 +188,49 @@ export default function TestModeSandbox() {
     }
 
     return successfulTrips;
+  }
+
+  async function seedMarketplaceForTemplates(companyId, templates, scenarioKey = 'full_coverage') {
+    const today = new Date();
+    today.setHours(6, 0, 0, 0);
+    const sentryPrefix = getSandboxMarketplacePrefix(companyId);
+
+    const rows = templates.map((tt, i) => {
+      const tripTime = new Date(today.getTime() + i * 45 * 60000);
+      const pickupZone = NYC_BOROUGHS[i % NYC_BOROUGHS.length];
+      const dropoffZone = NYC_BOROUGHS[(i + 2) % NYC_BOROUGHS.length];
+      return {
+        sentry_trip_id: `${sentryPrefix}-${scenarioKey}-${String(i + 1).padStart(3, '0')}`,
+        sentry_last_modified_at: new Date().toISOString(),
+        date_val: tripTime.toISOString().slice(0, 10),
+        los: 'Ambulatory',
+        passengers: String((i % 2) + 1),
+        mileage: String(tt.miles),
+        pu_address: tt.pu,
+        pu_city: pickupZone.name,
+        pu_zip: pickupZone.zip,
+        pu_time: tripTime.toISOString(),
+        do_address: tt.do,
+        do_city: dropoffZone.name,
+        do_zip: dropoffZone.zip,
+        do_time: new Date(tripTime.getTime() + Math.round(tt.miles * 4.5) * 60000).toISOString(),
+        delivery_price: String(tt.price),
+        status: 'available',
+        company_id: companyId,
+        loaded_at: new Date().toISOString(),
+      };
+    });
+
+    const { error } = await supabase
+      .from('marketplace_trips')
+      .upsert(rows, { onConflict: 'sentry_trip_id' });
+
+    if (error) {
+      addLog(`Failed to seed marketplace queue: ${error.message}`, 'error');
+      return 0;
+    }
+
+    return rows.length;
   }
 
   async function activateTestMode(selectedTemplates = SCENARIOS.full.templates, scenarioLabel = SCENARIOS.full.label) {
@@ -321,10 +368,20 @@ export default function TestModeSandbox() {
 
       if (seededDriverIds.length === 0) throw new Error('No drivers were seeded — cannot create trips');
 
-      addLog(`Seeding ${selectedTemplates.length} test trips for ${scenarioLabel}...`, 'info');
+      addLog(`Seeding ${selectedTemplates.length} fake marketplace trips for ${scenarioLabel}...`, 'info');
+      const seededMarketplaceCount = await seedMarketplaceForTemplates(
+        testCompany.id,
+        selectedTemplates,
+        scenarioLabel.toLowerCase().replace(/\s+/g, '_'),
+      );
+      addLog(
+        `${seededMarketplaceCount}/${selectedTemplates.length} marketplace trips seeded`,
+        seededMarketplaceCount === selectedTemplates.length ? 'success' : 'warn'
+      );
+      addLog(`Seeding ${selectedTemplates.length} scheduled assignment examples for ${scenarioLabel}...`, 'info');
       const successfulTrips = await seedTripsForTemplates(testCompany.id, seededDriverIds, selectedTemplates, scenarioLabel.toLowerCase().replace(/\s+/g, '_'));
       addLog(`${successfulTrips}/${selectedTemplates.length} trips seeded`, successfulTrips === selectedTemplates.length ? 'success' : 'warn');
-      addLog('Driver login credentials seeded. Username format: tst001 / password: TLC-TST-001', 'success');
+      addLog('Driver login credentials seeded. Username format: tst001 / password: DEMO-TLC-001', 'success');
 
       const sessionData = {
         user_id: user.id,
@@ -364,10 +421,15 @@ export default function TestModeSandbox() {
     const { data: companyDrivers } = await supabase.from('drivers').select('id').eq('company_id', session.test_company_id);
     const driverIds = (companyDrivers || []).map(d => d.id).filter(Boolean);
     await supabase.from('trip_assignments').delete().like('notes', `${marker}%`);
+    await supabase
+      .from('marketplace_trips')
+      .delete()
+      .eq('company_id', session.test_company_id)
+      .like('sentry_trip_id', `${getSandboxMarketplacePrefix(session.test_company_id)}%`);
     if (driverIds.length > 0) {
       await supabase.from('trip_assignments').delete().in('driver_id', driverIds);
     }
-    addLog('Cleared test trips', 'success');
+    addLog('Cleared sandbox marketplace and assignment data', 'success');
     setSeedStatus('idle');
     setTestTrips([]);
     setSeeding(false);
@@ -383,6 +445,11 @@ export default function TestModeSandbox() {
     addLog(`Resetting sandbox trips for scenario: ${scenario.label}`, 'info');
     const marker = getSandboxMarker(session.test_company_id);
     await supabase.from('trip_assignments').delete().like('notes', `${marker}%`);
+    await supabase
+      .from('marketplace_trips')
+      .delete()
+      .eq('company_id', session.test_company_id)
+      .like('sentry_trip_id', `${getSandboxMarketplacePrefix(session.test_company_id)}%`);
 
     const { data: companyDrivers } = await supabase.from('drivers').select('id').eq('company_id', session.test_company_id);
     const driverIds = (companyDrivers || []).map(d => d.id).filter(Boolean);
@@ -392,6 +459,8 @@ export default function TestModeSandbox() {
       return;
     }
 
+    const marketplaceCount = await seedMarketplaceForTemplates(session.test_company_id, scenario.templates, key);
+    addLog(`Scenario marketplace ready: ${marketplaceCount} fake queue trips loaded`, marketplaceCount > 0 ? 'success' : 'warn');
     const count = await seedTripsForTemplates(session.test_company_id, driverIds, scenario.templates, key);
     addLog(`Scenario ready: ${count} trips seeded for ${scenario.label}`, count > 0 ? 'success' : 'warn');
     await loadTestData(session.test_company_id);
@@ -572,6 +641,11 @@ export default function TestModeSandbox() {
     if (session.test_company_id) {
       const marker = getSandboxMarker(session.test_company_id);
       const { data: drivers } = await supabase.from('drivers').select('id').eq('company_id', session.test_company_id);
+      await supabase
+        .from('marketplace_trips')
+        .delete()
+        .eq('company_id', session.test_company_id)
+        .like('sentry_trip_id', `${getSandboxMarketplacePrefix(session.test_company_id)}%`);
       if (drivers?.length) {
         await supabase.from('trip_assignments').delete().in('driver_id', drivers.map(d => d.id));
         await supabase.from('drivers').delete().eq('company_id', session.test_company_id);
