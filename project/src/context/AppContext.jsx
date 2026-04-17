@@ -65,6 +65,33 @@ export function AppProvider({ children }) {
     return null;
   }
 
+  async function fetchAdminMembership(userId) {
+    try {
+      const result = await Promise.race([
+        supabase
+          .from('org_members')
+          .select('role, org_id')
+          .eq('user_id', userId)
+          .in('role', ['admin', 'superadmin'])
+          .limit(1)
+          .maybeSingle(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Admin membership lookup timed out')), 1500)
+        ),
+      ]);
+
+      if (result?.error) {
+        logFailure('fetchAdminMembership', result.error);
+        return null;
+      }
+
+      return result?.data || null;
+    } catch (error) {
+      logFailure('fetchAdminMembership', error);
+      return null;
+    }
+  }
+
   async function inferFallbackIdentity(u) {
     const metadataRole =
       normalizeAppRole(u?.user_metadata?.role) ||
@@ -79,15 +106,9 @@ export function AppProvider({ children }) {
 
     const email = (u?.email || '').trim().toLowerCase();
 
-    const adminMembershipResult = await supabase
-      .from('org_members')
-      .select('role, org_id')
-      .eq('user_id', u.id)
-      .in('role', ['admin', 'superadmin'])
-      .limit(1)
-      .maybeSingle();
+    const adminMembership = await fetchAdminMembership(u.id);
 
-    if (adminMembershipResult.data?.org_id) {
+    if (adminMembership?.org_id) {
       return { role: 'admin', companyId: null };
     }
 
@@ -262,9 +283,34 @@ export function AppProvider({ children }) {
       }
 
       let prof = await fetchProfileWithRetry(u.id);
+      const adminMembership = await fetchAdminMembership(u.id);
 
       if (!prof) {
         prof = await ensureFallbackProfile(u);
+      }
+
+      if (adminMembership?.org_id && normalizeAppRole(prof?.role) !== 'admin') {
+        prof = {
+          ...(prof || {
+            id: u.id,
+            email: u.email || '',
+            full_name:
+              u?.user_metadata?.full_name ||
+              u?.user_metadata?.name ||
+              (u.email ? u.email.split('@')[0] : 'User'),
+          }),
+          role: 'admin',
+          company_id: null,
+        };
+
+        setProfile(prof);
+
+        supabase
+          .from('profiles')
+          .upsert(prof, { onConflict: 'id' })
+          .then(({ error }) => {
+            if (error) logFailure('loadUserData:forceAdminProfile', error);
+          });
       }
 
       setProfile(prof);
