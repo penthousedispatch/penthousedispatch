@@ -208,42 +208,64 @@ function CompanyInvoices({ company }) {
 }
 
 function CompanyMarketplace({ company }) {
+  const { refreshTripsFromSentry } = useApp();
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function loadMarketplaceTrips() {
+    let query = supabase
+      .from('marketplace_trips')
+      .select('*')
+      .order('loaded_at', { ascending: false })
+      .limit(250);
+
+    if (company?.id) {
+      query = query.eq('company_id', company.id);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      handleSupabaseError(error, 'CompanyMarketplace:load', { silent: true, fallback: 'Failed to load marketplace trips.' });
+    }
+
+    return data || [];
+  }
 
   useEffect(() => {
     let mounted = true;
 
-    async function loadMarketplaceTrips() {
+    async function initialLoad() {
       setLoading(true);
-      let query = supabase
-        .from('marketplace_trips')
-        .select('*')
-        .order('loaded_at', { ascending: false })
-        .limit(250);
-
-      if (company?.id) {
-        query = query.eq('company_id', company.id);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        handleSupabaseError(error, 'CompanyMarketplace:load', { silent: true, fallback: 'Failed to load marketplace trips.' });
-      }
-
+      const data = await loadMarketplaceTrips();
       if (mounted) {
-        setTrips(data || []);
+        setTrips(data);
         setLoading(false);
       }
     }
 
-    loadMarketplaceTrips();
+    initialLoad();
     return () => {
       mounted = false;
     };
   }, [company?.id]);
+
+  async function handleRefreshMarketplace() {
+    setRefreshing(true);
+    const result = await refreshTripsFromSentry();
+    const data = await loadMarketplaceTrips();
+    setTrips(data);
+    setRefreshing(false);
+
+    if (result?.error) {
+      handleSupabaseError({ message: result.error }, 'CompanyMarketplace:refresh', { fallback: 'Failed to refresh trips from Sentry.' });
+      return;
+    }
+
+    toastSuccess(`Marketplace refreshed${result?.count ? ` — ${result.count} trips synced` : ''}.`);
+  }
 
   const filteredTrips = trips.filter(trip => {
     if (!search) return true;
@@ -262,11 +284,21 @@ function CompanyMarketplace({ company }) {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
-      <div>
-        <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Marketplace Trips</h2>
-        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
-          Review provider-imported trips assigned to your company before or after dispatching them.
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Marketplace Trips</h2>
+          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            Review provider-imported trips assigned to your company before or after dispatching them.
+          </p>
+        </div>
+        <button
+          onClick={handleRefreshMarketplace}
+          disabled={refreshing}
+          className="px-4 py-2 rounded-xl text-sm font-600"
+          style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600, opacity: refreshing ? 0.7 : 1 }}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh From Sentry'}
+        </button>
       </div>
 
       <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>

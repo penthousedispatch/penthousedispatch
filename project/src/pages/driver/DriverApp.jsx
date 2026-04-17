@@ -227,6 +227,7 @@ export default function DriverApp() {
       name: data.full_name || data.name,
       photo: data.photo_data || data.photo,
       email: data.email || '',
+      adminPreview: role === 'admin',
     });
     startShift({
       id: data.id,
@@ -282,7 +283,12 @@ export default function DriverApp() {
     if (driverErr) logFailure('DriverApp:loadDriverRecord', driverErr);
     setDriverRecord(driver);
     if (driver) {
-      const { data: membership, error: memErr } = await supabase.from('org_members').select('org_id').limit(1).maybeSingle();
+      const { data: membership, error: memErr } = await supabase
+        .from('org_members')
+        .select('org_id')
+        .eq('user_id', user?.id || '')
+        .limit(1)
+        .maybeSingle();
       if (memErr) logFailure('DriverApp:loadDriverRecord:membership', memErr);
       if (membership) {
         setOrgId(membership.org_id);
@@ -910,6 +916,11 @@ export default function DriverApp() {
               <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
                 {location ? 'GPS Active' : 'Getting GPS...'}
               </span>
+              {driverData?.adminPreview && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(201,168,76,0.14)', color: '#c9a84c' }}>
+                  ADMIN TEST DRIVER
+                </span>
+              )}
             </div>
           </div>
         </div>

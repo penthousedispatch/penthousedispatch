@@ -550,7 +550,7 @@ function PendingActionsPanel({ pendingActions, onApprove, onReject }) {
 }
 
 export default function BotTeamPanel() {
-  const { org, user, profile, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadDrivers, loadTrips, isPlatformOwner } = useApp();
+  const { org, user, profile, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadDrivers, loadTrips, isPlatformOwner, role } = useApp();
   const [botEnabled, setBotEnabled] = useState({
     sentry_bot: false,
     scheduler_bot: false,
@@ -612,7 +612,7 @@ export default function BotTeamPanel() {
         return;
       }
 
-      if (isPlatformOwner) {
+      if (role === 'admin' || isPlatformOwner) {
         try {
           const platformOrg = await ensurePlatformAdminOrg(user);
           if (platformOrg?.id) {
@@ -657,6 +657,21 @@ export default function BotTeamPanel() {
         return;
       }
 
+      const { data: latestSchedulerRow } = await supabase
+        .from('auto_scheduler_config')
+        .select('org_id')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestSchedulerRow?.org_id) {
+        if (mounted) {
+          setResolvedOrgId(latestSchedulerRow.org_id);
+          setResolvingOrgId(false);
+        }
+        return;
+      }
+
       const { data: fallbackOrg } = await supabase
         .from('organizations')
         .select('id')
@@ -674,7 +689,7 @@ export default function BotTeamPanel() {
     return () => {
       mounted = false;
     };
-  }, [org?.id, user?.id, isPlatformOwner]);
+  }, [org?.id, user?.id, isPlatformOwner, role]);
 
   useEffect(() => {
     let active = true;
