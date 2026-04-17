@@ -7,6 +7,10 @@ import { DEFAULT_BILLING_RATE_PER_MILE, syncCompletedTripBilling } from '../util
 import { normalizeAppRole } from '../lib/roles';
 
 const AppContext = createContext(null);
+const PLATFORM_OWNER_EMAILS = new Set([
+  'frankny84@gmail.com',
+  'thepenthousebrandcorp@gmail.com',
+]);
 
 export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -105,6 +109,10 @@ export function AppProvider({ children }) {
     }
 
     const email = (u?.email || '').trim().toLowerCase();
+
+    if (email && PLATFORM_OWNER_EMAILS.has(email)) {
+      return { role: 'admin', companyId: null };
+    }
 
     const adminMembership = await fetchAdminMembership(u.id);
 
@@ -284,12 +292,14 @@ export function AppProvider({ children }) {
 
       let prof = await fetchProfileWithRetry(u.id);
       const adminMembership = await fetchAdminMembership(u.id);
+      const normalizedEmail = (u?.email || '').trim().toLowerCase();
+      const isPlatformOwnerEmail = normalizedEmail && PLATFORM_OWNER_EMAILS.has(normalizedEmail);
 
       if (!prof) {
         prof = await ensureFallbackProfile(u);
       }
 
-      if (adminMembership?.org_id && normalizeAppRole(prof?.role) !== 'admin') {
+      if ((isPlatformOwnerEmail || adminMembership?.org_id) && normalizeAppRole(prof?.role) !== 'admin') {
         prof = {
           ...(prof || {
             id: u.id,
