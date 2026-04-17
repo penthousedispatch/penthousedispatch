@@ -79,6 +79,18 @@ export function AppProvider({ children }) {
 
     const email = (u?.email || '').trim().toLowerCase();
 
+    const adminMembershipResult = await supabase
+      .from('org_members')
+      .select('role, org_id')
+      .eq('user_id', u.id)
+      .in('role', ['admin', 'superadmin'])
+      .limit(1)
+      .maybeSingle();
+
+    if (adminMembershipResult.data?.org_id) {
+      return { role: 'admin', companyId: null };
+    }
+
     const ownerCompanyResult = await supabase
       .from('companies')
       .select('id, company_name')
