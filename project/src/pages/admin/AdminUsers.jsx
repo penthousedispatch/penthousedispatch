@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useApp } from '../../context/AppContext';
 import { Users, ShieldCheck, RefreshCw } from 'lucide-react';
 
 const ROLES = ['admin', 'company', 'driver'];
 
 export default function AdminUsers() {
+  const { isPlatformOwner } = useApp();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
@@ -19,6 +21,7 @@ export default function AdminUsers() {
   }
 
   async function updateRole(userId, newRole) {
+    if (newRole === 'admin' && !isPlatformOwner) return;
     setSaving(userId);
     await supabase.from('profiles').update({ role: newRole }).eq('id', userId);
     setSaving(null);
@@ -38,6 +41,17 @@ export default function AdminUsers() {
           <button onClick={loadUsers} className="btn-ghost px-3 py-2 flex items-center gap-1.5 text-sm">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
+        </div>
+
+        <div className="rounded-xl p-4 mb-5" style={{ background: isPlatformOwner ? 'rgba(0,229,160,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${isPlatformOwner ? 'rgba(0,229,160,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
+          <p className="text-sm font-600 mb-1" style={{ color: isPlatformOwner ? '#00e5a0' : '#f59e0b', fontWeight: 600 }}>
+            {isPlatformOwner ? 'Owner Admin Controls Enabled' : 'Approval-Gated Admin Mode'}
+          </p>
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
+            {isPlatformOwner
+              ? 'Only the platform owner can promote another user into an admin account.'
+              : 'You can review users, but only the platform owner can create or promote admin accounts.'}
+          </p>
         </div>
 
         {loading ? (
@@ -65,7 +79,7 @@ export default function AdminUsers() {
                   <select
                     value={user.role === 'dispatcher' ? 'company' : (user.role || 'company')}
                     onChange={e => updateRole(user.id, e.target.value)}
-                    disabled={saving === user.id}
+                    disabled={saving === user.id || (!isPlatformOwner && user.role === 'admin')}
                     className="text-xs py-1.5 pl-2 pr-6"
                     style={{
                       background: `${roleColor[user.role] || '#c9a84c'}15`,
@@ -75,7 +89,7 @@ export default function AdminUsers() {
                       fontWeight: 600,
                     }}
                   >
-                    {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                    {ROLES.filter(r => isPlatformOwner || r !== 'admin').map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                 </div>
               </div>

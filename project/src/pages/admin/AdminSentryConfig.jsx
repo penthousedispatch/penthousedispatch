@@ -82,7 +82,7 @@ function HeaderRow({ label, value, mask = false, onCopy }) {
 }
 
 export default function AdminSentryConfig() {
-  const { sentryConfig, setSentryConfig } = useApp();
+  const { sentryConfig, setSentryConfig, isPlatformOwner } = useApp();
 
   const [form, setForm] = useState({
     id: null,
@@ -179,6 +179,7 @@ export default function AdminSentryConfig() {
 
   async function handleSave(e) {
     e.preventDefault();
+    if (!isPlatformOwner) return;
     setSaving(true);
     setSaved(false);
     setTestResult(null);
@@ -331,6 +332,14 @@ export default function AdminSentryConfig() {
         </div>
 
         <form onSubmit={handleSave} className="space-y-4">
+          {!isPlatformOwner && (
+            <div className="rounded-xl p-4" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+              <p className="text-sm font-600 mb-1" style={{ color: '#f59e0b', fontWeight: 600 }}>Owner Approval Required</p>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                You can review Sentry settings, but only the platform owner admin can save webhook, provider, or sandbox credential changes.
+              </p>
+            </div>
+          )}
 
           {/* Connection */}
           <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -632,7 +641,7 @@ export default function AdminSentryConfig() {
               {testing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
               Test Connection
             </button>
-            <button type="submit" disabled={saving} className="btn-gold flex items-center gap-2 px-5 py-2.5 text-sm">
+            <button type="submit" disabled={saving || !isPlatformOwner} className="btn-gold flex items-center gap-2 px-5 py-2.5 text-sm">
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
               {saved ? 'Saved!' : saving ? 'Saving...' : 'Save Config'}
             </button>

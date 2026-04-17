@@ -15,7 +15,7 @@ const STATUS_COLORS = {
 
 export default function AdminCompanies() {
   const navigate = useNavigate();
-  const { setAdminPreviewCompany } = useApp();
+  const { setAdminPreviewCompany, isPlatformOwner } = useApp();
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
@@ -39,6 +39,7 @@ export default function AdminCompanies() {
   }
 
   async function handleApprove(company) {
+    if (!isPlatformOwner) return;
     setSaving(true);
     await supabase.from('companies').update({
       is_approved: true,
@@ -55,6 +56,7 @@ export default function AdminCompanies() {
   }
 
   async function handleReject(company) {
+    if (!isPlatformOwner) return;
     setSaving(true);
     await supabase.from('companies').update({
       is_approved: false,
@@ -69,11 +71,13 @@ export default function AdminCompanies() {
   }
 
   async function handleSuspend(company) {
+    if (!isPlatformOwner) return;
     await supabase.from('companies').update({ is_suspended: !company.is_suspended, updated_at: new Date().toISOString() }).eq('id', company.id);
     await loadCompanies();
   }
 
   async function handleSaveCompanyEdits() {
+    if (!isPlatformOwner || !selected?.id) return;
     if (!selected?.id) return;
     setSaving(true);
     await supabase.from('companies').update({
@@ -107,6 +111,15 @@ export default function AdminCompanies() {
           <h1 className="text-xl font-700 mb-1" style={{ fontWeight: 700, color: '#c9a84c' }}>Companies</h1>
           <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>Manage company onboarding, approvals, and access</p>
         </div>
+
+        {!isPlatformOwner && (
+          <div className="rounded-xl p-4 mb-5" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            <p className="text-sm font-600 mb-1" style={{ color: '#f59e0b', fontWeight: 600 }}>Owner Approval Required</p>
+            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
+              You can review subscriber companies, but approving, rejecting, suspending, or editing company data requires the platform owner admin.
+            </p>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-4 mb-6">
           {[
@@ -251,7 +264,7 @@ export default function AdminCompanies() {
             <div className="flex gap-3 px-5 pb-5">
               <button
                 onClick={handleSaveCompanyEdits}
-                disabled={saving}
+                disabled={saving || !isPlatformOwner}
                 className="px-4 py-2.5 rounded-xl text-sm font-600"
                 style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.3)', color: '#c9a84c', fontWeight: 600 }}
               >
@@ -259,7 +272,7 @@ export default function AdminCompanies() {
               </button>
               <button
                 onClick={() => handleReject(selected)}
-                disabled={saving}
+                disabled={saving || !isPlatformOwner}
                 className="flex-1 py-2.5 rounded-xl text-sm font-600"
                 style={{ background: 'rgba(255,71,87,0.1)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontWeight: 600 }}
               >
@@ -267,7 +280,7 @@ export default function AdminCompanies() {
               </button>
               <button
                 onClick={() => handleApprove(selected)}
-                disabled={saving}
+                disabled={saving || !isPlatformOwner}
                 className="flex-1 py-2.5 rounded-xl text-sm font-600"
                 style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.3)', color: '#00e5a0', fontWeight: 600 }}
               >

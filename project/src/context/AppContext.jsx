@@ -969,6 +969,8 @@ export function AppProvider({ children }) {
     supabase,
     role: normalizedRole,
     isAdmin: normalizedRole === 'admin',
+    isPlatformOwner: normalizedRole === 'admin' && PLATFORM_OWNER_EMAILS.has((user?.email || '').trim().toLowerCase()),
+    requiresOwnerApproval: normalizedRole === 'admin' && !PLATFORM_OWNER_EMAILS.has((user?.email || '').trim().toLowerCase()),
     isCompany: isCompanyRole,
     isDispatcher: isCompanyRole || normalizedRole === 'admin',
   };

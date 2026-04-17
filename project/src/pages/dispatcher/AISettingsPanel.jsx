@@ -142,7 +142,7 @@ function Toggle({ value, onChange, color = '#c9a84c', disabled = false }) {
 }
 
 export default function AISettingsPanel() {
-  const { org } = useApp();
+  const { org, isPlatformOwner, role } = useApp();
   const [form, setForm] = useState(DEFAULT_FORM);
   const [botProviderConfigs, setBotProviderConfigs] = useState(DEFAULT_BOT_PROVIDER_CONFIGS);
   const [showKey, setShowKey] = useState(false);
@@ -230,6 +230,7 @@ export default function AISettingsPanel() {
 
   async function handleSave() {
     if (!org?.id) return;
+    if (role === 'admin' && !isPlatformOwner) return;
     setSaving(true);
     const payload = {
       provider: form.provider,
@@ -378,6 +379,15 @@ export default function AISettingsPanel() {
           <h2 className="text-base mb-1" style={{ fontWeight: 700 }}>AI Configuration</h2>
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Configure the AI engine that powers driver motivation, scheduling, and autonomous bots</p>
         </div>
+
+        {role === 'admin' && !isPlatformOwner && (
+          <div className="mb-5 rounded-xl p-4" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            <p className="text-sm font-600 mb-1" style={{ color: '#f59e0b', fontWeight: 600 }}>Owner Approval Required</p>
+            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
+              You can review AI and bot settings, but only the platform owner admin can save live platform AI changes.
+            </p>
+          </div>
+        )}
 
         <div className="mb-5 p-3 rounded-xl flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
           <div className="flex gap-1.5 flex-wrap">
@@ -753,7 +763,7 @@ export default function AISettingsPanel() {
           )}
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || (role === 'admin' && !isPlatformOwner)}
             className="btn-gold flex items-center gap-2 py-2.5 px-5 flex-1"
           >
             {saved ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
