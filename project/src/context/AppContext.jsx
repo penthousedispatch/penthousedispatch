@@ -4,6 +4,7 @@ import { sentryApi } from '../lib/sentryApi';
 import { handleSupabaseError, logFailure, toastError } from '../utils/errorHandler';
 import { runAutoScheduler } from '../utils/autoScheduler';
 import { DEFAULT_BILLING_RATE_PER_MILE, syncCompletedTripBilling } from '../utils/billingAutomation';
+import { normalizeAppRole } from '../lib/roles';
 
 const AppContext = createContext(null);
 
@@ -26,8 +27,9 @@ export function AppProvider({ children }) {
   const billingSyncRef = useRef(0);
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
-  const activeCompany = profile?.role === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
-  const isCompanyRole = profile?.role === 'company' || profile?.role === 'dispatcher';
+  const normalizedRole = normalizeAppRole(profile?.role);
+  const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
+  const isCompanyRole = normalizedRole === 'company';
 
   async function fetchLatestSentryConfig() {
     const { data, error } = await supabase
@@ -82,7 +84,9 @@ export function AppProvider({ children }) {
       if (profErr) logFailure('loadUserData:profiles', profErr);
       setProfile(prof);
 
-      if (prof?.role === 'company' || prof?.role === 'dispatcher') {
+      const normalizedProfRole = normalizeAppRole(prof?.role);
+
+      if (normalizedProfRole === 'company') {
         let comp = null;
         let compErr = null;
 
@@ -113,7 +117,7 @@ export function AppProvider({ children }) {
           setOrg(membership.organizations);
           orgIdRef.current = membership.org_id;
           configureSentry(membership.organizations);
-          if (prof?.role === 'dispatcher') {
+          if (normalizedProfRole === 'company') {
             await loadDrivers();
             await loadTrips();
             await loadAssignments();
@@ -122,7 +126,7 @@ export function AppProvider({ children }) {
             setTrips([]);
             setAssignments([]);
           }
-        } else if (prof?.role === 'admin') {
+        } else if (normalizedProfRole === 'admin') {
           setDrivers([]);
           setTrips([]);
           setAssignments([]);
@@ -162,7 +166,7 @@ export function AppProvider({ children }) {
           const scopedCompanyId =
             isCompanyRole
               ? activeCompany?.id || null
-              : profile?.role === 'admin'
+              : normalizedRole === 'admin'
                 ? adminPreviewCompany?.id || null
                 : null;
 
@@ -253,10 +257,10 @@ export function AppProvider({ children }) {
       options.companyId ||
       (isCompanyRole
         ? activeCompany?.id
-        : profile?.role === 'admin'
+        : normalizedRole === 'admin'
           ? adminPreviewCompany?.id
           : null);
-    if (profile?.role === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
+    if (normalizedRole === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
       setDrivers([]);
       return [];
     }
@@ -276,10 +280,10 @@ export function AppProvider({ children }) {
       options.companyId ||
       (isCompanyRole
         ? activeCompany?.id
-        : profile?.role === 'admin'
+        : normalizedRole === 'admin'
           ? adminPreviewCompany?.id
           : null);
-    if (profile?.role === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
+    if (normalizedRole === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
       setTrips([]);
       return [];
     }
@@ -307,10 +311,10 @@ export function AppProvider({ children }) {
       options.companyId ||
       (isCompanyRole
         ? activeCompany?.id
-        : profile?.role === 'admin'
+        : normalizedRole === 'admin'
           ? adminPreviewCompany?.id
           : null);
-    if (profile?.role === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
+    if (normalizedRole === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
       setAssignments([]);
       return [];
     }
@@ -347,7 +351,7 @@ export function AppProvider({ children }) {
     setAssignments(data || []);
 
     const now = Date.now();
-    if (['admin', 'dispatcher'].includes(profile?.role) && (now - billingSyncRef.current) > 120000) {
+    if (['admin', 'company'].includes(normalizedRole) && (now - billingSyncRef.current) > 120000) {
       billingSyncRef.current = now;
       supabase
         .from('auto_scheduler_config')
@@ -400,7 +404,7 @@ export function AppProvider({ children }) {
     const scopedCompanyId =
       isCompanyRole
         ? activeCompany?.id || null
-        : profile?.role === 'admin'
+        : normalizedRole === 'admin'
           ? adminPreviewCompany?.id || null
           : null;
 
@@ -455,7 +459,7 @@ export function AppProvider({ children }) {
     const scopedCompanyId =
       isCompanyRole
         ? activeCompany?.id || null
-        : profile?.role === 'admin'
+        : normalizedRole === 'admin'
           ? adminPreviewCompany?.id || null
           : null;
 
@@ -515,7 +519,7 @@ export function AppProvider({ children }) {
     schedRunningRef.current = true;
     try {
       const { data: cfg } = await supabase.from('auto_scheduler_config').select('*').maybeSingle();
-      if ((isCompanyRole || profile?.role === 'admin') && activeCompany) {
+      if ((isCompanyRole || normalizedRole === 'admin') && activeCompany) {
         if (activeCompany.ai_routing_enabled === false || activeCompany.ai_auto_assign_enabled === false) return;
       }
       if (!cfg?.enabled || !cfg?.auto_assign) return;
@@ -526,7 +530,7 @@ export function AppProvider({ children }) {
         .eq('is_active', true)
         .in('status', ['online', 'on_trip']);
 
-      if ((isCompanyRole || profile?.role === 'admin') && activeCompany?.id) {
+      if ((isCompanyRole || normalizedRole === 'admin') && activeCompany?.id) {
         driverQuery = driverQuery.eq('company_id', activeCompany.id);
       }
 
@@ -538,14 +542,14 @@ export function AppProvider({ children }) {
         .eq('status', 'available')
         .order('loaded_at', { ascending: true });
 
-      if ((isCompanyRole || profile?.role === 'admin') && activeCompany?.id) {
+      if ((isCompanyRole || normalizedRole === 'admin') && activeCompany?.id) {
         tripQuery = tripQuery.eq('company_id', activeCompany.id);
       }
 
       const { data: availableTrips } = await tripQuery;
 
       let currentAssignments = [];
-      if ((isCompanyRole || profile?.role === 'admin') && activeCompany?.id) {
+      if ((isCompanyRole || normalizedRole === 'admin') && activeCompany?.id) {
         const companyDriverIds = (currentDrivers || []).map(driver => driver.id).filter(Boolean);
         if (companyDriverIds.length) {
           const { data } = await supabase
@@ -627,7 +631,7 @@ export function AppProvider({ children }) {
         scheduleLiveRefresh('assignments', loadAssignments);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'companies' }, () => {
-        if (isCompanyRole || profile?.role === 'admin') {
+        if (isCompanyRole || normalizedRole === 'admin') {
           scheduleLiveRefresh('company', () => loadUserData(user), 500);
         }
       })
@@ -653,7 +657,7 @@ export function AppProvider({ children }) {
       Object.values(liveRefreshTimersRef.current).forEach(timer => clearTimeout(timer));
       liveRefreshTimersRef.current = {};
     };
-  }, [user?.id, profile?.role, activeCompany?.id, adminPreviewCompany?.id]);
+  }, [user?.id, normalizedRole, activeCompany?.id, adminPreviewCompany?.id]);
 
   const value = {
     user, profile, org, company: activeCompany, platformCompany: company, adminPreviewCompany, drivers, trips, assignments, schedules,
@@ -664,10 +668,10 @@ export function AppProvider({ children }) {
     runAISchedulerPipeline,
     setSchedules, setSentryConfig, setCompany, setAdminPreviewCompany,
     supabase,
-    role: profile?.role || null,
-    isAdmin: profile?.role === 'admin',
+    role: normalizedRole,
+    isAdmin: normalizedRole === 'admin',
     isCompany: isCompanyRole,
-    isDispatcher: isCompanyRole || profile?.role === 'admin',
+    isDispatcher: isCompanyRole || normalizedRole === 'admin',
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

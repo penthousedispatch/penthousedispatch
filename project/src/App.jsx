@@ -4,7 +4,6 @@ import { AppProvider, useApp } from './context/AppContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { supabase } from './lib/supabase';
 import AuthPage from './pages/AuthPage';
-import DispatcherDashboard from './pages/dispatcher/DispatcherDashboard';
 import DriverApp from './pages/driver/DriverApp';
 import RiderTracking from './pages/rider/RiderTracking';
 import LoadingScreen from './components/ui/LoadingScreen';
@@ -14,14 +13,11 @@ import CompanyOnboarding from './pages/company/CompanyOnboarding';
 import ToastContainer from './components/ui/ToastContainer';
 import ChangeMyPassword from './pages/ChangeMyPassword'; 
 import { LogOut, RefreshCw } from 'lucide-react';
+import { normalizeAppRole } from './lib/roles';
 
 function defaultPathForRole(role) {
   if (role === 'admin') return '/admin/ops';
   return '/';
-}
-
-function normalizeAppRole(role) {
-  return role === 'dispatcher' ? 'company' : role;
 }
 
 function MissingProfileScreen() {
@@ -52,6 +48,88 @@ function MissingProfileScreen() {
       </div>
     </div>
   );
+}
+
+function UnsupportedRoleScreen({ rawRole }) {
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+  }
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center px-4" style={{ background: '#07090d' }}>
+      <div
+        className="w-full max-w-md rounded-2xl p-6 text-center"
+        style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+      >
+        <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.25)' }}>
+          <RefreshCw className="w-6 h-6" style={{ color: '#ff4757' }} />
+        </div>
+        <p className="text-lg font-semibold mb-2" style={{ color: '#ff4757' }}>Account Role Needs Attention</p>
+        <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+          Your account signed in successfully, but the app could not map its role to a supported dashboard.
+        </p>
+        <p className="text-xs mb-5" style={{ color: 'rgba(255,255,255,0.38)' }}>
+          Current saved role: {rawRole || 'unknown'}
+        </p>
+        <button
+          onClick={handleSignOut}
+          className="btn-gold w-full py-3 flex items-center justify-center gap-2"
+        >
+          <LogOut className="w-4 h-4" />
+          Sign Out and Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  async handleSignOut() {
+    await supabase.auth.signOut();
+    this.setState({ error: null });
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="fixed inset-0 flex items-center justify-center px-4" style={{ background: '#07090d' }}>
+          <div
+            className="w-full max-w-lg rounded-2xl p-6 text-center"
+            style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+          >
+            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.25)' }}>
+              <RefreshCw className="w-6 h-6" style={{ color: '#ff4757' }} />
+            </div>
+            <p className="text-lg font-semibold mb-2" style={{ color: '#ff4757' }}>App Recovery Screen</p>
+            <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+              The app hit a runtime error after loading. Sign out and retry so we can recover your session cleanly.
+            </p>
+            <p className="text-xs mb-5" style={{ color: 'rgba(255,255,255,0.38)', wordBreak: 'break-word' }}>
+              {this.state.error?.message || 'Unknown runtime error'}
+            </p>
+            <button
+              onClick={() => this.handleSignOut()}
+              className="btn-gold w-full py-3 flex items-center justify-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out and Retry
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 function AppRoutes() {
@@ -114,6 +192,10 @@ function AppRoutes() {
   const needsOnboarding = role === 'company' && !org && !company;
   const defaultRolePath = defaultPathForRole(role);
 
+  if (!role) {
+    return <UnsupportedRoleScreen rawRole={profile?.role} />;
+  }
+
   return (
     <Routes>
       <Route path="/driver" element={<DriverApp />} />
@@ -129,9 +211,7 @@ function AppRoutes() {
         <Route path="/*" element={<Navigate to="/company/onboarding" replace />} />
       )}
 
-      {(!role) && !needsOnboarding && (
-        <Route path="/*" element={<DispatcherDashboard />} />
-      )}
+      {!needsOnboarding && <Route path="/*" element={<Navigate to={defaultRolePath} replace />} />}
     </Routes>
   );
 }
@@ -140,8 +220,10 @@ export default function App() {
   return (
     <ThemeProvider>
       <AppProvider>
-        <AppRoutes />
-        <ToastContainer />
+        <AppErrorBoundary>
+          <AppRoutes />
+          <ToastContainer />
+        </AppErrorBoundary>
       </AppProvider>
     </ThemeProvider>
   );
