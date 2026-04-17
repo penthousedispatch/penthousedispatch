@@ -5,7 +5,8 @@ export default function TripBottomSheet({
   state, trip, open, onToggle,
   onRequestRides, onAccept, onReject,
   onArrive, onConfirmPickup, onNoShow, onComplete,
-  driverData, earnings, countdown, pickupArrived, waitRemaining, waitTargetMins,
+  driverData, earnings, ridePreferences, onToggleShortTrips, onTogglePriority, onToggleSharedRide,
+  countdown, pickupArrived, waitRemaining, waitTargetMins,
 }) {
   const [confirmingComplete, setConfirmingComplete] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -85,14 +86,22 @@ export default function TripBottomSheet({
 
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  ['Short Trips', '2-4 mi'],
-                  ['Priority', 'Nearby chain'],
-                  ['Shared Ride', 'Same direction'],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-xl px-3 py-2.5 text-center" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  ['Short Trips', ridePreferences?.shortTripPreference || '2-4 mi', onToggleShortTrips],
+                  ['Priority', ridePreferences?.priorityPreference || 'Nearby chain', onTogglePriority],
+                  ['Shared Ride', ridePreferences?.sharedRidePreference || 'Same direction', onToggleSharedRide],
+                ].map(([label, value, handler]) => (
+                  <button
+                    key={label}
+                    onClick={handler}
+                    className="rounded-xl px-3 py-2.5 text-center transition-all"
+                    style={{
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
                     <p className="text-[10px] uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.35)' }}>{label}</p>
                     <p className="text-xs font-700 mt-1" style={{ color: '#e5e7eb', fontWeight: 700 }}>{value}</p>
-                  </div>
+                  </button>
                 ))}
               </div>
 

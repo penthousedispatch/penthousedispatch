@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Volume2, Pause, Square } from 'lucide-react';
 import { useDriverVoiceGuide } from '../../lib/driverVoiceGuide';
+import { getGuideAudioSrc, useGuideAudioPlayback } from '../../lib/guideAudio';
 
 const SLIDES = [
   {
@@ -33,34 +34,14 @@ export default function OnboardingSlides({ onDone }) {
     [slide]
   );
   const voice = useDriverVoiceGuide(narration);
+  const uploadedAudio = useGuideAudioPlayback(getGuideAudioSrc('driver_onboarding'));
+  const usingUploadedAudio = uploadedAudio.available;
+  const audioControl = usingUploadedAudio ? uploadedAudio : voice;
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ background: '#07090d' }}>
       <div className="flex items-center justify-between p-4">
-        <div className="flex items-center gap-2">
-          {voice.supported && (
-            <>
-              <button
-                onClick={voice.toggle}
-                className="px-3 py-1.5 rounded-full text-xs flex items-center gap-1.5"
-                style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
-              >
-                {voice.speaking && !voice.paused ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                {voice.speaking ? (voice.paused ? 'Resume voice' : 'Pause voice') : 'Listen'}
-              </button>
-              {voice.speaking && (
-                <button
-                  onClick={voice.stop}
-                  className="px-3 py-1.5 rounded-full text-xs flex items-center gap-1.5"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.72)' }}
-                >
-                  <Square className="w-3.5 h-3.5" />
-                  Stop
-                </button>
-              )}
-            </>
-          )}
-        </div>
+        <div />
         <button onClick={onDone} style={{ color: 'rgba(255,255,255,0.4)', background: 'none', border: 'none', fontSize: 14 }}>Skip</button>
       </div>
 
@@ -74,10 +55,36 @@ export default function OnboardingSlides({ onDone }) {
         <div className="text-center">
           <h2 className="text-2xl font-800 mb-3" style={{ fontWeight: 800 }}>{slide.title}</h2>
           <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 15, lineHeight: 1.6 }}>{slide.desc}</p>
-          {voice.supported && (
-            <p className="mt-3 text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
-              Voice helper reads each step aloud for new drivers.
-            </p>
+          {(usingUploadedAudio || voice.supported) && (
+            <div className="mt-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.16)' }}>
+              <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                {usingUploadedAudio
+                  ? 'Onboarding audio is available here for drivers who prefer to listen.'
+                  : 'Voice helper can read this onboarding step aloud.'}
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <button
+                  onClick={audioControl.toggle}
+                  className="px-3 py-1.5 rounded-full text-xs flex items-center gap-1.5"
+                  style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
+                >
+                  {audioControl.playing && !audioControl.paused ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                  {audioControl.playing || audioControl.paused
+                    ? (audioControl.paused ? 'Resume audio' : 'Pause audio')
+                    : (usingUploadedAudio ? 'Play onboarding audio' : 'Listen')}
+                </button>
+                {(audioControl.playing || audioControl.paused) && (
+                  <button
+                    onClick={audioControl.stop}
+                    className="px-3 py-1.5 rounded-full text-xs flex items-center gap-1.5"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.72)' }}
+                  >
+                    <Square className="w-3.5 h-3.5" />
+                    Stop
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
         <div className="flex gap-2">

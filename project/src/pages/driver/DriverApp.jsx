@@ -21,6 +21,12 @@ import DriverZonePreferences from '../../components/drivers/DriverZonePreference
 import { formatServiceZone, normalizePreferredZones } from '../../lib/serviceZones';
 import { useApp } from '../../context/AppContext';
 
+const DEFAULT_RIDE_PREFERENCES = {
+  shortTripPreference: '2-4 mi',
+  priorityPreference: 'Nearby chain',
+  sharedRidePreference: 'Same direction',
+};
+
 function DriverAccessChooser({ role, company, onSelectDriver }) {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -189,6 +195,7 @@ export default function DriverApp() {
   const [showZonePreferences, setShowZonePreferences] = useState(false);
   const [zoneSaving, setZoneSaving] = useState(false);
   const [zoneSavedMessage, setZoneSavedMessage] = useState('');
+  const [ridePreferences, setRidePreferences] = useState(DEFAULT_RIDE_PREFERENCES);
   const [driverWaitMins, setDriverWaitMins] = useState(5);
   const [waitRemaining, setWaitRemaining] = useState(null);
   const watchRef = useRef(null);
@@ -219,6 +226,29 @@ export default function DriverApp() {
       if (pickupWaitRef.current) clearInterval(pickupWaitRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!driverData?.id) return;
+    try {
+      const stored = localStorage.getItem(`pd_ride_preferences:${driverData.id}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setRidePreferences({
+          ...DEFAULT_RIDE_PREFERENCES,
+          ...parsed,
+        });
+        return;
+      }
+    } catch {}
+    setRidePreferences(DEFAULT_RIDE_PREFERENCES);
+  }, [driverData?.id]);
+
+  useEffect(() => {
+    if (!driverData?.id) return;
+    try {
+      localStorage.setItem(`pd_ride_preferences:${driverData.id}`, JSON.stringify(ridePreferences));
+    } catch {}
+  }, [driverData?.id, ridePreferences]);
 
   function launchDriverSession(data) {
     setLoggedIn(true);
@@ -862,11 +892,40 @@ export default function DriverApp() {
       driverId: driverData.id,
       driverName: driverData.name,
       coords: location,
+      preferences: {
+        shortTripPreference: ridePreferences.shortTripPreference,
+        priorityPreference: ridePreferences.priorityPreference,
+        sharedRidePreference: ridePreferences.sharedRidePreference,
+      },
       requestedAt: Date.now(),
       status: 'pending',
     });
     setSheetState('suggestions');
     setTimeout(() => setSheetState('waiting'), 30000);
+  }
+
+  function cycleShortTripPreference() {
+    setRidePreferences(prev => ({
+      ...prev,
+      shortTripPreference: prev.shortTripPreference === '2-4 mi' ? 'Any distance' : '2-4 mi',
+    }));
+  }
+
+  function cyclePriorityPreference() {
+    const order = ['Nearby chain', 'Closest pickup', 'Highest payout'];
+    const currentIndex = order.indexOf(ridePreferences.priorityPreference);
+    const nextValue = order[(currentIndex + 1 + order.length) % order.length];
+    setRidePreferences(prev => ({
+      ...prev,
+      priorityPreference: nextValue,
+    }));
+  }
+
+  function cycleSharedRidePreference() {
+    setRidePreferences(prev => ({
+      ...prev,
+      sharedRidePreference: prev.sharedRidePreference === 'Same direction' ? 'Shared rides off' : 'Same direction',
+    }));
   }
 
   const statusMeta = {
@@ -1074,6 +1133,10 @@ export default function DriverApp() {
         onComplete={completeTrip}
         driverData={driverData}
         earnings={displayEarnings}
+        ridePreferences={ridePreferences}
+        onToggleShortTrips={cycleShortTripPreference}
+        onTogglePriority={cyclePriorityPreference}
+        onToggleSharedRide={cycleSharedRidePreference}
         countdown={countdown}
         pickupArrived={Boolean(currentTrip?.arrivedAt)}
         waitRemaining={waitRemaining}

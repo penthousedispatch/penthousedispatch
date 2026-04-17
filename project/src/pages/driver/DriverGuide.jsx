@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { X, ChevronRight, ChevronDown, AlertTriangle, MessageCircle, Coffee, DollarSign, Navigation, CheckCircle, Zap, Clock, Volume2, Pause, Square } from 'lucide-react';
 import { useDriverVoiceGuide } from '../../lib/driverVoiceGuide';
+import { getGuideAudioSrc, useGuideAudioPlayback } from '../../lib/guideAudio';
 
 const SECTIONS = [
   {
@@ -142,6 +143,9 @@ export default function DriverGuide({ onClose }) {
     }).join(' ');
   }, []);
   const voice = useDriverVoiceGuide(guideNarration, { rate: 0.96 });
+  const uploadedAudio = useGuideAudioPlayback(getGuideAudioSrc('driver_guide'));
+  const usingUploadedAudio = uploadedAudio.available;
+  const audioControl = usingUploadedAudio ? uploadedAudio : voice;
 
   const filtered = search.trim().length > 1
     ? SECTIONS.map(s => ({
@@ -160,28 +164,6 @@ export default function DriverGuide({ onClose }) {
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>How to use the Penthouse app</p>
         </div>
         <div className="flex items-center gap-2">
-          {voice.supported && (
-            <>
-              <button
-                onClick={voice.toggle}
-                className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
-                style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
-              >
-                {voice.speaking && !voice.paused ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                {voice.speaking ? (voice.paused ? 'Resume guide' : 'Pause guide') : 'Listen to guide'}
-              </button>
-              {voice.speaking && (
-                <button
-                  onClick={voice.stop}
-                  className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.72)' }}
-                >
-                  <Square className="w-3.5 h-3.5" />
-                  Stop
-                </button>
-              )}
-            </>
-          )}
           <button
             onClick={onClose}
             className="w-9 h-9 flex items-center justify-center rounded-full"
@@ -193,10 +175,36 @@ export default function DriverGuide({ onClose }) {
       </div>
 
       <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        {voice.supported && (
-          <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.35)' }}>
-            Perry voice helper can read the full guide aloud while drivers follow along.
-          </p>
+        {(usingUploadedAudio || voice.supported) && (
+          <div className="mb-3 rounded-2xl px-4 py-3" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.16)' }}>
+            <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.55)' }}>
+              {usingUploadedAudio
+                ? 'Guide audio is available here so drivers can listen along if reading English is difficult.'
+                : 'Perry voice helper can read the guide aloud from here while drivers follow along.'}
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={audioControl.toggle}
+                className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
+              >
+                {audioControl.playing && !audioControl.paused ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                {audioControl.playing || audioControl.paused
+                  ? (audioControl.paused ? 'Resume guide' : 'Pause guide')
+                  : (usingUploadedAudio ? 'Play guide audio' : 'Listen to guide')}
+              </button>
+              {(audioControl.playing || audioControl.paused) && (
+                <button
+                  onClick={audioControl.stop}
+                  className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.72)' }}
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  Stop
+                </button>
+              )}
+            </div>
+          </div>
         )}
         <input
           type="text"
