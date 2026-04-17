@@ -14,6 +14,7 @@ import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
 function CompanyDrivers({ company }) {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     if (!company?.id) return;
@@ -25,42 +26,152 @@ function CompanyDrivers({ company }) {
   }, [company?.id]);
 
   const statusColor = { online: '#00e5a0', offline: 'rgba(255,255,255,0.3)', on_trip: '#c9a84c', break: '#f59e0b' };
+  const filteredDrivers = drivers.filter(driver => {
+    if (!search) return true;
+    const query = search.toLowerCase();
+    return [driver.full_name, driver.phone, driver.tlc_number, driver.driver_number]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(query));
+  });
+
+  const stats = React.useMemo(() => {
+    const total = drivers.length;
+    const online = drivers.filter(driver => ['online', 'on_trip'].includes(driver.status)).length;
+    const missingPhone = drivers.filter(driver => !String(driver.phone || '').trim()).length;
+    const approved = drivers.filter(driver => ['approved', 'ready'].includes(String(driver.layer2_status || '').toLowerCase())).length;
+    return { total, online, missingPhone, approved };
+  }, [drivers]);
+
+  function exportDrivers() {
+    const rows = [
+      ['#', 'Name', 'Phone', 'TLC', 'Status'],
+      ...filteredDrivers.map((driver, index) => [
+        String(index + 1).padStart(3, '0'),
+        driver.full_name || '',
+        driver.phone || '',
+        driver.tlc_number || '',
+        driver.status || 'offline',
+      ]),
+    ];
+
+    const csv = rows
+      .map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${(company?.company_name || 'company').replace(/\s+/g, '-').toLowerCase()}-drivers.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Your Drivers</h2>
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="mb-4">
+        <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Drivers</h2>
+        <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+          Company fleet visibility for dispatch, onboarding, and availability.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+        {[
+          { label: 'Total drivers', value: stats.total, hint: 'Fleet size', tone: '#e5e7eb' },
+          { label: 'Online now', value: stats.online, hint: stats.online === 0 ? 'All offline' : 'Ready for trips', tone: '#00e5a0' },
+          { label: 'Missing phone', value: stats.missingPhone, hint: stats.missingPhone ? 'Needs profile cleanup' : 'All set', tone: stats.missingPhone ? '#ff7a7a' : '#e5e7eb' },
+          { label: 'Onboarding', value: stats.approved ? 'Approved' : 'Pending', hint: `${stats.approved}/${stats.total || 0} ready`, tone: stats.approved ? '#8bd450' : '#c9a84c' },
+        ].map(card => (
+          <div key={card.label} className="rounded-2xl p-4" style={{ background: '#161819', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.45)' }}>{card.label}</p>
+            <p className="text-3xl font-700 leading-none" style={{ fontWeight: 700, color: card.tone }}>{card.value}</p>
+            <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.35)' }}>{card.hint}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl p-4" style={{ background: '#161819', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Drivers</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Filter"
+              style={{ minWidth: 160 }}
+            />
+            <button
+              onClick={exportDrivers}
+              className="px-4 py-2 rounded-xl text-sm font-600"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#e5e7eb', fontWeight: 600 }}
+            >
+              Export
+            </button>
+          </div>
+        </div>
+
       {loading ? (
         <div className="flex items-center justify-center h-40">
           <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: '#c9a84c', borderTopColor: 'transparent' }} />
         </div>
-      ) : drivers.length === 0 ? (
+      ) : filteredDrivers.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-40 rounded-xl gap-3" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
           <Users className="w-8 h-8" style={{ color: 'rgba(255,255,255,0.2)' }} />
           <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>No drivers yet</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {drivers.map(d => (
-            <div key={d.id} className="flex items-center gap-4 p-4 rounded-xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
-              {d.photo_data ? (
-                <img src={d.photo_data} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" style={{ border: '2px solid rgba(201,168,76,0.3)' }} />
-              ) : (
-                <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-700 flex-shrink-0" style={{ background: 'rgba(201,168,76,0.1)', color: '#c9a84c', fontWeight: 700 }}>
-                  {d.full_name?.charAt(0) || '?'}
+        <div className="overflow-hidden rounded-xl" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px] gap-3 px-4 py-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.42)' }}>
+            <span>#</span>
+            <span>Name</span>
+            <span>Phone</span>
+            <span>TLC</span>
+            <span>Status</span>
+          </div>
+          <div style={{ background: '#0d1117' }}>
+            {filteredDrivers.map((driver, index) => (
+              <div
+                key={driver.id}
+                className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px] gap-3 px-4 py-3 items-center"
+                style={{ borderTop: index === 0 ? 'none' : '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>{String(index + 1).padStart(3, '0')}</span>
+                <div className="flex items-center gap-3 min-w-0">
+                  {driver.photo_data ? (
+                    <img src={driver.photo_data} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-700 flex-shrink-0" style={{ background: 'rgba(190,215,255,0.14)', color: '#cfe1ff', fontWeight: 700 }}>
+                      {(driver.full_name || '?').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{driver.full_name || 'Unnamed Driver'}</p>
+                    <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.38)' }}>{driver.driver_number || 'No driver #'}</p>
+                  </div>
                 </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="font-600 text-sm" style={{ fontWeight: 600 }}>{d.full_name}</p>
-                <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>{d.phone || 'No phone'}</p>
+                <span className="text-sm" style={{ color: '#d4d4d4' }}>{driver.phone || 'Missing'}</span>
+                <span className="text-sm" style={{ color: '#d4d4d4' }}>{driver.tlc_number || 'Missing'}</span>
+                <div>
+                  <span
+                    className="inline-flex items-center px-3 py-1 rounded-full text-xs"
+                    style={{
+                      background: driver.status === 'offline' ? 'rgba(255,255,255,0.12)' : `${statusColor[driver.status] || '#c9a84c'}18`,
+                      color: driver.status === 'offline' ? '#f3f4f6' : (statusColor[driver.status] || '#c9a84c'),
+                    }}
+                  >
+                    {driver.status || 'offline'}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full" style={{ background: statusColor[d.status] || 'rgba(255,255,255,0.3)' }} />
-                <span className="text-xs" style={{ color: statusColor[d.status] || 'rgba(255,255,255,0.4)' }}>{d.status}</span>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
