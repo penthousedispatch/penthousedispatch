@@ -7,6 +7,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { getBotMemory, saveBotMemory, testAIConnection } from '../../utils/aiMotivation';
+import { ensurePlatformAdminOrg } from '../../lib/platformAdminOrg';
 
 const PROVIDERS = [
   { id: 'disabled', label: 'Disabled', icon: '🚫', desc: 'No AI features' },
@@ -184,6 +185,18 @@ export default function AISettingsPanel() {
         return;
       }
 
+      if (isPlatformOwner) {
+        try {
+          const platformOrg = await ensurePlatformAdminOrg(user);
+          if (platformOrg?.id) {
+            if (mounted) setResolvedOrgId(platformOrg.id);
+            return;
+          }
+        } catch (error) {
+          console.warn('AISettingsPanel: failed to bootstrap admin org', error);
+        }
+      }
+
       const { data: latestAiRow } = await supabase
         .from('ai_settings')
         .select('org_id')
@@ -210,7 +223,7 @@ export default function AISettingsPanel() {
     return () => {
       mounted = false;
     };
-  }, [org?.id, user?.id]);
+  }, [org?.id, user?.id, isPlatformOwner]);
 
   async function persistCoreBotFlags(nextForm) {
     if (!resolvedOrgId) return;

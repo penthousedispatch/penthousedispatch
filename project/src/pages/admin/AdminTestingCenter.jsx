@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
 import { fbSet, fbGet } from '../../lib/firebase';
 import { useApp } from '../../context/AppContext';
+import { ensurePlatformAdminOrg } from '../../lib/platformAdminOrg';
 import { CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronUp, Cpu, Play, FlaskConical, RotateCcw, RadioTower } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -18,7 +19,7 @@ const TEST_DEFS = [
 ];
 
 export default function AdminTestingCenter() {
-  const { org, user, company, adminPreviewCompany } = useApp();
+  const { org, user, company, adminPreviewCompany, isPlatformOwner } = useApp();
   const [results, setResults] = useState({});
   const [logs, setLogs] = useState({});
   const [running, setRunning] = useState(null);
@@ -54,6 +55,18 @@ export default function AdminTestingCenter() {
         return;
       }
 
+      if (isPlatformOwner) {
+        try {
+          const platformOrg = await ensurePlatformAdminOrg(user);
+          if (platformOrg?.id) {
+            if (mounted) setResolvedOrgId(platformOrg.id);
+            return;
+          }
+        } catch (error) {
+          console.warn('AdminTestingCenter: failed to bootstrap admin org', error);
+        }
+      }
+
       const { data: latestAiRow } = await supabase
         .from('ai_settings')
         .select('org_id')
@@ -80,7 +93,7 @@ export default function AdminTestingCenter() {
     return () => {
       mounted = false;
     };
-  }, [org?.id, user?.id]);
+  }, [org?.id, user?.id, isPlatformOwner]);
 
   function addLog(testId, msg, level = 'info') {
     setLogs(prev => ({

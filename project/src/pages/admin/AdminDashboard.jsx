@@ -209,30 +209,58 @@ function MobileDrawer({ open, onClose }) {
 function AdminCompanyPreview() {
   const { companyId } = useParams();
   const { loadDrivers, loadTrips, loadAssignments, setAdminPreviewCompany } = useApp();
-  const [previewCompany, setPreviewCompany] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [previewCompany, setPreviewCompany] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`admin-preview-company:${companyId}`);
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [loading, setLoading] = useState(!previewCompany);
 
   useEffect(() => {
     let mounted = true;
 
     async function loadPreviewCompany() {
-      setLoading(true);
-      const { data, error } = await supabase.from('companies').select('*').eq('id', companyId).maybeSingle();
+      if (previewCompany?.id === companyId) {
+        setAdminPreviewCompany(previewCompany);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+
+      const companyResult = await Promise.race([
+        supabase.from('companies').select('*').eq('id', companyId).maybeSingle(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Company preview lookup timed out')), 2500)
+        ),
+      ]).catch(() => ({ data: null, error: null }));
+
+      const { data, error } = companyResult || {};
       if (!mounted) return;
-      if (error || !data) {
+
+      if (data) {
+        try {
+          sessionStorage.setItem(`admin-preview-company:${companyId}`, JSON.stringify(data));
+        } catch {}
+        setPreviewCompany(data);
+        setAdminPreviewCompany(data);
+        setLoading(false);
+        Promise.all([
+          loadDrivers({ companyId: data.id }),
+          loadTrips({ companyId: data.id }),
+          loadAssignments({ companyId: data.id }),
+        ]).catch(() => {});
+        return;
+      }
+
+      if (!data && !previewCompany) {
         setPreviewCompany(null);
         setAdminPreviewCompany(null);
         setLoading(false);
         return;
       }
-      setPreviewCompany(data);
-      setAdminPreviewCompany(data);
-      setLoading(false);
-      Promise.all([
-        loadDrivers({ companyId: data.id }),
-        loadTrips({ companyId: data.id }),
-        loadAssignments({ companyId: data.id }),
-      ]).catch(() => {});
     }
 
     loadPreviewCompany();
@@ -244,7 +272,7 @@ function AdminCompanyPreview() {
       loadTrips();
       loadAssignments();
     };
-  }, [companyId, loadAssignments, loadDrivers, loadTrips, setAdminPreviewCompany]);
+  }, [companyId, loadAssignments, loadDrivers, loadTrips, previewCompany, setAdminPreviewCompany]);
 
   if (loading) {
     return <div className="h-full flex items-center justify-center" style={{ color: 'rgba(255,255,255,0.45)' }}>Loading company workspace...</div>;
@@ -254,7 +282,7 @@ function AdminCompanyPreview() {
     return <div className="h-full flex items-center justify-center" style={{ color: '#ff4757' }}>Company workspace could not be loaded.</div>;
   }
 
-  return <CompanyDashboard previewMode />;
+  return <CompanyDashboard previewMode companyOverride={previewCompany} />;
 }
 
 export default function AdminDashboard() {

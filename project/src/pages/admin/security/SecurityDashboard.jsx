@@ -52,7 +52,7 @@ export default function SecurityDashboard({ onViewThreat }) {
           )}
           {scanResult && (
             <span className="text-xs px-3 py-1.5 rounded-lg" style={{ background: 'rgba(0,229,160,0.1)', color: '#00e5a0', border: '1px solid rgba(0,229,160,0.2)' }}>
-              {scanResult.error ? scanResult.error : `Scan complete — ${scanResult.threats_created || 0} new threats`}
+              {scanResult.error || scanResult.warning || `Scan complete — ${scanResult.threats_created || 0} new threats`}
             </span>
           )}
           <button

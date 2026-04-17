@@ -98,6 +98,9 @@ export default function AdminCompanies() {
   function handleOpenDashboard(company) {
     setAdminPreviewCompany(company);
     setSelected(null);
+    try {
+      sessionStorage.setItem(`admin-preview-company:${company.id}`, JSON.stringify(company));
+    } catch {}
     window.location.assign(`/admin/company-preview/${company.id}/drivers`);
   }
 
@@ -323,7 +326,10 @@ function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
         </button>
         <a
           href={`/admin/company-preview/${company.id}/drivers`}
-          onClick={onOpenDashboard}
+          onClick={e => {
+            e.preventDefault();
+            onOpenDashboard();
+          }}
           className="px-3 py-1.5 text-xs rounded-lg"
           style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none' }}
         >

@@ -10,6 +10,7 @@ import { useApp } from '../../context/AppContext';
 import { sentryApi } from '../../lib/sentryApi';
 import { runAutoScheduler } from '../../utils/autoScheduler';
 import { getAiSettings, getBotRuntimeSettings, requestAIStructuredPlan } from '../../utils/aiMotivation';
+import { ensurePlatformAdminOrg } from '../../lib/platformAdminOrg';
 
 const SECURITY_EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-threat-research`;
 const SECURITY_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -549,7 +550,7 @@ function PendingActionsPanel({ pendingActions, onApprove, onReject }) {
 }
 
 export default function BotTeamPanel() {
-  const { org, user, profile, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadDrivers, loadTrips } = useApp();
+  const { org, user, profile, drivers, trips, assignments, refreshTripsFromSentry, checkSentryHealth, loadAssignments, loadDrivers, loadTrips, isPlatformOwner } = useApp();
   const [botEnabled, setBotEnabled] = useState({
     sentry_bot: false,
     scheduler_bot: false,
@@ -611,6 +612,21 @@ export default function BotTeamPanel() {
         return;
       }
 
+      if (isPlatformOwner) {
+        try {
+          const platformOrg = await ensurePlatformAdminOrg(user);
+          if (platformOrg?.id) {
+            if (mounted) {
+              setResolvedOrgId(platformOrg.id);
+              setResolvingOrgId(false);
+            }
+            return;
+          }
+        } catch (error) {
+          console.warn('BotTeamPanel: failed to bootstrap admin org', error);
+        }
+      }
+
       const { data: latestBotRow } = await supabase
         .from('bot_config')
         .select('org_id')
@@ -658,7 +674,7 @@ export default function BotTeamPanel() {
     return () => {
       mounted = false;
     };
-  }, [org?.id, user?.id]);
+  }, [org?.id, user?.id, isPlatformOwner]);
 
   useEffect(() => {
     let active = true;

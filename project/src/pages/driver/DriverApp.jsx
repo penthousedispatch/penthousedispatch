@@ -19,8 +19,148 @@ import IncentiveGoalToast from '../../components/drivers/IncentiveGoalToast';
 import IncentiveCelebrationOverlay from '../../components/drivers/IncentiveCelebrationOverlay';
 import DriverZonePreferences from '../../components/drivers/DriverZonePreferences';
 import { formatServiceZone, normalizePreferredZones } from '../../lib/serviceZones';
+import { useApp } from '../../context/AppContext';
+
+function DriverAccessChooser({ role, company, onSelectDriver }) {
+  const [drivers, setDrivers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sandboxCompanyId, setSandboxCompanyId] = useState(null);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadDriverOptions() {
+      setLoading(true);
+
+      const [{ data: sandboxSession }, driverResult] = await Promise.all([
+        supabase
+          .from('test_sandbox_sessions')
+          .select('test_company_id')
+          .eq('is_active', true)
+          .order('reset_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        role === 'company' && company?.id
+          ? supabase
+              .from('drivers')
+              .select('id, full_name, photo_data, tlc_number, login_username, email, is_active, status, company_id')
+              .eq('company_id', company.id)
+              .eq('is_active', true)
+              .order('full_name')
+          : supabase
+              .from('drivers')
+              .select('id, full_name, photo_data, tlc_number, login_username, email, is_active, status, company_id')
+              .eq('is_active', true)
+              .order('company_id')
+              .order('full_name'),
+      ]);
+
+      if (!active) return;
+
+      setSandboxCompanyId(sandboxSession?.test_company_id || null);
+      setDrivers(driverResult?.data || []);
+      setLoading(false);
+    }
+
+    if (role === 'admin' || role === 'company') {
+      loadDriverOptions();
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [role, company?.id]);
+
+  const filteredDrivers = drivers.filter(driver => {
+    if (!search) return true;
+    const query = search.toLowerCase();
+    return [driver.full_name, driver.email, driver.login_username, driver.tlc_number]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(query));
+  });
+
+  return (
+    <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#07090d' }}>
+      <div className="w-full max-w-2xl rounded-3xl p-6" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="mb-5">
+          <p style={{ color: '#c9a84c', fontSize: 22, fontWeight: 800 }}>
+            {role === 'admin' ? 'Admin Test Driver Access' : 'Driver App Access'}
+          </p>
+          <p className="mt-1" style={{ color: 'rgba(255,255,255,0.48)', fontSize: 13 }}>
+            {role === 'admin'
+              ? 'Open the driver app as any driver or test driver without using their password. Your admin session acts as admin test-driver access.'
+              : 'Open the driver app as one of your company drivers without using their password.'}
+          </p>
+        </div>
+
+        <div className="mb-4">
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search drivers by name, email, username, or TLC"
+            className="w-full"
+          />
+        </div>
+
+        <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+          {loading ? (
+            <div className="flex items-center justify-center h-40" style={{ color: 'rgba(255,255,255,0.45)' }}>
+              Loading drivers...
+            </div>
+          ) : filteredDrivers.length === 0 ? (
+            <div className="flex items-center justify-center h-40 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.45)' }}>
+              No drivers available to preview.
+            </div>
+          ) : (
+            filteredDrivers.map(driver => {
+              const isSandboxDriver = sandboxCompanyId && driver.company_id === sandboxCompanyId;
+              return (
+                <button
+                  key={driver.id}
+                  onClick={() => onSelectDriver(driver)}
+                  className="w-full flex items-center gap-3 p-4 rounded-2xl text-left transition-all"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+                >
+                  {driver.photo_data ? (
+                    <img src={driver.photo_data} alt="" className="w-11 h-11 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(201,168,76,0.14)', color: '#c9a84c', fontWeight: 700 }}>
+                      {driver.full_name?.charAt(0)?.toUpperCase() || 'D'}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{driver.full_name}</p>
+                      {isSandboxDriver && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(14,165,233,0.14)', color: '#0ea5e9' }}>
+                          TEST
+                        </span>
+                      )}
+                      {role === 'admin' && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(201,168,76,0.14)', color: '#c9a84c' }}>
+                          ADMIN TEST DRIVER
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                      {[driver.email, driver.login_username, driver.tlc_number].filter(Boolean).join(' • ') || 'No login metadata'}
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.28)' }} />
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function DriverApp() {
+  const { user, role, company } = useApp();
   const [driverData, setDriverData] = useState(null);
   const [driverRecord, setDriverRecord] = useState(null);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -79,6 +219,23 @@ export default function DriverApp() {
       if (pickupWaitRef.current) clearInterval(pickupWaitRef.current);
     };
   }, []);
+
+  function launchDriverSession(data) {
+    setLoggedIn(true);
+    setDriverData({
+      id: data.id,
+      name: data.full_name || data.name,
+      photo: data.photo_data || data.photo,
+      email: data.email || '',
+    });
+    startShift({
+      id: data.id,
+      name: data.full_name || data.name,
+      photo: data.photo_data || data.photo,
+      email: data.email || '',
+    });
+    loadDriverRecord(data.id);
+  }
 
   async function endShiftAndLogout() {
     if (watchRef.current) {
@@ -725,7 +882,16 @@ export default function DriverApp() {
   }
 
   if (!loggedIn) {
-    return <DriverLogin onLogin={(data) => { setLoggedIn(true); setDriverData(data); startShift(data); loadDriverRecord(data.id); }} />;
+    if (user && (role === 'admin' || role === 'company')) {
+      return (
+        <DriverAccessChooser
+          role={role}
+          company={company}
+          onSelectDriver={launchDriverSession}
+        />
+      );
+    }
+    return <DriverLogin onLogin={launchDriverSession} />;
   }
 
   return (

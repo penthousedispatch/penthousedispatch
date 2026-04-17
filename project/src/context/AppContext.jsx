@@ -6,6 +6,7 @@ import { runAutoScheduler } from '../utils/autoScheduler';
 import { DEFAULT_BILLING_RATE_PER_MILE, syncCompletedTripBilling } from '../utils/billingAutomation';
 import { normalizeAppRole } from '../lib/roles';
 import { readCompanySchedulerPrefs } from '../lib/companySchedulerPrefs';
+import { ensurePlatformAdminOrg } from '../lib/platformAdminOrg';
 
 const AppContext = createContext(null);
 const PLATFORM_OWNER_EMAILS = new Set([
@@ -410,6 +411,21 @@ export function AppProvider({ children }) {
             setAssignments([]);
           }
         } else if (normalizedProfRole === 'admin') {
+          try {
+            const platformOrg = await ensurePlatformAdminOrg(u);
+            if (platformOrg?.id) {
+              setOrg(platformOrg);
+              orgIdRef.current = platformOrg.id;
+              configureSentry(platformOrg);
+            } else {
+              setOrg(null);
+              orgIdRef.current = null;
+            }
+          } catch (bootstrapOrgError) {
+            logFailure('loadUserData:ensurePlatformAdminOrg', bootstrapOrgError);
+            setOrg(null);
+            orgIdRef.current = null;
+          }
           setDrivers([]);
           setTrips([]);
           setAssignments([]);
