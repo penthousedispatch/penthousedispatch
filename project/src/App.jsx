@@ -87,10 +87,50 @@ class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { error: null };
+    this.handleWindowError = this.handleWindowError.bind(this);
+    this.handleUnhandledRejection = this.handleUnhandledRejection.bind(this);
   }
 
   static getDerivedStateFromError(error) {
     return { error };
+  }
+
+  componentDidMount() {
+    window.addEventListener('error', this.handleWindowError);
+    window.addEventListener('unhandledrejection', this.handleUnhandledRejection);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('error', this.handleWindowError);
+    window.removeEventListener('unhandledrejection', this.handleUnhandledRejection);
+  }
+
+  handleWindowError(event) {
+    if (event?.error) {
+      this.setState({ error: event.error });
+      return;
+    }
+
+    if (event?.message) {
+      this.setState({ error: new Error(event.message) });
+    }
+  }
+
+  handleUnhandledRejection(event) {
+    const reason = event?.reason;
+    if (reason instanceof Error) {
+      this.setState({ error: reason });
+      return;
+    }
+
+    if (typeof reason === 'string') {
+      this.setState({ error: new Error(reason) });
+      return;
+    }
+
+    if (reason && typeof reason === 'object') {
+      this.setState({ error: new Error(reason.message || JSON.stringify(reason)) });
+    }
   }
 
   async handleSignOut() {
