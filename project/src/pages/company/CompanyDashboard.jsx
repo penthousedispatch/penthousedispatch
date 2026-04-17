@@ -5,9 +5,11 @@ import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
 import ModuleBoundary from '../../components/app/ModuleBoundary';
 import { DEFAULT_COMPANY_SCHEDULER_PREFS, readCompanySchedulerPrefs, writeCompanySchedulerPrefs } from '../../lib/companySchedulerPrefs';
+import AddDriverModal from '../../components/drivers/AddDriverModal';
+import CSVImportModal from '../../components/drivers/CSVImportModal';
 import {
   Users, Navigation, FileText, Settings, LogOut,
-  DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers
+  DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck
 } from 'lucide-react';
 import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
 
@@ -15,14 +17,55 @@ function CompanyDrivers({ company }) {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [showAddDriver, setShowAddDriver] = useState(false);
+  const [showCSVImport, setShowCSVImport] = useState(false);
+  const [editingDriver, setEditingDriver] = useState(null);
+  const [deletingDriver, setDeletingDriver] = useState(null);
+  const [savingDriver, setSavingDriver] = useState(false);
+  const [driverTaxInfo, setDriverTaxInfo] = useState({});
+
+  async function loadCompanyDrivers() {
+    if (!company?.id) return;
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('drivers')
+      .select('*')
+      .eq('company_id', company.id)
+      .eq('is_active', true)
+      .order('full_name');
+
+    if (error) {
+      handleSupabaseError(error, 'CompanyDrivers:load', { silent: true });
+      setDrivers([]);
+      setLoading(false);
+      return;
+    }
+
+    setDrivers(data || []);
+
+    const driverIds = (data || []).map(driver => driver.id).filter(Boolean);
+    if (driverIds.length) {
+      const { data: taxRows, error: taxError } = await supabase
+        .from('driver_tax_info')
+        .select('driver_id, legal_name, tax_id_last4, w9_completed_at, tax_classification')
+        .in('driver_id', driverIds);
+
+      if (taxError) {
+        handleSupabaseError(taxError, 'CompanyDrivers:loadTaxInfo', { silent: true });
+      } else {
+        setDriverTaxInfo(
+          Object.fromEntries((taxRows || []).map(row => [row.driver_id, row]))
+        );
+      }
+    } else {
+      setDriverTaxInfo({});
+    }
+
+    setLoading(false);
+  }
 
   useEffect(() => {
-    if (!company?.id) return;
-    supabase.from('drivers').select('*').eq('company_id', company.id).eq('is_active', true).order('full_name').then(({ data, error }) => {
-      if (error) handleSupabaseError(error, 'CompanyDrivers:load', { silent: true });
-      setDrivers(data || []);
-      setLoading(false);
-    });
+    loadCompanyDrivers();
   }, [company?.id]);
 
   const statusColor = { online: '#00e5a0', offline: 'rgba(255,255,255,0.3)', on_trip: '#c9a84c', break: '#f59e0b' };
@@ -69,6 +112,79 @@ function CompanyDrivers({ company }) {
     URL.revokeObjectURL(url);
   }
 
+  async function handleSaveDriverEdits(e) {
+    e.preventDefault();
+    if (!editingDriver?.id) return;
+    setSavingDriver(true);
+
+    const driverPayload = {
+      full_name: editingDriver.full_name || '',
+      phone: editingDriver.phone || '',
+      email: editingDriver.email || '',
+      tlc_number: editingDriver.tlc_number || '',
+      driver_number: editingDriver.driver_number || '',
+      status: editingDriver.status || 'offline',
+      shift_hours: editingDriver.shift_hours || '',
+      home_address: editingDriver.home_address || '',
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: driverError } = await supabase
+      .from('drivers')
+      .update(driverPayload)
+      .eq('id', editingDriver.id);
+
+    if (driverError) {
+      handleSupabaseError(driverError, 'CompanyDrivers:saveDriver', { fallback: 'Failed to update driver.' });
+      setSavingDriver(false);
+      return;
+    }
+
+    const taxPayload = {
+      driver_id: editingDriver.id,
+      legal_name: editingDriver.legal_name || editingDriver.full_name || '',
+      tax_id_last4: String(editingDriver.tax_id_last4 || '').replace(/\D/g, '').slice(0, 4),
+      tax_classification: editingDriver.tax_classification || '1099',
+      w9_completed_at: editingDriver.tax_id_last4 ? (editingDriver.w9_completed_at || new Date().toISOString()) : null,
+    };
+
+    const existingTaxRow = driverTaxInfo[editingDriver.id];
+    const taxQuery = supabase.from('driver_tax_info');
+    const taxResult = existingTaxRow
+      ? await taxQuery.update(taxPayload).eq('driver_id', editingDriver.id)
+      : await taxQuery.insert(taxPayload);
+
+    if (taxResult.error) {
+      handleSupabaseError(taxResult.error, 'CompanyDrivers:saveDriverTax', { fallback: 'Driver saved, but SSN last 4 could not be updated.' });
+    }
+
+    toastSuccess('Driver updated.');
+    setEditingDriver(null);
+    setSavingDriver(false);
+    await loadCompanyDrivers();
+  }
+
+  async function handleDeleteDriver() {
+    if (!deletingDriver?.id) return;
+    setSavingDriver(true);
+
+    const { error } = await supabase
+      .from('drivers')
+      .update({ is_active: false, status: 'offline', updated_at: new Date().toISOString() })
+      .eq('id', deletingDriver.id);
+
+    if (error) {
+      handleSupabaseError(error, 'CompanyDrivers:deleteDriver', { fallback: 'Failed to delete driver.' });
+      setSavingDriver(false);
+      return;
+    }
+
+    toastSuccess('Driver deleted.');
+    setDeletingDriver(null);
+    setSavingDriver(false);
+    await loadCompanyDrivers();
+  }
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-4">
@@ -105,6 +221,21 @@ function CompanyDrivers({ company }) {
               style={{ minWidth: 160 }}
             />
             <button
+              onClick={() => setShowCSVImport(true)}
+              className="px-4 py-2 rounded-xl text-sm font-600"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#e5e7eb', fontWeight: 600 }}
+            >
+              Import
+            </button>
+            <button
+              onClick={() => setShowAddDriver(true)}
+              className="px-4 py-2 rounded-xl text-sm font-600 flex items-center gap-2"
+              style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600 }}
+            >
+              <Plus className="w-4 h-4" />
+              Add Driver
+            </button>
+            <button
               onClick={exportDrivers}
               className="px-4 py-2 rounded-xl text-sm font-600"
               style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#e5e7eb', fontWeight: 600 }}
@@ -125,18 +256,19 @@ function CompanyDrivers({ company }) {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
-          <div className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px] gap-3 px-4 py-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.42)' }}>
+          <div className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px_140px] gap-3 px-4 py-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.42)' }}>
             <span>#</span>
             <span>Name</span>
             <span>Phone</span>
             <span>TLC</span>
             <span>Status</span>
+            <span>Actions</span>
           </div>
           <div style={{ background: '#0d1117' }}>
             {filteredDrivers.map((driver, index) => (
               <div
                 key={driver.id}
-                className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px] gap-3 px-4 py-3 items-center"
+                className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px_140px] gap-3 px-4 py-3 items-center"
                 style={{ borderTop: index === 0 ? 'none' : '1px solid rgba(255,255,255,0.06)' }}
               >
                 <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>{String(index + 1).padStart(3, '0')}</span>
@@ -166,12 +298,191 @@ function CompanyDrivers({ company }) {
                     {driver.status || 'offline'}
                   </span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setEditingDriver({
+                      ...driver,
+                      legal_name: driverTaxInfo[driver.id]?.legal_name || driver.full_name || '',
+                      tax_id_last4: driverTaxInfo[driver.id]?.tax_id_last4 || '',
+                      tax_classification: driverTaxInfo[driver.id]?.tax_classification || '1099',
+                      w9_completed_at: driverTaxInfo[driver.id]?.w9_completed_at || null,
+                    })}
+                    className="w-9 h-9 rounded-lg flex items-center justify-center"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                    title="Edit driver"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setDeletingDriver(driver)}
+                    className="w-9 h-9 rounded-lg flex items-center justify-center"
+                    style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff7a7a' }}
+                    title="Delete driver"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
+        <div className="mt-4 rounded-xl p-4" style={{ background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.18)' }}>
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="w-5 h-5 flex-shrink-0" style={{ color: '#0ea5e9' }} />
+            <div>
+              <p className="text-sm font-600" style={{ color: '#dff4ff', fontWeight: 600 }}>Secure driver onboarding</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(223,244,255,0.72)', lineHeight: 1.6 }}>
+                Full Social Security numbers should be collected through an external identity or payroll verification provider. This dashboard stores only the last 4 in the secure tax record so companies never handle the full SSN inside the app.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {showAddDriver && (
+        <AddDriverModal
+          onClose={() => {
+            setShowAddDriver(false);
+            loadCompanyDrivers();
+          }}
+        />
+      )}
+
+      {showCSVImport && (
+        <CSVImportModal
+          onClose={() => {
+            setShowCSVImport(false);
+            loadCompanyDrivers();
+          }}
+        />
+      )}
+
+      {editingDriver && (
+        <div className="fixed inset-0 z-50 overflow-y-auto p-4 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.72)' }}>
+          <div className="mx-auto w-full max-w-lg rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+              <p className="font-700 text-sm" style={{ fontWeight: 700 }}>Edit Driver</p>
+              <button onClick={() => setEditingDriver(null)} className="btn-ghost w-7 h-7 flex items-center justify-center rounded-lg text-xs">✕</button>
+            </div>
+            <form onSubmit={handleSaveDriverEdits} className="p-5 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  ['Full Name', 'full_name'],
+                  ['Phone', 'phone'],
+                  ['Email', 'email'],
+                  ['TLC Number', 'tlc_number'],
+                  ['Driver Number', 'driver_number'],
+                  ['Shift Hours', 'shift_hours'],
+                ].map(([label, key]) => (
+                  <div key={key}>
+                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</label>
+                    <input
+                      type="text"
+                      value={editingDriver[key] || ''}
+                      onChange={e => setEditingDriver(prev => ({ ...prev, [key]: e.target.value }))}
+                      className="w-full"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div>
+                <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Home Address</label>
+                <input
+                  type="text"
+                  value={editingDriver.home_address || ''}
+                  onChange={e => setEditingDriver(prev => ({ ...prev, home_address: e.target.value }))}
+                  className="w-full"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Status</label>
+                  <select
+                    value={editingDriver.status || 'offline'}
+                    onChange={e => setEditingDriver(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full"
+                  >
+                    <option value="offline">Offline</option>
+                    <option value="online">Online</option>
+                    <option value="on_trip">On Trip</option>
+                    <option value="break">Break</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Tax Classification</label>
+                  <select
+                    value={editingDriver.tax_classification || '1099'}
+                    onChange={e => setEditingDriver(prev => ({ ...prev, tax_classification: e.target.value }))}
+                    className="w-full"
+                  >
+                    <option value="1099">1099</option>
+                    <option value="w2">W-2</option>
+                  </select>
+                </div>
+              </div>
+              <div className="rounded-xl p-4" style={{ background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.18)' }}>
+                <p className="text-sm font-600 mb-2" style={{ color: '#dff4ff', fontWeight: 600 }}>Identity verification</p>
+                <p className="text-xs mb-3" style={{ color: 'rgba(223,244,255,0.72)', lineHeight: 1.6 }}>
+                  Use Stripe Identity, Persona, Alloy, or another authentication provider for full SSN and document collection. Only the last 4 is stored here for payroll and compliance display.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Legal Name</label>
+                    <input
+                      type="text"
+                      value={editingDriver.legal_name || ''}
+                      onChange={e => setEditingDriver(prev => ({ ...prev, legal_name: e.target.value }))}
+                      className="w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>SSN Last 4</label>
+                    <input
+                      type="text"
+                      value={editingDriver.tax_id_last4 || ''}
+                      onChange={e => setEditingDriver(prev => ({ ...prev, tax_id_last4: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                      placeholder="1234"
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setEditingDriver(null)} className="flex-1 btn-ghost py-2.5">Cancel</button>
+                <button type="submit" disabled={savingDriver} className="flex-1 btn-gold py-2.5">
+                  {savingDriver ? 'Saving...' : 'Save Driver'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {deletingDriver && (
+        <div className="fixed inset-0 z-50 overflow-y-auto p-4 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.72)' }}>
+          <div className="mx-auto w-full max-w-md rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,71,87,0.18)' }}>
+            <div className="px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+              <p className="font-700 text-sm" style={{ fontWeight: 700, color: '#ff7a7a' }}>Delete Driver</p>
+            </div>
+            <div className="p-5">
+              <p className="text-sm" style={{ color: '#e5e7eb' }}>
+                Remove <strong>{deletingDriver.full_name}</strong> from your company?
+              </p>
+              <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+                This keeps past records intact but removes the driver from your active fleet.
+              </p>
+              <div className="flex gap-3 mt-5">
+                <button type="button" onClick={() => setDeletingDriver(null)} className="flex-1 btn-ghost py-2.5">Cancel</button>
+                <button type="button" onClick={handleDeleteDriver} disabled={savingDriver} className="flex-1 py-2.5 rounded-xl"
+                  style={{ background: 'rgba(255,71,87,0.14)', border: '1px solid rgba(255,71,87,0.25)', color: '#ff7a7a', fontWeight: 600 }}>
+                  {savingDriver ? 'Deleting...' : 'Delete Driver'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
