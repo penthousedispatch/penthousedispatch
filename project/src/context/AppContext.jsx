@@ -112,9 +112,19 @@ export function AppProvider({ children }) {
           setOrg(membership.organizations);
           orgIdRef.current = membership.org_id;
           configureSentry(membership.organizations);
-          await loadDrivers();
-          await loadTrips();
-          await loadAssignments();
+          if (prof?.role === 'dispatcher') {
+            await loadDrivers();
+            await loadTrips();
+            await loadAssignments();
+          } else {
+            setDrivers([]);
+            setTrips([]);
+            setAssignments([]);
+          }
+        } else if (prof?.role === 'admin') {
+          setDrivers([]);
+          setTrips([]);
+          setAssignments([]);
         }
 
         const cfg = await fetchLatestSentryConfig().catch((cfgErr) => {
@@ -245,6 +255,10 @@ export function AppProvider({ children }) {
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id
           : null);
+    if (profile?.role === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
+      setDrivers([]);
+      return [];
+    }
     let query = supabase.from('drivers').select('*').eq('is_active', true);
     if (scopedCompanyId) query = query.eq('company_id', scopedCompanyId);
     const { data, error } = await query.order('full_name');
@@ -264,6 +278,10 @@ export function AppProvider({ children }) {
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id
           : null);
+    if (profile?.role === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
+      setTrips([]);
+      return [];
+    }
     let query = supabase
       .from('marketplace_trips')
       .select('*')
@@ -291,6 +309,10 @@ export function AppProvider({ children }) {
         : profile?.role === 'admin'
           ? adminPreviewCompany?.id
           : null);
+    if (profile?.role === 'admin' && !options.companyId && !adminPreviewCompany?.id) {
+      setAssignments([]);
+      return [];
+    }
     let query = supabase
       .from('trip_assignments')
       .select('*, drivers(full_name, photo_data, status, company_id)')

@@ -663,7 +663,7 @@ export default function CompanyDashboard({ previewMode = false }) {
     { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  if (!company?.is_approved && company?.onboarding_status !== 'approved') {
+  if (!previewMode && !company?.is_approved && company?.onboarding_status !== 'approved') {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#07090d' }}>
         <div className="max-w-sm text-center">

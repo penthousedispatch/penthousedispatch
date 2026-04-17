@@ -18,7 +18,7 @@ const TEST_DEFS = [
 ];
 
 export default function AdminTestingCenter() {
-  const { sentryConfig, org } = useApp();
+  const { org, company, adminPreviewCompany } = useApp();
   const [results, setResults] = useState({});
   const [logs, setLogs] = useState({});
   const [running, setRunning] = useState(null);
@@ -76,6 +76,15 @@ export default function AdminTestingCenter() {
 
     if (error) throw error;
     return data || null;
+  }
+
+  async function getFunctionHeaders() {
+    const { data: { session } } = await supabase.auth.getSession();
+    return {
+      'Content-Type': 'application/json',
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    };
   }
 
   async function runTest(testId) {
@@ -159,11 +168,7 @@ export default function AdminTestingCenter() {
         const edgeBase = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
         const fnRes = await fetch(`${edgeBase}/sentry-diagnostics/health-check`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
+          headers: await getFunctionHeaders(),
           body: JSON.stringify({
             base_url: cfg.base_url,
             username: cfg.username,
@@ -283,7 +288,6 @@ export default function AdminTestingCenter() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(secret ? { 'Authorization': `Bearer ${secret}` } : {}),
           },
           body: JSON.stringify(ep.payload),
         });
@@ -315,7 +319,6 @@ export default function AdminTestingCenter() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
       },
       body: JSON.stringify(log.raw_payload || {}),
     });
@@ -327,7 +330,7 @@ export default function AdminTestingCenter() {
   async function runTripFlowTest(testId) {
     addLog(testId, 'Creating test driver...');
     const testDriverNum = 'TEST-' + Date.now().toString(36).toUpperCase();
-    const scopedCompanyId = sandboxStatus.companyId || null;
+    const scopedCompanyId = sandboxStatus.companyId || adminPreviewCompany?.id || company?.id || null;
     if (scopedCompanyId) {
       addLog(testId, `Using active sandbox company scope: ${scopedCompanyId}`, 'info');
     } else {
@@ -465,17 +468,24 @@ export default function AdminTestingCenter() {
 
   async function runAITest(testId) {
     addLog(testId, 'Checking AI settings...');
-    if (!org?.id) {
-      addLog(testId, 'No active organization was found for this admin session.', 'error');
-      setResult(testId, 'fail');
-      return;
+    let settings = null;
+    if (org?.id) {
+      const result = await supabase
+        .from('ai_settings')
+        .select('*')
+        .eq('org_id', org.id)
+        .maybeSingle();
+      settings = result.data || null;
+    } else {
+      addLog(testId, 'No active organization is attached to this admin session. Falling back to the latest saved AI settings row.', 'warn');
+      const result = await supabase
+        .from('ai_settings')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      settings = result.data || null;
     }
-
-    const { data: settings } = await supabase
-      .from('ai_settings')
-      .select('*')
-      .eq('org_id', org.id)
-      .maybeSingle();
 
     if (!settings) {
       addLog(testId, 'No AI settings row exists for this organization yet.', 'warn');
