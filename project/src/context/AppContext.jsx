@@ -65,10 +65,58 @@ export function AppProvider({ children }) {
     return null;
   }
 
-  async function ensureFallbackProfile(u) {
-    const fallbackRole =
+  async function inferFallbackIdentity(u) {
+    const metadataRole =
       normalizeAppRole(u?.user_metadata?.role) ||
       normalizeAppRole(u?.app_metadata?.role);
+
+    if (metadataRole) {
+      return {
+        role: metadataRole,
+        companyId: u?.user_metadata?.company_id || null,
+      };
+    }
+
+    const email = (u?.email || '').trim().toLowerCase();
+
+    const ownerCompanyResult = await supabase
+      .from('companies')
+      .select('id, company_name')
+      .eq('owner_user_id', u.id)
+      .maybeSingle();
+
+    if (ownerCompanyResult.data?.id) {
+      return { role: 'company', companyId: ownerCompanyResult.data.id };
+    }
+
+    if (email) {
+      const billingCompanyResult = await supabase
+        .from('companies')
+        .select('id, company_name')
+        .ilike('billing_contact_email', email)
+        .maybeSingle();
+
+      if (billingCompanyResult.data?.id) {
+        return { role: 'company', companyId: billingCompanyResult.data.id };
+      }
+
+      const driverResult = await supabase
+        .from('drivers')
+        .select('id, company_id')
+        .ilike('email', email)
+        .maybeSingle();
+
+      if (driverResult.data?.id) {
+        return { role: 'driver', companyId: driverResult.data.company_id || null };
+      }
+    }
+
+    return { role: 'admin', companyId: null };
+  }
+
+  async function ensureFallbackProfile(u) {
+    const inferredIdentity = await inferFallbackIdentity(u);
+    const fallbackRole = inferredIdentity?.role;
 
     if (!fallbackRole) return null;
 
@@ -80,7 +128,7 @@ export function AppProvider({ children }) {
         u?.user_metadata?.name ||
         (u.email ? u.email.split('@')[0] : 'User'),
       role: fallbackRole,
-      company_id: u?.user_metadata?.company_id || null,
+      company_id: inferredIdentity?.companyId || null,
     };
 
     setProfile(fallbackProfile);
@@ -190,7 +238,13 @@ export function AppProvider({ children }) {
 
       setProfile(prof);
 
-      const normalizedProfRole = normalizeAppRole(prof?.role);
+      let normalizedProfRole = normalizeAppRole(prof?.role);
+
+      if (!normalizedProfRole) {
+        prof = await ensureFallbackProfile(u);
+        setProfile(prof);
+        normalizedProfRole = normalizeAppRole(prof?.role);
+      }
 
       if (!normalizedProfRole) {
         setOrg(null);
