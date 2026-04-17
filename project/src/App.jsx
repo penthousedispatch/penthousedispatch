@@ -13,6 +13,42 @@ import CompanyDashboard from './pages/company/CompanyDashboard';
 import CompanyOnboarding from './pages/company/CompanyOnboarding';
 import ToastContainer from './components/ui/ToastContainer';
 import ChangeMyPassword from './pages/ChangeMyPassword'; 
+import { LogOut, RefreshCw } from 'lucide-react';
+
+function defaultPathForRole(role) {
+  if (role === 'admin') return '/admin/ops';
+  return '/';
+}
+
+function MissingProfileScreen() {
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+  }
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center px-4" style={{ background: '#07090d' }}>
+      <div
+        className="w-full max-w-md rounded-2xl p-6 text-center"
+        style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+      >
+        <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)' }}>
+          <RefreshCw className="w-6 h-6" style={{ color: '#c9a84c' }} />
+        </div>
+        <p className="text-lg font-semibold mb-2" style={{ color: '#c9a84c' }}>Account Still Loading</p>
+        <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+          Your sign-in worked, but the app could not load your account profile cleanly. Please sign in again.
+        </p>
+        <button
+          onClick={handleSignOut}
+          className="btn-gold w-full py-3 flex items-center justify-center gap-2"
+        >
+          <LogOut className="w-4 h-4" />
+          Sign Out and Retry
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function AppRoutes() {
   const { user, loading, profile, org, company } = useApp();
@@ -67,7 +103,12 @@ function AppRoutes() {
     );
   }
 
+  if (!profile) {
+    return <MissingProfileScreen />;
+  }
+
   const needsOnboarding = role === 'dispatcher' && !org && !company;
+  const defaultRolePath = defaultPathForRole(role);
 
   return (
     <Routes>
@@ -75,7 +116,7 @@ function AppRoutes() {
       <Route path="/rider" element={<RiderTracking />} />
       <Route path="/company/onboarding" element={<CompanyOnboarding />} />
       <Route path="/change-password" element={<ChangeMyPassword />} />
-      <Route path="/auth" element={<Navigate to={safeNextPath} replace />} />
+      <Route path="/auth" element={<Navigate to={safeNextPath === '/' ? defaultRolePath : safeNextPath} replace />} />
 
       {role === 'admin' && <Route path="/*" element={<AdminDashboard />} />}
       {role === 'company' && <Route path="/*" element={<CompanyDashboard />} />}
