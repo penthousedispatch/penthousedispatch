@@ -412,7 +412,7 @@ export function AppProvider({ children }) {
           }
         } else if (normalizedProfRole === 'admin') {
           try {
-            const platformOrg = await ensurePlatformAdminOrg(u);
+            const platformOrg = await ensurePlatformAdminOrg(u, { forceBootstrap: true });
             if (platformOrg?.id) {
               setOrg(platformOrg);
               orgIdRef.current = platformOrg.id;
@@ -568,6 +568,7 @@ export function AppProvider({ children }) {
   }
 
   async function loadDrivers(options = {}) {
+    const inAdminPreview = normalizedRole === 'admin' && !!(options.companyId || adminPreviewCompany?.id);
     const scopedCompanyId =
       options.companyId ||
       (isCompanyRole
@@ -583,7 +584,7 @@ export function AppProvider({ children }) {
     if (scopedCompanyId) query = query.eq('company_id', scopedCompanyId);
     const { data, error } = await query.order('full_name');
     if (error) {
-      handleSupabaseError(error, 'loadDrivers', { fallback: 'Failed to load drivers.' });
+      handleSupabaseError(error, 'loadDrivers', { silent: inAdminPreview, fallback: 'Failed to load drivers.' });
       return [];
     }
     setDrivers(data || []);
@@ -591,6 +592,7 @@ export function AppProvider({ children }) {
   }
 
   async function loadTrips(options = {}) {
+    const inAdminPreview = normalizedRole === 'admin' && !!(options.companyId || adminPreviewCompany?.id);
     const scopedCompanyId =
       options.companyId ||
       (isCompanyRole
@@ -614,7 +616,7 @@ export function AppProvider({ children }) {
 
     const { data, error } = await query;
     if (error) {
-      handleSupabaseError(error, 'loadTrips', { fallback: 'Failed to load trips.' });
+      handleSupabaseError(error, 'loadTrips', { silent: inAdminPreview, fallback: 'Failed to load trips.' });
       return [];
     }
     setTrips(data || []);
@@ -622,6 +624,7 @@ export function AppProvider({ children }) {
   }
 
   async function loadAssignments(options = {}) {
+    const inAdminPreview = normalizedRole === 'admin' && !!(options.companyId || adminPreviewCompany?.id);
     const scopedCompanyId =
       options.companyId ||
       (isCompanyRole
@@ -646,7 +649,7 @@ export function AppProvider({ children }) {
         .eq('company_id', scopedCompanyId);
 
       if (companyDriversError) {
-        handleSupabaseError(companyDriversError, 'loadAssignments:companyDrivers', { fallback: 'Failed to scope company assignments.' });
+        handleSupabaseError(companyDriversError, 'loadAssignments:companyDrivers', { silent: inAdminPreview, fallback: 'Failed to scope company assignments.' });
         return [];
       }
 
@@ -660,7 +663,7 @@ export function AppProvider({ children }) {
 
     const { data, error } = await query;
     if (error) {
-      handleSupabaseError(error, 'loadAssignments', { fallback: 'Failed to load assignments.' });
+      handleSupabaseError(error, 'loadAssignments', { silent: inAdminPreview, fallback: 'Failed to load assignments.' });
       return [];
     }
     setAssignments(data || []);
@@ -953,12 +956,15 @@ export function AppProvider({ children }) {
         scheduleLiveRefresh('assignments', loadAssignments);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'companies' }, () => {
-        if (isCompanyRole || normalizedRole === 'admin') {
+        if (isCompanyRole || (normalizedRole === 'admin' && !adminPreviewCompany?.id)) {
           scheduleLiveRefresh('company', () => loadUserData(user), 500);
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        scheduleLiveRefresh('profile', () => loadUserData(user), 500);
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, payload => {
+        const changedProfileId = payload?.new?.id || payload?.old?.id;
+        if (changedProfileId === user.id) {
+          scheduleLiveRefresh('profile', () => loadUserData(user), 500);
+        }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sentry_config' }, async () => {
         const cfg = await fetchLatestSentryConfig().catch((error) => {

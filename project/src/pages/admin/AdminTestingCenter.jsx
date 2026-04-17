@@ -19,7 +19,7 @@ const TEST_DEFS = [
 ];
 
 export default function AdminTestingCenter() {
-  const { org, user, company, adminPreviewCompany, isPlatformOwner } = useApp();
+  const { org, user, company, adminPreviewCompany, isPlatformOwner, role } = useApp();
   const [results, setResults] = useState({});
   const [logs, setLogs] = useState({});
   const [running, setRunning] = useState(null);
@@ -55,9 +55,9 @@ export default function AdminTestingCenter() {
         return;
       }
 
-      if (isPlatformOwner) {
+      if (isPlatformOwner || role === 'admin') {
         try {
-          const platformOrg = await ensurePlatformAdminOrg(user);
+          const platformOrg = await ensurePlatformAdminOrg(user, { forceBootstrap: true });
           if (platformOrg?.id) {
             if (mounted) setResolvedOrgId(platformOrg.id);
             return;
@@ -93,7 +93,7 @@ export default function AdminTestingCenter() {
     return () => {
       mounted = false;
     };
-  }, [org?.id, user?.id, isPlatformOwner]);
+  }, [org?.id, user?.id, isPlatformOwner, role]);
 
   function addLog(testId, msg, level = 'info') {
     setLogs(prev => ({

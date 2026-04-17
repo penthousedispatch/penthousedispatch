@@ -39,6 +39,7 @@ export async function ensurePlatformAdminOrg(user, options = {}) {
 
   const slug = buildOwnerOrgSlug(user.id);
   const orgName = 'Penthouse Platform Admin';
+  const bootstrapOrgId = crypto.randomUUID();
 
   const { data: existingPlatformOrg } = await supabase
     .from('organizations')
@@ -67,9 +68,10 @@ export async function ensurePlatformAdminOrg(user, options = {}) {
     return existingPlatformOrg;
   }
 
-  const { data: createdOrg, error: createOrgError } = await supabase
+  const { error: createOrgError } = await supabase
     .from('organizations')
     .insert({
+      id: bootstrapOrgId,
       name: orgName,
       slug,
       plan: 'enterprise',
@@ -77,15 +79,42 @@ export async function ensurePlatformAdminOrg(user, options = {}) {
         kind: 'platform_admin',
         owner_email: normalizeEmail(user.email),
       },
-    })
-    .select('*')
-    .maybeSingle();
+    });
 
   if (createOrgError && !String(createOrgError.message || '').toLowerCase().includes('duplicate')) {
     throw createOrgError;
   }
 
-  let orgRow = createdOrg;
+  let orgRow = null;
+
+  const orgId = createOrgError ? existingPlatformOrg?.id || null : bootstrapOrgId;
+
+  if (orgId) {
+    const { error: memberError } = await supabase
+      .from('org_members')
+      .upsert(
+        {
+          org_id: orgId,
+          user_id: user.id,
+          role: 'admin',
+        },
+        { onConflict: 'org_id,user_id' }
+      );
+
+    if (memberError && !String(memberError.message || '').toLowerCase().includes('duplicate')) {
+      throw memberError;
+    }
+
+    const { data: attachedOrg } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    if (attachedOrg?.id) {
+      return attachedOrg;
+    }
+  }
 
   if (!orgRow) {
     const { data: existingMembership } = await supabase
@@ -114,7 +143,7 @@ export async function ensurePlatformAdminOrg(user, options = {}) {
     return null;
   }
 
-  const { error: memberError } = await supabase
+  const { error: finalMemberError } = await supabase
     .from('org_members')
     .upsert(
       {
@@ -125,8 +154,8 @@ export async function ensurePlatformAdminOrg(user, options = {}) {
       { onConflict: 'org_id,user_id' }
     );
 
-  if (memberError && !String(memberError.message || '').toLowerCase().includes('duplicate')) {
-    throw memberError;
+  if (finalMemberError && !String(finalMemberError.message || '').toLowerCase().includes('duplicate')) {
+    throw finalMemberError;
   }
 
   return orgRow;

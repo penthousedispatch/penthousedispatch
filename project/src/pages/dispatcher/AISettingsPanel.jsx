@@ -185,9 +185,9 @@ export default function AISettingsPanel() {
         return;
       }
 
-      if (isPlatformOwner) {
+      if (isPlatformOwner || role === 'admin') {
         try {
-          const platformOrg = await ensurePlatformAdminOrg(user);
+          const platformOrg = await ensurePlatformAdminOrg(user, { forceBootstrap: true });
           if (platformOrg?.id) {
             if (mounted) setResolvedOrgId(platformOrg.id);
             return;
@@ -223,7 +223,7 @@ export default function AISettingsPanel() {
     return () => {
       mounted = false;
     };
-  }, [org?.id, user?.id, isPlatformOwner]);
+  }, [org?.id, user?.id, isPlatformOwner, role]);
 
   async function persistCoreBotFlags(nextForm) {
     if (!resolvedOrgId) return;
