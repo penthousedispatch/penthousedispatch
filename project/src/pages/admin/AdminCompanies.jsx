@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { Building2, CheckCircle, XCircle, Clock, Eye, Users, AlertTriangle, Route } from 'lucide-react';
@@ -28,7 +28,10 @@ export default function AdminCompanies() {
 
   async function loadCompanies() {
     setLoading(true);
-    const { data } = await supabase.from('companies').select('*').order('created_at', { ascending: false });
+    const { data } = await supabase
+      .from('companies')
+      .select('id, company_name, billing_contact_email, onboarding_status, is_suspended, is_approved, owner_user_id, created_at, legal_entity, phone, billing_contact_name, address, tax_id, baseline_fleet_size')
+      .order('created_at', { ascending: false });
     setCompanies(data || []);
     setLoading(false);
   }
@@ -320,13 +323,14 @@ function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
         <button onClick={onView} className="btn-ghost px-3 py-1.5 text-xs flex items-center gap-1.5">
           <Eye className="w-3 h-3" /> Review
         </button>
-        <button
+        <Link
+          to={`/admin/company-preview/${company.id}`}
           onClick={onOpenDashboard}
           className="px-3 py-1.5 text-xs rounded-lg"
-          style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c' }}
+          style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none' }}
         >
           Open Dashboard
-        </button>
+        </Link>
         <button
           onClick={onSuspend}
           className="px-3 py-1.5 text-xs rounded-lg"

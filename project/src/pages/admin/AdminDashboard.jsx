@@ -227,12 +227,12 @@ function AdminCompanyPreview() {
       }
       setPreviewCompany(data);
       setAdminPreviewCompany(data);
-      await Promise.all([
+      setLoading(false);
+      Promise.all([
         loadDrivers({ companyId: data.id }),
         loadTrips({ companyId: data.id }),
         loadAssignments({ companyId: data.id }),
-      ]);
-      setLoading(false);
+      ]).catch(() => {});
     }
 
     loadPreviewCompany();
