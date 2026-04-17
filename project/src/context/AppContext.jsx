@@ -27,6 +27,7 @@ export function AppProvider({ children }) {
   const billingSyncRef = useRef(0);
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
+  const initialSessionResolvedRef = useRef(false);
   const normalizedRole = normalizeAppRole(profile?.role);
   const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
   const isCompanyRole = normalizedRole === 'company';
@@ -44,14 +45,47 @@ export function AppProvider({ children }) {
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) logFailure('getSession', error);
-      setUser(session?.user ?? null);
-      if (session?.user) loadUserData(session.user);
-      else setLoading(false);
-    });
+    let mounted = true;
+    const SESSION_BOOT_TIMEOUT_MS = 3500;
+
+    async function bootstrapSession() {
+      try {
+        const sessionResult = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Initial session bootstrap timed out')), SESSION_BOOT_TIMEOUT_MS)
+          ),
+        ]);
+
+        if (!mounted) return;
+
+        const { data: { session }, error } = sessionResult;
+        initialSessionResolvedRef.current = true;
+
+        if (error) logFailure('getSession', error);
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          loadUserData(session.user);
+        } else {
+          setLoading(false);
+        }
+      } catch (error) {
+        initialSessionResolvedRef.current = true;
+        logFailure('bootstrapSession', error);
+        if (!mounted) return;
+        setUser(null);
+        setProfile(null);
+        setOrg(null);
+        setCompany(null);
+        setAdminPreviewCompany(null);
+        setLoading(false);
+      }
+    }
+
+    bootstrapSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      initialSessionResolvedRef.current = true;
       setUser(session?.user ?? null);
       if (session?.user) {
         (async () => { await loadUserData(session.user); })();
@@ -65,6 +99,7 @@ export function AppProvider({ children }) {
       }
     });
     return () => {
+      mounted = false;
       subscription.unsubscribe();
       if (autoPullRef.current) clearInterval(autoPullRef.current);
     };
