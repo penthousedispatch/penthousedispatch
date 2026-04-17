@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, Routes, Route, Link } from 'react-router-dom';
+import { NavLink, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
@@ -755,18 +755,19 @@ function renderCompanyModule(name, element) {
   return <ModuleBoundary moduleName={name}>{element}</ModuleBoundary>;
 }
 
-export default function CompanyDashboard({ previewMode = false }) {
+export default function CompanyDashboard({ previewMode = false, companyOverride = null }) {
   const { company, setCompany, profile } = useApp();
+  const activeCompany = companyOverride || company;
   const [mobileNav, setMobileNav] = useState(false);
   const importSource = React.useMemo(() => {
-    const match = company?.notes?.match(/IMPORT_SOURCE:([A-Z_]+)/);
+    const match = activeCompany?.notes?.match(/IMPORT_SOURCE:([A-Z_]+)/);
     return match?.[1] || 'MANUAL';
-  }, [company?.notes]);
-  const companyDisplayName = company?.app_display_name || company?.company_name || 'Penthouse Dispatch';
-  const basePath = previewMode && company?.id ? `/admin/company-preview/${company.id}` : '';
+  }, [activeCompany?.notes]);
+  const companyDisplayName = activeCompany?.app_display_name || activeCompany?.company_name || 'Penthouse Dispatch';
+  const basePath = previewMode && activeCompany?.id ? `/admin/company-preview/${activeCompany.id}` : '';
 
   const tabs = [
-    { path: basePath || '/', routePath: '/', label: 'Dispatch', icon: LayoutGrid, exact: true },
+    { path: previewMode ? `${basePath}/drivers` : (basePath || '/'), routePath: '/', label: previewMode ? 'Company Dashboard' : 'Dispatch', icon: LayoutGrid, exact: true },
     { path: `${basePath}/marketplace`, routePath: 'marketplace', label: 'Marketplace', icon: Layers },
     { path: `${basePath}/drivers`, routePath: 'drivers', label: 'Drivers', icon: Users },
     { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
@@ -776,7 +777,7 @@ export default function CompanyDashboard({ previewMode = false }) {
     { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  if (!previewMode && !company?.is_approved && company?.onboarding_status !== 'approved') {
+  if (!previewMode && !activeCompany?.is_approved && activeCompany?.onboarding_status !== 'approved') {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#07090d' }}>
         <div className="max-w-sm text-center">
@@ -804,10 +805,10 @@ export default function CompanyDashboard({ previewMode = false }) {
           borderBottom: '1px solid rgba(201,168,76,0.18)',
         }}
       >
-        <StatusChip label={`Company Admin: ${company?.company_name || 'Subscriber'}`} color="#c9a84c" />
+        <StatusChip label={`Company Admin: ${activeCompany?.company_name || 'Subscriber'}`} color="#c9a84c" />
         <StatusChip label={`Import: ${importSource}`} color="#0ea5e9" />
-        <StatusChip label={company?.white_label_enabled ? 'White-label enabled' : 'Platform branding active'} color={company?.white_label_enabled ? '#00e5a0' : 'rgba(255,255,255,0.6)'} />
-        <StatusChip label={company?.ai_routing_enabled ? 'AI routing on' : 'AI routing off'} color={company?.ai_routing_enabled ? '#00e5a0' : '#ff4757'} />
+        <StatusChip label={activeCompany?.white_label_enabled ? 'White-label enabled' : 'Platform branding active'} color={activeCompany?.white_label_enabled ? '#00e5a0' : 'rgba(255,255,255,0.6)'} />
+        <StatusChip label={activeCompany?.ai_routing_enabled ? 'AI routing on' : 'AI routing off'} color={activeCompany?.ai_routing_enabled ? '#00e5a0' : '#ff4757'} />
       </div>
 
       <header className="flex items-center justify-between px-4 h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
@@ -819,7 +820,7 @@ export default function CompanyDashboard({ previewMode = false }) {
             <p style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700 }}>{companyDisplayName.toUpperCase()}</p>
             <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>Company Admin Dashboard</p>
           </div>
-          {previewMode && company?.id && (
+          {previewMode && activeCompany?.id && (
             <Link
               to="/admin/companies"
               className="hidden md:inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all"
@@ -885,15 +886,29 @@ export default function CompanyDashboard({ previewMode = false }) {
 
       <main className="flex-1 overflow-y-auto">
         <Routes>
-          <Route index element={renderCompanyModule('Dispatch', <LiveDispatch />)} />
-          <Route path="marketplace" element={renderCompanyModule('Marketplace', <CompanyMarketplace company={company} />)} />
-          <Route path="drivers" element={renderCompanyModule('Drivers', <CompanyDrivers company={company} />)} />
-          <Route path="trips" element={renderCompanyModule('Trip History', <CompanyTrips company={company} />)} />
-          <Route path="invoices" element={renderCompanyModule('Invoices', <CompanyInvoices company={company} />)} />
-          <Route path="ai-controls" element={renderCompanyModule('AI Controls', <CompanyAIControls company={company} setCompany={setCompany} />)} />
+          <Route
+            index
+            element={
+              previewMode
+                ? <Navigate to={`${basePath}/drivers`} replace />
+                : renderCompanyModule('Dispatch', <LiveDispatch />)
+            }
+          />
+          <Route path="marketplace" element={renderCompanyModule('Marketplace', <CompanyMarketplace company={activeCompany} />)} />
+          <Route path="drivers" element={renderCompanyModule('Drivers', <CompanyDrivers company={activeCompany} />)} />
+          <Route path="trips" element={renderCompanyModule('Trip History', <CompanyTrips company={activeCompany} />)} />
+          <Route path="invoices" element={renderCompanyModule('Invoices', <CompanyInvoices company={activeCompany} />)} />
+          <Route path="ai-controls" element={renderCompanyModule('AI Controls', <CompanyAIControls company={activeCompany} setCompany={setCompany} />)} />
           <Route path="guides" element={renderCompanyModule('Guides', <CompanyGuides />)} />
-          <Route path="settings" element={renderCompanyModule('Settings', <CompanySettings company={company} setCompany={setCompany} />)} />
-          <Route path="/*" element={renderCompanyModule('Dispatch', <LiveDispatch />)} />
+          <Route path="settings" element={renderCompanyModule('Settings', <CompanySettings company={activeCompany} setCompany={setCompany} />)} />
+          <Route
+            path="/*"
+            element={
+              previewMode
+                ? <Navigate to={`${basePath}/drivers`} replace />
+                : renderCompanyModule('Dispatch', <LiveDispatch />)
+            }
+          />
         </Routes>
       </main>
     </div>
