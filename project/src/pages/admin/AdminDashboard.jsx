@@ -272,7 +272,7 @@ function AdminCompanyPreview() {
       loadTrips();
       loadAssignments();
     };
-  }, [companyId, loadAssignments, loadDrivers, loadTrips, previewCompany, setAdminPreviewCompany]);
+  }, [companyId, previewCompany, setAdminPreviewCompany]);
 
   if (loading) {
     return <div className="h-full flex items-center justify-center" style={{ color: 'rgba(255,255,255,0.45)' }}>Loading company workspace...</div>;

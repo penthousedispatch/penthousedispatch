@@ -116,6 +116,19 @@ export default function DriverLogin({ onLogin }) {
     const finalDriver = matchedDriver || await trySandboxCredentialLogin(cleanUsername, cleanPassword);
 
     if (!finalDriver) {
+      if (cleanUsername.includes('@')) {
+        const { error: authError } = await supabase.auth.signInWithPassword({
+          email: cleanUsername,
+          password: cleanPassword,
+        });
+
+        if (!authError) {
+          setLoading(false);
+          setError('');
+          return;
+        }
+      }
+
       setError('Driver email, username, TLC number, or password is incorrect.');
       setLoading(false);
       return;

@@ -101,7 +101,15 @@ export default function AdminCompanies() {
     try {
       sessionStorage.setItem(`admin-preview-company:${company.id}`, JSON.stringify(company));
     } catch {}
-    window.location.assign(`/admin/company-preview/${company.id}/drivers`);
+    window.location.assign(`/admin/company-preview/${company.id}`);
+  }
+
+  function handleOpenTrips(company) {
+    setAdminPreviewCompany(company);
+    try {
+      sessionStorage.setItem(`admin-preview-company:${company.id}`, JSON.stringify(company));
+    } catch {}
+    window.location.assign(`/admin/company-preview/${company.id}/trips`);
   }
 
   const pending = companies.filter(c => !c.is_approved && c.onboarding_status !== 'rejected');
@@ -151,6 +159,7 @@ export default function AdminCompanies() {
                   company={company}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
                   onOpenDashboard={() => handleOpenDashboard(company)}
+                  onOpenTrips={() => handleOpenTrips(company)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
@@ -177,6 +186,7 @@ export default function AdminCompanies() {
                   company={company}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
                   onOpenDashboard={() => handleOpenDashboard(company)}
+                  onOpenTrips={() => handleOpenTrips(company)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
@@ -301,7 +311,7 @@ export default function AdminCompanies() {
   );
 }
 
-function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
+function CompanyRow({ company, onView, onOpenDashboard, onOpenTrips, onSuspend }) {
   const st = STATUS_COLORS[company.onboarding_status] || STATUS_COLORS.pending;
   return (
     <div className="flex items-center gap-4 p-4 rounded-xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -325,7 +335,7 @@ function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
           <Eye className="w-3 h-3" /> Review
         </button>
         <a
-          href={`/admin/company-preview/${company.id}/drivers`}
+          href={`/admin/company-preview/${company.id}`}
           onClick={e => {
             e.preventDefault();
             onOpenDashboard();
@@ -333,7 +343,18 @@ function CompanyRow({ company, onView, onOpenDashboard, onSuspend }) {
           className="px-3 py-1.5 text-xs rounded-lg"
           style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none' }}
         >
-          Open Dashboard
+          View Map
+        </a>
+        <a
+          href={`/admin/company-preview/${company.id}/trips`}
+          onClick={e => {
+            e.preventDefault();
+            onOpenTrips();
+          }}
+          className="px-3 py-1.5 text-xs rounded-lg"
+          style={{ background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.2)', color: '#0ea5e9', textDecoration: 'none' }}
+        >
+          View Trips
         </a>
         <button
           onClick={onSuspend}

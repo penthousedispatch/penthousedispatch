@@ -767,7 +767,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
   const basePath = previewMode && activeCompany?.id ? `/admin/company-preview/${activeCompany.id}` : '';
 
   const tabs = [
-    { path: previewMode ? `${basePath}/drivers` : (basePath || '/'), routePath: '/', label: previewMode ? 'Company Dashboard' : 'Dispatch', icon: LayoutGrid, exact: true },
+    { path: previewMode ? `${basePath}` : (basePath || '/'), routePath: '/', label: previewMode ? 'Company Dashboard' : 'Dispatch', icon: LayoutGrid, exact: true },
     { path: `${basePath}/marketplace`, routePath: 'marketplace', label: 'Marketplace', icon: Layers },
     { path: `${basePath}/drivers`, routePath: 'drivers', label: 'Drivers', icon: Users },
     { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
@@ -890,7 +890,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
             index
             element={
               previewMode
-                ? <Navigate to={`${basePath}/drivers`} replace />
+                ? renderCompanyModule('Dispatch', <LiveDispatch />)
                 : renderCompanyModule('Dispatch', <LiveDispatch />)
             }
           />
@@ -905,7 +905,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
             path="/*"
             element={
               previewMode
-                ? <Navigate to={`${basePath}/drivers`} replace />
+                ? <Navigate to={`${basePath}`} replace />
                 : renderCompanyModule('Dispatch', <LiveDispatch />)
             }
           />
