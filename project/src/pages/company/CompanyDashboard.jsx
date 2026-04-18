@@ -355,6 +355,9 @@ function CompanyDrivers({ company }) {
       {showCSVImport && (
         <CSVImportModal
           companyIdOverride={company?.id || null}
+          onImported={() => {
+            loadCompanyDrivers();
+          }}
           onClose={() => {
             setShowCSVImport(false);
             loadCompanyDrivers();

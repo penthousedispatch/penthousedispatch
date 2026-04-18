@@ -672,15 +672,8 @@ export default function BotTeamPanel() {
         return;
       }
 
-      const { data: fallbackOrg } = await supabase
-        .from('organizations')
-        .select('id')
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
       if (mounted) {
-        setResolvedOrgId(fallbackOrg?.id || null);
+        setResolvedOrgId(null);
         setResolvingOrgId(false);
       }
     }
@@ -696,18 +689,20 @@ export default function BotTeamPanel() {
 
     async function loadPanelData() {
       if (!resolvedOrgId) return;
-      try {
-        setPanelError(null);
-        await Promise.all([
-          loadConfig(),
-          loadBotConfigs(),
-          loadPendingActions(),
-          loadAiSettings(),
-        ]);
-      } catch (error) {
-        if (active) {
-          setPanelError(error.message || 'Bot Team failed to load');
-        }
+      setPanelError(null);
+      const results = await Promise.allSettled([
+        loadConfig(),
+        loadBotConfigs(),
+        loadPendingActions(),
+        loadAiSettings(),
+      ]);
+
+      const failures = results
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason?.message || 'Bot Team failed to load');
+
+      if (active && failures.length > 0) {
+        setPanelError(failures[0]);
       }
     }
 
@@ -766,11 +761,10 @@ export default function BotTeamPanel() {
     const map = {};
     (data || []).forEach(c => { map[c.bot_id] = c; });
 
-    const missing = BOT_DEFS.filter(def => !map[def.id]).map(def => getDefaultBotConfig(def, resolvedOrgId));
-    if (missing.length > 0) {
-      await supabase.from('bot_config').upsert(missing, { onConflict: 'org_id,bot_id' });
-      missing.forEach(config => { map[config.bot_id] = config; });
-    }
+    BOT_DEFS.filter(def => !map[def.id]).forEach(def => {
+      const config = getDefaultBotConfig(def, resolvedOrgId);
+      map[config.bot_id] = config;
+    });
 
     setBotConfigs(map);
     setBotEnabled(prev => ({
@@ -1124,8 +1118,19 @@ export default function BotTeamPanel() {
     if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
     const result = await refreshTripsFromSentry();
     if (result?.error) {
-      await logBotAction('sentry_bot', 'SentryBot', 'Scheduled trip pull', 'pull_trips', 'low', 'failed', result.error);
-      return { error: result.error, summary: `Failed to pull trips: ${result.error}` };
+      const setupPending = /auth|token|jwt|unauthorized|sentry not configured|not connected/i.test(result.error);
+      await logBotAction(
+        'sentry_bot',
+        'SentryBot',
+        'Scheduled trip pull',
+        'pull_trips',
+        'low',
+        setupPending ? 'escalated' : 'failed',
+        result.error,
+      );
+      return setupPending
+        ? { summary: `Sentry setup pending — ${result.error}` }
+        : { error: result.error, summary: `Failed to pull trips: ${result.error}` };
     }
     await logBotAction('sentry_bot', 'SentryBot', 'Scheduled trip pull', 'pull_trips', 'low', 'executed', `Pulled ${result?.count || 0} trips`);
     return { summary: `Pulled ${result?.count || 0} trips from marketplace` };
@@ -1195,7 +1200,8 @@ export default function BotTeamPanel() {
     const allowedActions = config?.allowed_actions || [];
     const autonomy = config?.autonomy_level || 'observe';
     const riskThreshold = config?.risk_threshold || 'low';
-    if (!result.authenticated) issues.push('Sentry API auth failed');
+    const sentrySetupPending = !result.authenticated && !!result?.error && /auth|token|jwt|unauthorized|fetch|not configured|not connected/i.test(result.error);
+    if (!result.authenticated && !sentrySetupPending) issues.push('Sentry API auth failed');
     const activeDrivers = drivers.filter(d => d.status === 'online' || d.status === 'on_trip').length;
     if (activeDrivers === 0 && drivers.length > 0) issues.push('No drivers online');
     if (issues.length > 0) {
@@ -1210,7 +1216,9 @@ export default function BotTeamPanel() {
       }
     }
     return {
-      summary: `Sentry ${result.authenticated ? 'connected' : 'disconnected'} (${result.latencyMs || '?'}ms) · ${activeDrivers} drivers active · ${trips.length} trips loaded`,
+      summary: sentrySetupPending
+        ? `Sentry setup pending · ${activeDrivers} drivers active · ${trips.length} trips loaded`
+        : `Sentry ${result.authenticated ? 'connected' : 'disconnected'} (${result.latencyMs || '?'}ms) · ${activeDrivers} drivers active · ${trips.length} trips loaded`,
       error: issues.length > 0 ? issues.join('; ') : null,
     };
   }

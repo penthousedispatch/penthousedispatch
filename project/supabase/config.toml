@@ -3,5 +3,8 @@ project_id = "zmwyhnwzxziwpbwszqpy"
 [functions.sentry-receivers]
 verify_jwt = false
 
+[functions.sentry-diagnostics]
+verify_jwt = false
+
 [functions.sentry-provider]
 verify_jwt = false

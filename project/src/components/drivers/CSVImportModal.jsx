@@ -104,7 +104,7 @@ function downloadTemplate() {
   URL.revokeObjectURL(url);
 }
 
-export default function CSVImportModal({ onClose, companyIdOverride = null }) {
+export default function CSVImportModal({ onClose, companyIdOverride = null, onImported = null }) {
   const { company, profile } = useApp();
   const [preview, setPreview] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -230,6 +230,15 @@ export default function CSVImportModal({ onClose, companyIdOverride = null }) {
     setDriverResults(perDriverResults);
     setResults({ added, updated, skipped, failed });
     setImporting(false);
+    if ((added > 0 || updated > 0) && typeof onImported === 'function') {
+      onImported({
+        added,
+        updated,
+        skipped,
+        failed,
+        records: perDriverResults,
+      });
+    }
   }
 
   const statusColor = (s) => ({
