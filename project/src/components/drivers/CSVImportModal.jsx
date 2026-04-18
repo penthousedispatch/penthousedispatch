@@ -113,6 +113,7 @@ export default function CSVImportModal({ onClose, companyIdOverride = null }) {
   const [driverResults, setDriverResults] = useState([]);
   const [parseError, setParseError] = useState(null);
   const fileRef = useRef();
+  const resolvedCompanyId = companyIdOverride || (profile?.role === 'company' ? company?.id || null : null);
 
   function handleFile(e) {
     const file = e.target.files[0];
@@ -419,4 +420,3 @@ export default function CSVImportModal({ onClose, companyIdOverride = null }) {
     </div>
   );
 }
-  const resolvedCompanyId = companyIdOverride || (profile?.role === 'company' ? company?.id || null : null);
