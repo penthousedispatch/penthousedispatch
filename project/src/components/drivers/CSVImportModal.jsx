@@ -230,8 +230,10 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
     setDriverResults(perDriverResults);
     setResults({ added, updated, skipped, failed });
     setImporting(false);
+    if (fileRef.current) fileRef.current.value = '';
     if ((added > 0 || updated > 0) && typeof onImported === 'function') {
       onImported({
+        companyId: scopedCompanyId,
         added,
         updated,
         skipped,

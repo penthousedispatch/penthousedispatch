@@ -26,6 +26,26 @@ function CompanyDrivers({ company }) {
   const [savingDriver, setSavingDriver] = useState(false);
   const [driverTaxInfo, setDriverTaxInfo] = useState({});
 
+  async function loadDriverTaxInfo(driverRows) {
+    const driverIds = (driverRows || []).map(driver => driver.id).filter(Boolean);
+    if (driverIds.length) {
+      const { data: taxRows, error: taxError } = await supabase
+        .from('driver_tax_info')
+        .select('driver_id, legal_name, tax_id_last4, w9_completed_at, tax_classification')
+        .in('driver_id', driverIds);
+
+      if (taxError) {
+        handleSupabaseError(taxError, 'CompanyDrivers:loadTaxInfo', { silent: true });
+      } else {
+        setDriverTaxInfo(
+          Object.fromEntries((taxRows || []).map(row => [row.driver_id, row]))
+        );
+      }
+    } else {
+      setDriverTaxInfo({});
+    }
+  }
+
   async function loadCompanyDrivers() {
     if (!company?.id) return;
     setLoading(true);
@@ -43,27 +63,19 @@ function CompanyDrivers({ company }) {
       return;
     }
 
-    setDrivers(data || []);
-
-    const driverIds = (data || []).map(driver => driver.id).filter(Boolean);
-    if (driverIds.length) {
-      const { data: taxRows, error: taxError } = await supabase
-        .from('driver_tax_info')
-        .select('driver_id, legal_name, tax_id_last4, w9_completed_at, tax_classification')
-        .in('driver_id', driverIds);
-
-      if (taxError) {
-        handleSupabaseError(taxError, 'CompanyDrivers:loadTaxInfo', { silent: true });
-      } else {
-        setDriverTaxInfo(
-          Object.fromEntries((taxRows || []).map(row => [row.driver_id, row]))
-        );
-      }
-    } else {
-      setDriverTaxInfo({});
-    }
+    const nextDrivers = data || [];
+    setDrivers(nextDrivers);
+    await loadDriverTaxInfo(nextDrivers);
 
     setLoading(false);
+  }
+
+  async function applyImportedDrivers(payload) {
+    await loadCompanyDrivers();
+    const importedCount = (payload?.added || 0) + (payload?.updated || 0);
+    if (importedCount > 0) {
+      toastSuccess(`${importedCount} driver${importedCount === 1 ? '' : 's'} synced into this company fleet.`);
+    }
   }
 
   useEffect(() => {
@@ -355,8 +367,8 @@ function CompanyDrivers({ company }) {
       {showCSVImport && (
         <CSVImportModal
           companyIdOverride={company?.id || null}
-          onImported={() => {
-            loadCompanyDrivers();
+          onImported={(payload) => {
+            applyImportedDrivers(payload);
           }}
           onClose={() => {
             setShowCSVImport(false);
