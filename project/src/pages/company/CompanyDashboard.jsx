@@ -1172,11 +1172,19 @@ function CompanyGuides() {
   const guides = [
     {
       title: 'Dispatch Guide',
-      copy: 'Use Dispatch to watch your live fleet, review trip assignments, and keep drivers moving. Add or import drivers first so the map can route work to your company only.',
+      copy: 'Use Company Dashboard to watch your live fleet map, review trip assignments, and keep drivers moving in real time. Add or import drivers first so dispatch can route work to your company only.',
     },
     {
       title: 'Drivers Guide',
-      copy: 'The Drivers tab shows only your company drivers. Update their photo, pay, online status, and contact details there before sending them into the field.',
+      copy: 'The Drivers tab shows only your company drivers. Add, import, edit, export, and remove drivers there, then keep their photo, phone, TLC, and status up to date before sending them into the field.',
+    },
+    {
+      title: 'Guide Audio Guide',
+      copy: 'Use the Guide Audio section above to upload onboarding and guide audio files or paste hosted audio links. Drivers who struggle with English can listen instead of only reading.',
+    },
+    {
+      title: 'Marketplace Guide',
+      copy: 'Marketplace shows imported provider trips for your company. Use the refresh and assignment tools there to inspect incoming work and move trips into dispatch.',
     },
     {
       title: 'Trip History Guide',
@@ -1192,7 +1200,7 @@ function CompanyGuides() {
     },
     {
       title: 'AI Controls Guide',
-      copy: 'AI Controls lets your company decide whether route planning, auto-assign, and driver motivation nudges are active without exposing platform-wide AI settings.',
+      copy: 'AI Settings lets your company control route planning, auto-assign, driver motivation nudges, and scheduling priorities like price, proximity, preferred zones, and shared rides without exposing platform-wide AI providers.',
     },
   ];
   const [audioRecords, setAudioRecords] = useState(() =>

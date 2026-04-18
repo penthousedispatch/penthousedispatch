@@ -119,22 +119,32 @@ export default function CSVImportModal({ onClose, companyIdOverride = null }) {
     const file = e.target.files[0];
     if (!file) return;
     setParseError(null);
+    setResults(null);
+    setDriverResults([]);
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const { rows, headers } = parseCSVRobust(ev.target.result);
+      const { rows } = parseCSVRobust(ev.target.result);
       if (rows.length === 0) {
         setParseError('No valid rows found. Make sure the file has a header row and at least one driver row.');
         setPreview(null);
         return;
       }
       setPreview(rows);
-      setMode('file');
+      setMode('upload');
     };
     reader.readAsText(file);
   }
 
   async function importDrivers(driverList) {
+    if (!resolvedCompanyId) {
+      setResults(null);
+      setDriverResults([]);
+      setParseError('No company is attached to this import session yet. Reopen the company Drivers tab and try again.');
+      return;
+    }
+
     setImporting(true);
+    setParseError(null);
     const perDriverResults = [];
     const scopedCompanyId = resolvedCompanyId;
 
@@ -367,6 +377,14 @@ export default function CSVImportModal({ onClose, companyIdOverride = null }) {
 
               {mode === 'upload' && (
                 <div>
+                  {!resolvedCompanyId && (
+                    <div className="flex items-start gap-2 p-3 rounded-xl mb-3" style={{ background: 'rgba(255,71,87,0.06)', border: '1px solid rgba(255,71,87,0.2)' }}>
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#ff4757' }} />
+                      <p className="text-xs" style={{ color: '#ffb3bb' }}>
+                        A company must be selected before CSV drivers can be imported.
+                      </p>
+                    </div>
+                  )}
                   <label
                     className="flex flex-col items-center justify-center h-32 rounded-xl cursor-pointer transition-all"
                     style={{ border: '2px dashed rgba(201,168,76,0.3)', background: 'rgba(201,168,76,0.04)' }}
