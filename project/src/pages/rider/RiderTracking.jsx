@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { MapPin, Clock, User, CheckCircle, Navigation, Volume2, Pause, Square, Share2, Copy } from 'lucide-react';
+import { MapPin, Clock, User, CheckCircle, Navigation, Volume2, Pause, Square, Share2, Copy, Maximize2, Minimize2 } from 'lucide-react';
 import { fbGet, fbListen } from '../../lib/firebase';
 import { getPCarSVG, calcBearing } from '../../components/map/PCarMarker';
 import AnimatedCar from '../../components/ui/AnimatedCar';
@@ -56,6 +56,7 @@ export default function RiderTracking() {
   const [error, setError] = useState('');
   const [mapsLoaded, setMapsLoaded] = useState(mapsReady);
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
+  const [compactMap, setCompactMap] = useState(false);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const driverMarkerRef = useRef(null);
@@ -247,11 +248,18 @@ export default function RiderTracking() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col" style={{ background: '#07090d' }}>
-      <div ref={mapRef} className="flex-1" />
+    <div className="fixed inset-0 flex flex-col overflow-hidden" style={{ background: '#07090d' }}>
+      <div
+        ref={mapRef}
+        className="flex-shrink-0 transition-all duration-300"
+        style={{
+          height: compactMap ? '28vh' : '42vh',
+          minHeight: compactMap ? 190 : 280,
+        }}
+      />
 
       <div
-        className="rounded-t-3xl p-5 space-y-4 flex-shrink-0"
+        className="rounded-t-3xl p-5 space-y-4 flex-1 overflow-y-auto"
         style={{
           background: 'rgba(13,17,23,0.97)',
           backdropFilter: 'blur(20px)',
@@ -260,12 +268,23 @@ export default function RiderTracking() {
           boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
         }}
       >
-        <div
-          className="flex items-center justify-center gap-2 py-2 rounded-xl"
-          style={{ background: `${statusColor}12`, border: `1px solid ${statusColor}30` }}
-        >
-          <div className="w-2 h-2 rounded-full animate-blink" style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
-          <p className="font-700 text-sm" style={{ color: statusColor, fontWeight: 700 }}>{STATUS_LABELS[status] || status}</p>
+        <div className="flex items-center gap-2">
+          <div
+            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl"
+            style={{ background: `${statusColor}12`, border: `1px solid ${statusColor}30` }}
+          >
+            <div className="w-2 h-2 rounded-full animate-blink" style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
+            <p className="font-700 text-sm" style={{ color: statusColor, fontWeight: 700 }}>{STATUS_LABELS[status] || status}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCompactMap(prev => !prev)}
+            className="px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 flex-shrink-0"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+          >
+            {compactMap ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+            {compactMap ? 'Expand Map' : 'Compact Map'}
+          </button>
         </div>
 
         {(usingUploadedAudio || riderVoice.supported) && (

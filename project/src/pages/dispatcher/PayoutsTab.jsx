@@ -28,7 +28,7 @@ function StatusChip({ status }) {
   );
 }
 
-export default function PayoutsTab() {
+export default function PayoutsTab({ embedded = false }) {
   const { drivers, org } = useApp();
   const [payouts, setPayouts] = useState([]);
   const [partners, setPartners] = useState([]);
@@ -185,7 +185,10 @@ export default function PayoutsTab() {
   const driversWithBank = Object.keys(bankAccounts).filter(id => bankAccounts[id]?.verification_status === 'verified').length;
 
   return (
-    <div className="h-full flex flex-col overflow-hidden" style={{ background: '#07090d' }}>
+    <div
+      className={`${embedded ? 'min-h-[760px] rounded-2xl flex flex-col overflow-hidden' : 'h-full flex flex-col overflow-hidden'}`}
+      style={{ background: '#07090d' }}
+    >
       <div className="px-6 py-4 border-b flex-shrink-0 flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
         <div>
           <h2 className="text-base font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Driver Payouts</h2>

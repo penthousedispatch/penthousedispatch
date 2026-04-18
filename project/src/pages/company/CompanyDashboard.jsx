@@ -3,6 +3,7 @@ import { NavLink, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
+import PayoutsTab from '../dispatcher/PayoutsTab';
 import ModuleBoundary from '../../components/app/ModuleBoundary';
 import { DEFAULT_COMPANY_SCHEDULER_PREFS, readCompanySchedulerPrefs, writeCompanySchedulerPrefs } from '../../lib/companySchedulerPrefs';
 import { clearGuideAudio, getGuideAudioRecord, saveGuideAudioFile, saveGuideAudioUrl } from '../../lib/guideAudio';
@@ -951,6 +952,30 @@ function CompanyMarketplace({ company }) {
   );
 }
 
+function CompanyDriverPay({ company }) {
+  return (
+    <div className="pb-48">
+      <div className="max-w-6xl mx-auto px-5 py-5 space-y-4">
+        <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(0,229,160,0.12)' }}>
+          <div className="flex items-start gap-3">
+            <CreditCard className="w-5 h-5 mt-0.5" style={{ color: '#00e5a0' }} />
+            <div>
+              <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Driver payouts</p>
+              <p className="text-sm mt-1 leading-6" style={{ color: 'rgba(255,255,255,0.48)' }}>
+                Companies can create and send driver payouts here. Direct-deposit payouts use the existing secure Stripe ACH flow once drivers connect their bank inside the driver app.
+              </p>
+              <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                Your company bank label and last 4 can be stored in Settings. Full external bank linking should be completed through a secure provider like Plaid or Stripe Financial Connections rather than typed into the app directly.
+              </p>
+            </div>
+          </div>
+        </div>
+        <PayoutsTab embedded />
+      </div>
+    </div>
+  );
+}
+
 function CompanySettings({ company, setCompany }) {
   const [form, setForm] = useState({
     company_name: company?.company_name || '',
@@ -1127,6 +1152,12 @@ function CompanySettings({ company, setCompany }) {
           <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,0.4)' }}>
             This stores the payout destination label for now. Full bank linking and withdrawals can be connected later without changing the company workflow.
           </p>
+          <div className="mt-4 rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <p className="text-sm font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>Secure bank setup</p>
+            <p className="text-xs mt-2 leading-6" style={{ color: 'rgba(255,255,255,0.45)' }}>
+              Driver payouts already use the secure Stripe ACH payout flow in the new <strong>Driver Pay</strong> tab. For your company settlement account, keep using an external secure provider such as Plaid or Stripe Financial Connections for full bank linking. This app stores only the destination label and last 4 so full banking credentials are never handled here.
+            </p>
+          </div>
         </div>
         <div
           className="sticky bottom-4 z-10 pt-3"
@@ -1605,6 +1636,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
     { path: `${basePath}/drivers`, routePath: 'drivers', label: 'Drivers', icon: Users },
     { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
     { path: `${basePath}/invoices`, routePath: 'invoices', label: 'Invoices', icon: FileText },
+    { path: `${basePath}/payouts`, routePath: 'payouts', label: 'Driver Pay', icon: CreditCard },
     { path: `${basePath}/ai-controls`, routePath: 'ai-controls', label: 'AI Settings', icon: Bot },
     { path: `${basePath}/guides`, routePath: 'guides', label: 'Guides', icon: BookOpen },
     { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
@@ -1731,6 +1763,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
           <Route path="drivers" element={renderCompanyModule('Drivers', <CompanyDrivers company={activeCompany} />)} />
           <Route path="trips" element={renderCompanyModule('Trip History', <CompanyTrips company={activeCompany} />)} />
           <Route path="invoices" element={renderCompanyModule('Invoices', <CompanyInvoices company={activeCompany} />)} />
+          <Route path="payouts" element={renderCompanyModule('Driver Pay', <CompanyDriverPay company={activeCompany} />)} />
           <Route path="ai-controls" element={renderCompanyModule('AI Controls', <CompanyAIControls company={activeCompany} setCompany={setCompany} />)} />
           <Route path="guides" element={renderCompanyModule('Guides', <CompanyGuides />)} />
           <Route path="settings" element={renderCompanyModule('Settings', <CompanySettings company={activeCompany} setCompany={setCompany} />)} />
