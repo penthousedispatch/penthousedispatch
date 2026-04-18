@@ -261,11 +261,18 @@ function CompanyDrivers({ company }) {
   }
 
   return (
-    <div className="p-6 pb-32 max-w-5xl mx-auto">
+    <div className="p-6 pb-48 max-w-5xl mx-auto">
       <div className="mb-4">
         <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Drivers</h2>
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
           Company fleet visibility for dispatch, onboarding, and availability.
+        </p>
+      </div>
+
+      <div className="rounded-xl p-4 mb-4" style={{ background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.16)' }}>
+        <p className="text-sm font-600" style={{ color: '#dff4ff', fontWeight: 600 }}>Driver app and onboarding</p>
+        <p className="text-xs mt-1.5" style={{ color: 'rgba(223,244,255,0.72)', lineHeight: 1.6 }}>
+          Use <strong>Send App</strong> to text or email the driver app link. Use <strong>Onboarding</strong> to review app setup, company approval, dispatch readiness, and whether the identity last 4 was saved for payroll or Sentry readiness.
         </p>
       </div>
 
@@ -389,17 +396,18 @@ function CompanyDrivers({ company }) {
                     }}
                   >
                     <ClipboardList className="w-3.5 h-3.5" />
-                    {String(driver.layer3_status || '').toLowerCase() === 'ready' ? 'Ready' : 'Review'}
+                    Onboarding
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => sendDriverApp(driver)}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center"
-                    style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.18)', color: '#c9a84c' }}
+                    className="h-9 px-3 rounded-lg flex items-center justify-center gap-2"
+                    style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.18)', color: '#c9a84c', fontSize: 12, fontWeight: 600 }}
                     title="Send driver app"
                   >
                     <Send className="w-4 h-4" />
+                    <span className="hidden xl:inline">Send App</span>
                   </button>
                   <button
                     onClick={() => setEditingDriver({
@@ -625,6 +633,23 @@ function CompanyDrivers({ company }) {
                   Sending the driver app opens the same driver route with onboarding slides, guide audio, and the company-required profile setup. Full Social Security collection should stay with your external verification provider; this app stores only the last 4.
                 </p>
               </div>
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => sendDriverApp(onboardingDriver)}
+                  className="flex-1 px-4 py-2.5 rounded-xl"
+                  style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600 }}
+                >
+                  Send Driver App
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOnboardingDriver(null)}
+                  className="flex-1 btn-ghost py-2.5"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -670,7 +695,7 @@ function CompanyTrips({ company }) {
   const statusColor = { pending: '#c9a84c', accepted: '#0ea5e9', completed: '#00e5a0', rejected: '#ff4757' };
 
   return (
-    <div className="p-6 pb-32 max-w-4xl mx-auto">
+    <div className="p-6 pb-48 max-w-4xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Trip History</h2>
       {loading ? (
         <div className="flex items-center justify-center h-40">
@@ -728,7 +753,7 @@ function CompanyInvoices({ company }) {
   const statusColor = { draft: '#c9a84c', sent: '#0ea5e9', paid: '#00e5a0', overdue: '#ff4757' };
 
   return (
-    <div className="p-6 pb-32 max-w-4xl mx-auto">
+    <div className="p-6 pb-48 max-w-4xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Invoices</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
         <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -851,7 +876,7 @@ function CompanyMarketplace({ company }) {
   };
 
   return (
-    <div className="p-6 pb-32 max-w-5xl mx-auto space-y-4">
+    <div className="p-6 pb-48 max-w-5xl mx-auto space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Marketplace Trips</h2>
@@ -994,7 +1019,7 @@ function CompanySettings({ company, setCompany }) {
   }
 
   return (
-    <div className="p-6 pb-32 max-w-2xl mx-auto">
+    <div className="p-6 pb-48 max-w-2xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Company Settings</h2>
       <form onSubmit={handleSave} className="space-y-4">
         <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -1103,9 +1128,18 @@ function CompanySettings({ company, setCompany }) {
             This stores the payout destination label for now. Full bank linking and withdrawals can be connected later without changing the company workflow.
           </p>
         </div>
-        <button type="submit" disabled={saving} className="btn-gold px-5 py-2.5 text-sm">
-          {saved ? 'Saved!' : saving ? 'Saving...' : 'Save Changes'}
-        </button>
+        <div
+          className="sticky bottom-4 z-10 pt-3"
+          style={{
+            background: 'linear-gradient(180deg, rgba(7,9,13,0), rgba(7,9,13,0.92) 22%, #07090d 100%)',
+          }}
+        >
+          <div className="rounded-2xl p-3" style={{ background: 'rgba(13,17,23,0.96)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <button type="submit" disabled={saving} className="btn-gold w-full px-5 py-2.5 text-sm">
+              {saved ? 'Saved!' : saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
       </form>
     </div>
   );
@@ -1222,7 +1256,7 @@ function CompanyAIControls({ company, setCompany }) {
   ];
 
   return (
-    <div className="p-6 pb-32 max-w-3xl mx-auto space-y-4">
+    <div className="p-6 pb-48 max-w-3xl mx-auto space-y-4">
       <div>
         <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>AI Settings</h2>
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Company admins can control routing, auto-assignment, and scheduling weights here without exposing platform-level AI providers.</p>
@@ -1298,9 +1332,18 @@ function CompanyAIControls({ company, setCompany }) {
           </button>
         </div>
       </div>
-      <button type="button" onClick={handleSave} disabled={saving} className="btn-gold px-5 py-2.5 text-sm">
-        {saving ? 'Saving...' : 'Save AI Settings'}
-      </button>
+      <div
+        className="sticky bottom-4 z-10 pt-3"
+        style={{
+          background: 'linear-gradient(180deg, rgba(7,9,13,0), rgba(7,9,13,0.92) 22%, #07090d 100%)',
+        }}
+      >
+        <div className="rounded-2xl p-3" style={{ background: 'rgba(13,17,23,0.96)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <button type="button" onClick={handleSave} disabled={saving} className="btn-gold w-full px-5 py-2.5 text-sm">
+            {saving ? 'Saving...' : 'Save AI Settings'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1390,7 +1433,7 @@ function CompanyGuides() {
   }
 
   return (
-    <div className="p-6 pb-32 max-w-4xl mx-auto">
+    <div className="p-6 pb-48 max-w-4xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Dashboard Guides</h2>
       <div className="rounded-xl p-4 mb-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
@@ -1520,12 +1563,34 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
     let mounted = true;
 
     async function loadPlatformAiState() {
-      let query = supabase.from('ai_settings').select('all_bots_paused').order('updated_at', { ascending: false }).limit(1);
+      let query = supabase
+        .from('ai_settings')
+        .select('all_bots_paused, provider, motivation_enabled, scheduling_enabled, sentry_bot_enabled, scheduler_bot_enabled, health_bot_enabled, security_bot_enabled')
+        .order('updated_at', { ascending: false })
+        .limit(1);
       if (org?.id) {
-        query = supabase.from('ai_settings').select('all_bots_paused').eq('org_id', org.id).limit(1);
+        query = supabase
+          .from('ai_settings')
+          .select('all_bots_paused, provider, motivation_enabled, scheduling_enabled, sentry_bot_enabled, scheduler_bot_enabled, health_bot_enabled, security_bot_enabled')
+          .eq('org_id', org.id)
+          .limit(1);
       }
       const { data } = await query.maybeSingle();
-      if (mounted) setPlatformAiPaused(Boolean(data?.all_bots_paused));
+      const anyAiServiceEnabled = Boolean(
+        data?.provider &&
+        data.provider !== 'disabled' &&
+        (
+          data?.motivation_enabled ||
+          data?.scheduling_enabled ||
+          data?.sentry_bot_enabled ||
+          data?.scheduler_bot_enabled ||
+          data?.health_bot_enabled ||
+          data?.security_bot_enabled
+        )
+      );
+      if (mounted) {
+        setPlatformAiPaused(Boolean(data?.all_bots_paused) || !anyAiServiceEnabled);
+      }
     }
 
     loadPlatformAiState();
@@ -1652,7 +1717,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
         </div>
       )}
 
-      <main className="flex-1 overflow-y-auto pb-8">
+      <main className="flex-1 overflow-y-auto pb-16">
         <Routes>
           <Route
             index

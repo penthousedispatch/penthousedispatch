@@ -111,7 +111,7 @@ function AdminPlatformHome() {
   ];
 
   return (
-    <div className="h-full overflow-y-auto p-6 pb-32" style={{ color: '#e5e7eb' }}>
+    <div className="h-full overflow-y-auto p-6 pb-48" style={{ color: '#e5e7eb' }}>
       <div className="max-w-6xl mx-auto space-y-6">
         <div>
           <h1 className="text-xl font-700 mb-1" style={{ color: '#c9a84c', fontWeight: 700 }}>Platform Tools</h1>

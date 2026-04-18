@@ -1649,7 +1649,7 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-5 pb-32">
         <div className="max-w-2xl space-y-4">
           {globalKillSwitch && (
             <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)' }}>

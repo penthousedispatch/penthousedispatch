@@ -48,6 +48,10 @@ const SCENARIOS = {
   long_haul: { label: 'Long Haul', templates: TRIP_TEMPLATES.filter(t => t.miles >= 14) },
 };
 
+function normalizeScenarioTemplates(templates) {
+  return Array.isArray(templates) && templates.length > 0 ? templates : SCENARIOS.full.templates;
+}
+
 function getSandboxMarker(companyId) {
   return `TEST_MODE_SANDBOX:${companyId}`;
 }
@@ -194,8 +198,9 @@ export default function TestModeSandbox() {
     const today = new Date();
     today.setHours(6, 0, 0, 0);
     const sentryPrefix = getSandboxMarketplacePrefix(companyId);
+    const normalizedTemplates = normalizeScenarioTemplates(templates);
 
-    const rows = templates.map((tt, i) => {
+    const rows = normalizedTemplates.map((tt, i) => {
       const tripTime = new Date(today.getTime() + i * 45 * 60000);
       const pickupZone = NYC_BOROUGHS[i % NYC_BOROUGHS.length];
       const dropoffZone = NYC_BOROUGHS[(i + 2) % NYC_BOROUGHS.length];
@@ -236,6 +241,8 @@ export default function TestModeSandbox() {
   async function activateTestMode(selectedTemplates = SCENARIOS.full.templates, scenarioLabel = SCENARIOS.full.label) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { addLog('Not authenticated', 'error'); return; }
+    const normalizedTemplates = normalizeScenarioTemplates(selectedTemplates);
+    const normalizedScenarioLabel = typeof scenarioLabel === 'string' ? scenarioLabel : SCENARIOS.full.label;
 
     setSeeding(true);
     setSeedStatus('seeding');
@@ -368,19 +375,27 @@ export default function TestModeSandbox() {
 
       if (seededDriverIds.length === 0) throw new Error('No drivers were seeded — cannot create trips');
 
-      addLog(`Seeding ${selectedTemplates.length} fake marketplace trips for ${scenarioLabel}...`, 'info');
+      addLog(`Seeding ${normalizedTemplates.length} fake marketplace trips for ${normalizedScenarioLabel}...`, 'info');
       const seededMarketplaceCount = await seedMarketplaceForTemplates(
         testCompany.id,
-        selectedTemplates,
-        scenarioLabel.toLowerCase().replace(/\s+/g, '_'),
+        normalizedTemplates,
+        normalizedScenarioLabel.toLowerCase().replace(/\s+/g, '_'),
       );
       addLog(
-        `${seededMarketplaceCount}/${selectedTemplates.length} marketplace trips seeded`,
-        seededMarketplaceCount === selectedTemplates.length ? 'success' : 'warn'
+        `${seededMarketplaceCount}/${normalizedTemplates.length} marketplace trips seeded`,
+        seededMarketplaceCount === normalizedTemplates.length ? 'success' : 'warn'
       );
-      addLog(`Seeding ${selectedTemplates.length} scheduled assignment examples for ${scenarioLabel}...`, 'info');
-      const successfulTrips = await seedTripsForTemplates(testCompany.id, seededDriverIds, selectedTemplates, scenarioLabel.toLowerCase().replace(/\s+/g, '_'));
-      addLog(`${successfulTrips}/${selectedTemplates.length} trips seeded`, successfulTrips === selectedTemplates.length ? 'success' : 'warn');
+      addLog(`Seeding ${normalizedTemplates.length} scheduled assignment examples for ${normalizedScenarioLabel}...`, 'info');
+      const successfulTrips = await seedTripsForTemplates(
+        testCompany.id,
+        seededDriverIds,
+        normalizedTemplates,
+        normalizedScenarioLabel.toLowerCase().replace(/\s+/g, '_'),
+      );
+      addLog(
+        `${successfulTrips}/${normalizedTemplates.length} trips seeded`,
+        successfulTrips === normalizedTemplates.length ? 'success' : 'warn'
+      );
       addLog('Driver login credentials seeded. Username format: tst001 / password: DEMO-TLC-001', 'success');
 
       const sessionData = {
@@ -696,7 +711,7 @@ export default function TestModeSandbox() {
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto px-5 py-6 pb-32 space-y-6">
+      <div className="max-w-4xl mx-auto px-5 py-6 pb-48 space-y-6">
         <div className="flex items-center gap-3 mb-1">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)' }}>
             <FlaskConical className="w-5 h-5" style={{ color: '#f59e0b' }} />
@@ -719,7 +734,7 @@ export default function TestModeSandbox() {
               <StatusBadge status={isActive ? (seedStatus === 'idle' ? 'done' : seedStatus) : seedStatus} />
               {!isActive ? (
                 <button
-                  onClick={activateTestMode}
+                  onClick={() => activateTestMode()}
                   disabled={seeding}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all"
                   style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#f59e0b', fontWeight: 600 }}

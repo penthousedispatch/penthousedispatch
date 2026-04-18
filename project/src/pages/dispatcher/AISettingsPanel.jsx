@@ -448,7 +448,7 @@ export default function AISettingsPanel() {
       security_bot_enabled: enabled,
       codex_bot_enabled: enabled,
       claude_bot_enabled: enabled,
-      all_bots_paused: false,
+      all_bots_paused: !enabled,
     };
     setForm(newForm);
     if (!resolvedOrgId) return;
