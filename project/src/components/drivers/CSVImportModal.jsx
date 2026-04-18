@@ -182,36 +182,50 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
         is_active: isActive,
       };
 
-      let existingQuery = supabase
+      const { data: existing, error: lookupError } = await supabase
         .from('drivers')
-        .select('id, full_name')
-        .eq('tlc_number', tlc);
+        .select('id, full_name, company_id, is_active')
+        .eq('tlc_number', tlc)
+        .limit(1)
+        .maybeSingle();
 
-      if (scopedCompanyId) {
-        existingQuery = existingQuery.eq('company_id', scopedCompanyId);
-      }
+      let error = lookupError || null;
+      let finalStatus = 'failed';
+      let finalReason = lookupError?.message || 'Database error';
 
-      const { data: existing } = await existingQuery.maybeSingle();
-
-      let error;
-      if (existing) {
+      if (!error && existing) {
         const { error: updateError } = await supabase
           .from('drivers')
-          .update(payload)
+          .update({
+            ...payload,
+            company_id: scopedCompanyId,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          })
           .eq('id', existing.id);
-        error = updateError;
-      } else {
+        error = updateError || null;
+        if (!error) {
+          finalStatus = existing.company_id && existing.company_id !== scopedCompanyId ? 'updated' : 'updated';
+          finalReason = existing.company_id && existing.company_id !== scopedCompanyId
+            ? `Moved existing TLC record into this company (was: ${existing.full_name})`
+            : `Updated existing record (was: ${existing.full_name})`;
+        }
+      } else if (!error) {
         const { error: insertError } = await supabase
           .from('drivers')
           .insert(payload);
-        error = insertError;
+        error = insertError || null;
+        if (!error) {
+          finalStatus = 'added';
+          finalReason = 'New driver added';
+        }
       }
 
       if (!error) {
         perDriverResults.push({
           name: fullName,
-          status: existing ? 'updated' : 'added',
-          reason: existing ? `Updated existing record (was: ${existing.full_name})` : 'New driver added',
+          status: finalStatus,
+          reason: finalReason,
         });
       } else {
         perDriverResults.push({
