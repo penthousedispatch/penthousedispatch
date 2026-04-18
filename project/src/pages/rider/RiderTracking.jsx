@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { MapPin, Clock, User, CheckCircle, Navigation } from 'lucide-react';
+import { MapPin, Clock, User, CheckCircle, Navigation, Volume2, Pause, Square, Share2, Copy } from 'lucide-react';
 import { fbGet, fbListen } from '../../lib/firebase';
 import { getPCarSVG, calcBearing } from '../../components/map/PCarMarker';
 import AnimatedCar from '../../components/ui/AnimatedCar';
 import { loadCompanyBranding, DEFAULT_BRANDING } from '../../lib/companyBranding';
+import { getGuideAudioSrc, useGuideAudioPlayback } from '../../lib/guideAudio';
+import { useDriverVoiceGuide } from '../../lib/driverVoiceGuide';
 
 const GMAPS_KEY = 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4';
 const DARK_STYLE = [
@@ -59,6 +61,21 @@ export default function RiderTracking() {
   const driverMarkerRef = useRef(null);
   const animationFrameRef = useRef(null);
   const previousDriverCoordsRef = useRef(null);
+  const riderGuideNarration = useMemo(() => {
+    const statusText = STATUS_LABELS[tracking?.status] || 'Your ride is being tracked';
+    return [
+      `${statusText}.`,
+      tracking?.driverName ? `${tracking.driverName} is your driver.` : '',
+      tracking?.puAddress ? `Pickup is ${tracking.puAddress}.` : '',
+      tracking?.doAddress ? `Dropoff is ${tracking.doAddress}.` : '',
+      'Keep this page open to follow your driver in real time.',
+    ].filter(Boolean).join(' ');
+  }, [tracking]);
+  const riderAudioSrc = getGuideAudioSrc('rider_guide');
+  const riderAudio = useGuideAudioPlayback(riderAudioSrc);
+  const usingUploadedAudio = riderAudio.available;
+  const riderVoice = useDriverVoiceGuide(usingUploadedAudio ? '' : riderGuideNarration, { rate: 0.96 });
+  const audioControl = usingUploadedAudio ? riderAudio : riderVoice;
 
   function cancelDriverAnimation() {
     if (animationFrameRef.current) {
@@ -212,6 +229,22 @@ export default function RiderTracking() {
   const status = tracking?.status || 'assigned';
   const statusColor = STATUS_COLORS[status] || '#c9a84c';
   const initials = tracking?.driverName?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'D';
+  const trackingUrl = tracking?.trackingUrl || (riderKey ? `${window.location.origin}/rider?trip=${encodeURIComponent(riderKey)}` : '');
+
+  async function handleShareTracking() {
+    if (!trackingUrl) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Ride tracking',
+          text: 'Track your ride here.',
+          url: trackingUrl,
+        });
+        return;
+      } catch {}
+    }
+    navigator.clipboard?.writeText(trackingUrl).catch(() => {});
+  }
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ background: '#07090d' }}>
@@ -234,6 +267,40 @@ export default function RiderTracking() {
           <div className="w-2 h-2 rounded-full animate-blink" style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
           <p className="font-700 text-sm" style={{ color: statusColor, fontWeight: 700 }}>{STATUS_LABELS[status] || status}</p>
         </div>
+
+        {(usingUploadedAudio || riderVoice.supported) && (
+          <div className="rounded-xl px-4 py-3" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.16)' }}>
+            <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.55)' }}>
+              {usingUploadedAudio
+                ? 'Rider audio guide is available here so instructions can be heard instead of read.'
+                : 'Voice helper can read the rider instructions aloud from here.'}
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={audioControl.toggle}
+                className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
+              >
+                {audioControl.playing && !audioControl.paused ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                {audioControl.playing || audioControl.paused
+                  ? (audioControl.paused ? 'Resume audio' : 'Pause audio')
+                  : (usingUploadedAudio ? 'Play rider audio' : 'Listen')}
+              </button>
+              {(audioControl.playing || audioControl.paused) && (
+                <button
+                  type="button"
+                  onClick={audioControl.stop}
+                  className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.72)' }}
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  Stop
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {tracking?.driverName && (
           <div className="flex items-center gap-3">
@@ -293,6 +360,37 @@ export default function RiderTracking() {
             </div>
           )}
         </div>
+
+        {trackingUrl && (
+          <div className="rounded-xl px-3 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.35)' }}>Tracking Link</p>
+                <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.62)' }}>{trackingUrl}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(trackingUrl).catch(() => {})}
+                  className="px-3 py-2 rounded-xl text-xs flex items-center gap-1.5"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShareTracking}
+                  className="px-3 py-2 rounded-xl text-xs flex items-center gap-1.5"
+                  style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.24)', color: '#c9a84c' }}
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  Share
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {tracking?.tripId && (
           <p className="text-xs text-center font-mono" style={{ color: 'rgba(255,255,255,0.25)' }}>

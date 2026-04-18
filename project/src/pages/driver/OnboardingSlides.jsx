@@ -33,9 +33,10 @@ export default function OnboardingSlides({ onDone }) {
     () => `${slide.title}. ${slide.desc}`,
     [slide]
   );
-  const voice = useDriverVoiceGuide(narration);
-  const uploadedAudio = useGuideAudioPlayback(getGuideAudioSrc('driver_onboarding'));
+  const uploadedAudioSrc = getGuideAudioSrc('driver_onboarding');
+  const uploadedAudio = useGuideAudioPlayback(uploadedAudioSrc);
   const usingUploadedAudio = uploadedAudio.available;
+  const voice = useDriverVoiceGuide(usingUploadedAudio ? '' : narration);
   const audioControl = usingUploadedAudio ? uploadedAudio : voice;
 
   return (

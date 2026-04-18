@@ -142,9 +142,10 @@ export default function DriverGuide({ onClose }) {
       return `${section.title}. ${qas}`;
     }).join(' ');
   }, []);
-  const voice = useDriverVoiceGuide(guideNarration, { rate: 0.96 });
-  const uploadedAudio = useGuideAudioPlayback(getGuideAudioSrc('driver_guide'));
+  const uploadedAudioSrc = getGuideAudioSrc('driver_guide');
+  const uploadedAudio = useGuideAudioPlayback(uploadedAudioSrc);
   const usingUploadedAudio = uploadedAudio.available;
+  const voice = useDriverVoiceGuide(usingUploadedAudio ? '' : guideNarration, { rate: 0.96 });
   const audioControl = usingUploadedAudio ? uploadedAudio : voice;
 
   const filtered = search.trim().length > 1

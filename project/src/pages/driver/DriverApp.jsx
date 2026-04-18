@@ -27,6 +27,11 @@ const DEFAULT_RIDE_PREFERENCES = {
   sharedRidePreference: 'Same direction',
 };
 
+function buildRiderTrackingUrl(riderKey) {
+  if (!riderKey || typeof window === 'undefined') return '';
+  return `${window.location.origin}/rider?trip=${encodeURIComponent(riderKey)}`;
+}
+
 function DriverAccessChooser({ role, company, onSelectDriver }) {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -666,9 +671,26 @@ export default function DriverApp() {
     stopCountdown();
 
     const acceptedAt = new Date().toISOString();
+    const trackingUrl = buildRiderTrackingUrl(currentTrip?.riderKey);
 
     await fbSet(`trip_assignments/${currentTrip.tripId}`, { status: 'accepted', driverId: driverData.id, acceptedAt: Date.now() });
     await fbSet(`driver_notifications/${driverData.id}`, null);
+    if (currentTrip?.riderKey) {
+      await fbSet(`rider_tracking/${currentTrip.riderKey}`, {
+        status: 'accepted',
+        tripId: currentTrip.tripId,
+        riderKey: currentTrip.riderKey,
+        company_id: driverRecord?.company_id || null,
+        driverId: driverData.id,
+        driverName: driverRecord?.full_name || driverData?.name || 'Driver',
+        driverPhoto: driverRecord?.photo_data || '',
+        puAddress: currentTrip?.puAddress || currentTrip?.pu_address || '',
+        doAddress: currentTrip?.doAddress || currentTrip?.do_address || '',
+        puTime: currentTrip?.puTime || currentTrip?.scheduled_pick_up_timestamp || '',
+        acceptedAt: Date.now(),
+        trackingUrl,
+      });
+    }
 
     if (currentTrip.tripId) {
       await supabase
@@ -692,6 +714,18 @@ export default function DriverApp() {
         });
       }
     }
+
+    await publishTripAlert(
+      'driver_accepted_trip',
+      `${driverData?.name || 'Driver'} accepted trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}. Rider tracking link is ready.`,
+      'info',
+      {
+        status: 'accepted',
+        accepted_at: acceptedAt,
+        rider_key: currentTrip?.riderKey || null,
+        tracking_url: trackingUrl || null,
+      }
+    );
 
     setCurrentTrip(prev => ({ ...prev, acceptedAt }));
     setSheetState('navigation');

@@ -1309,6 +1309,7 @@ function CompanyGuides() {
   const GUIDE_AUDIO_ITEMS = [
     { key: 'driver_onboarding', title: 'Driver Onboarding Audio', desc: 'Audio guide for first-time driver onboarding steps.' },
     { key: 'driver_guide', title: 'Driver Guide Audio', desc: 'Full driver app instructions for shift, trip, and dispatch behavior.' },
+    { key: 'rider_guide', title: 'Rider Guide Audio', desc: 'Optional rider tracking narration for pickup, wait, and arrival instructions.' },
     { key: 'company_guide', title: 'Company Guide Audio', desc: 'Optional narrated overview for company dashboard training.' },
   ];
   const guides = [
@@ -1322,11 +1323,11 @@ function CompanyGuides() {
     },
     {
       title: 'Guide Audio Guide',
-      copy: 'Use the Guide Audio section above to upload onboarding and guide audio files or paste hosted audio links. Drivers who struggle with English can listen instead of only reading.',
+      copy: 'Use the Guide Audio section above to upload onboarding and guide audio files or paste hosted audio links. Drivers and riders who struggle with English can listen instead of only reading.',
     },
     {
       title: 'Marketplace Guide',
-      copy: 'Marketplace shows imported provider trips for your company. Use the refresh and assignment tools there to inspect incoming work and move trips into dispatch.',
+      copy: 'Marketplace shows imported provider trips for your company. Use the refresh and assignment tools there to inspect incoming work and move trips into dispatch. Rider tracking links are generated once a driver accepts the trip.',
     },
     {
       title: 'Trip History Guide',
