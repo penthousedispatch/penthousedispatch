@@ -138,6 +138,8 @@ const BOT_DEFS = [
   },
 ];
 
+const CORE_BOT_IDS = ['sentry_bot', 'scheduler_bot', 'health_bot', 'security_bot'];
+
 function getDefaultBotConfig(def, orgId) {
   return {
     org_id: orgId,
@@ -1102,7 +1104,7 @@ export default function BotTeamPanel() {
         org_id: resolvedOrgId,
         bot_id: def.id,
         bot_name: def.name,
-        kill_switch: next,
+        kill_switch: CORE_BOT_IDS.includes(def.id) ? next : true,
         autonomy_level: botConfigs[def.id]?.autonomy_level || def.defaultAutonomyLevel || 'observe',
         risk_threshold: botConfigs[def.id]?.risk_threshold || def.defaultRiskThreshold || 'low',
         allowed_actions: botConfigs[def.id]?.allowed_actions || def.defaultAllowedActions,
@@ -1361,7 +1363,7 @@ export default function BotTeamPanel() {
     const aiSettings = await getAiSettings(resolvedOrgId);
     const runtime = await getBotRuntimeSettings(resolvedOrgId, 'codex_bot', 'openai', aiSettings);
     if (!runtime?.api_key) {
-      return { summary: 'CodexBot is waiting for an OpenAI API key', error: 'OpenAI is not configured for CodexBot' };
+      return { summary: 'Frank is waiting for an API key before he can run.' };
     }
 
     const { data: recentFailures } = await supabase
@@ -1437,7 +1439,7 @@ Only recommend actions that match the allowed action list. Prefer the smallest s
     const aiSettings = await getAiSettings(resolvedOrgId);
     const runtime = await getBotRuntimeSettings(resolvedOrgId, 'claude_bot', 'anthropic', aiSettings);
     if (!runtime?.api_key) {
-      return { summary: 'ClaudeBot is waiting for an Anthropic API key', error: 'Anthropic is not configured for ClaudeBot' };
+      return { summary: 'Darius is waiting for an API key before he can run.' };
     }
 
     const { data: threatRows } = await supabase
@@ -1525,8 +1527,8 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
       scheduler_bot: on,
       health_bot: on,
       security_bot: on,
-      codex_bot: on,
-      claude_bot: on,
+      codex_bot: false,
+      claude_bot: false,
     });
     await persistAiSettings({
       sentry_bot_enabled: on,
@@ -1537,7 +1539,7 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
     for (const botId of ['codex_bot', 'claude_bot']) {
       await saveConfig(botId, {
         ...(botConfigs[botId] || getDefaultBotConfig(BOT_DEFS.find(bot => bot.id === botId), resolvedOrgId)),
-        kill_switch: !on,
+        kill_switch: true,
       });
     }
   }

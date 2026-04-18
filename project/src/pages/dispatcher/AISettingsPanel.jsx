@@ -85,6 +85,8 @@ const BOT_SERVICES = [
   },
 ];
 
+const CORE_BOT_IDS = ['sentry_bot', 'scheduler_bot', 'health_bot', 'security_bot'];
+
 const DEFAULT_FORM = {
   provider: 'disabled',
   api_key: '',
@@ -446,14 +448,14 @@ export default function AISettingsPanel() {
       scheduler_bot_enabled: enabled,
       health_bot_enabled: enabled,
       security_bot_enabled: enabled,
-      codex_bot_enabled: enabled,
-      claude_bot_enabled: enabled,
+      codex_bot_enabled: form.codex_bot_enabled,
+      claude_bot_enabled: form.claude_bot_enabled,
       all_bots_paused: !enabled,
     };
     setForm(newForm);
     if (!resolvedOrgId) return;
     await persistCoreBotFlags(newForm);
-    for (const bot of BOT_SERVICES) {
+    for (const bot of BOT_SERVICES.filter(service => CORE_BOT_IDS.includes(service.id))) {
       await syncBotKillSwitch(bot.id, enabled);
     }
   }
