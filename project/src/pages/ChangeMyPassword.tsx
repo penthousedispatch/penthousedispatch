@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { getAuthRedirectUrl } from "../lib/mobileRuntime";
 
 export default function ChangeMyPassword() {
   const navigate = useNavigate();
@@ -79,7 +80,7 @@ export default function ChangeMyPassword() {
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/change-password`,
+        redirectTo: getAuthRedirectUrl('/change-password'),
       });
 
       setStatus(

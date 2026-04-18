@@ -22,8 +22,29 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.penthousedispatch.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>penthousedispatch</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Penthouse Dispatch uses the camera so companies and drivers can add profile and vehicle photos when needed.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Penthouse Dispatch uses your location to show live driver positions, trip progress, and rider tracking while the app is in use.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Penthouse Dispatch saves uploaded driver and vehicle images to support onboarding and rider visibility.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Penthouse Dispatch lets you pick driver and vehicle photos from your library for onboarding and dispatch visibility.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

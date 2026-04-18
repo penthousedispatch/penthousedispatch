@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useLocation } from 'react-router-dom';
 import { Eye, EyeOff, Lock, Mail, User, Building2, Database } from 'lucide-react';
+import { getAuthRedirectUrl } from '../lib/mobileRuntime';
 
 export default function AuthPage() {
   const location = useLocation();
@@ -52,7 +53,7 @@ export default function AuthPage() {
         email: cleanEmail,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth?auth=verified`,
+          emailRedirectTo: getAuthRedirectUrl('/auth?auth=verified'),
           data: {
             full_name: cleanName,
             role: nextRole,
@@ -113,7 +114,7 @@ export default function AuthPage() {
     setLoading(true);
 
     const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: `${window.location.origin}/change-password`,
+      redirectTo: getAuthRedirectUrl('/change-password'),
     });
 
     if (err) {

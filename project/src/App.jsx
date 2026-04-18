@@ -14,6 +14,7 @@ import ToastContainer from './components/ui/ToastContainer';
 import ChangeMyPassword from './pages/ChangeMyPassword'; 
 import { LogOut, RefreshCw } from 'lucide-react';
 import { normalizeAppRole } from './lib/roles';
+import { isNativeApp, parseIncomingAppUrl } from './lib/mobileRuntime';
 
 function defaultPathForRole(role) {
   if (role === 'admin') return '/admin/ops';
@@ -252,6 +253,33 @@ function AppRoutes() {
       });
     }
   }, [location.hash, location.pathname, location.search, navigate]);
+
+  React.useEffect(() => {
+    if (!isNativeApp()) return undefined;
+
+    let mounted = true;
+    let listener = null;
+
+    async function attachListener() {
+      const { App: CapacitorApp } = await import('@capacitor/app');
+      listener = await CapacitorApp.addListener('appUrlOpen', ({ url }) => {
+        if (!mounted) return;
+        const nextPath = parseIncomingAppUrl(url);
+        if (!nextPath) return;
+        if (nextPath.startsWith('/change-password')) {
+          sessionStorage.setItem('pd_password_recovery', 'true');
+        }
+        navigate(nextPath, { replace: true });
+      });
+    }
+
+    attachListener();
+
+    return () => {
+      mounted = false;
+      listener?.remove?.();
+    };
+  }, [navigate]);
 
   if (loading && !user) return <LoadingScreen />;
 
