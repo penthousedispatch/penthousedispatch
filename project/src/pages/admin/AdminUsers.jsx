@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
+import { normalizeAppRole } from '../../lib/roles';
+import { ensurePlatformAdminOrg, isPlatformOwnerUser } from '../../lib/platformAdminOrg';
+import { toastError, toastSuccess, toastWarn } from '../../utils/errorHandler';
 import { Users, ShieldCheck, RefreshCw } from 'lucide-react';
 
-const ROLES = ['admin', 'company', 'driver'];
+const ROLES = ['admin', 'company', 'driver', 'rider'];
 
 export default function AdminUsers() {
-  const { isPlatformOwner } = useApp();
+  const { isPlatformOwner, user: sessionUser } = useApp();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
@@ -15,20 +18,97 @@ export default function AdminUsers() {
 
   async function loadUsers() {
     setLoading(true);
-    const { data } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    if (error) {
+      toastError(error.message || 'Failed to load users.');
+      setUsers([]);
+      setLoading(false);
+      return;
+    }
     setUsers(data || []);
     setLoading(false);
   }
 
-  async function updateRole(userId, newRole) {
-    if (newRole === 'admin' && !isPlatformOwner) return;
-    setSaving(userId);
-    await supabase.from('profiles').update({ role: newRole }).eq('id', userId);
-    setSaving(null);
-    await loadUsers();
+  async function updateRole(userRecord, nextRoleValue) {
+    const currentRole = normalizeAppRole(userRecord?.role) || 'company';
+    const nextRole = normalizeAppRole(nextRoleValue) || 'company';
+    const isProtectedOwner = isPlatformOwnerUser({ email: userRecord?.email });
+
+    if (currentRole === nextRole) return;
+
+    if (isProtectedOwner && nextRole !== 'admin') {
+      toastWarn('Platform owner emails must remain admin accounts.');
+      return;
+    }
+
+    if (nextRole === 'admin' && !isPlatformOwner) {
+      toastWarn('Only the platform owner can promote another user to admin.');
+      return;
+    }
+
+    setSaving(userRecord.id);
+
+    try {
+      if (nextRole === 'admin') {
+        const platformOrg = await ensurePlatformAdminOrg(sessionUser, { forceBootstrap: true });
+
+        if (!platformOrg?.id) {
+          throw new Error('No platform admin organization is available for this promotion.');
+        }
+
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ role: 'admin', company_id: null })
+          .eq('id', userRecord.id);
+
+        if (profileError) throw profileError;
+
+        const { error: membershipError } = await supabase
+          .from('org_members')
+          .upsert(
+            {
+              org_id: platformOrg.id,
+              user_id: userRecord.id,
+              role: 'admin',
+            },
+            { onConflict: 'org_id,user_id' }
+          );
+
+        if (membershipError) throw membershipError;
+      } else {
+        const profilePayload = { role: nextRole };
+        if (nextRole === 'rider') {
+          profilePayload.company_id = null;
+        }
+
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update(profilePayload)
+          .eq('id', userRecord.id);
+
+        if (profileError) throw profileError;
+
+        if (currentRole === 'admin') {
+          const { error: membershipError } = await supabase
+            .from('org_members')
+            .delete()
+            .eq('user_id', userRecord.id)
+            .in('role', ['admin', 'superadmin']);
+
+          if (membershipError) throw membershipError;
+        }
+      }
+
+      toastSuccess(`${userRecord.full_name || userRecord.email || 'User'} is now ${nextRole}.`);
+      await loadUsers();
+    } catch (error) {
+      toastError(error.message || 'Failed to save user role.');
+    } finally {
+      setSaving(null);
+    }
   }
 
-  const roleColor = { admin: '#c9a84c', company: '#00e5a0', driver: '#f59e0b' };
+  const roleColor = { admin: '#c9a84c', company: '#00e5a0', driver: '#f59e0b', rider: '#60a5fa' };
 
   return (
     <div className="h-full overflow-y-auto p-6" style={{ color: '#e5e7eb' }}>
@@ -77,15 +157,19 @@ export default function AdminUsers() {
                 <div className="flex items-center gap-2">
                   {user.role === 'admin' && <ShieldCheck className="w-4 h-4" style={{ color: '#c9a84c' }} />}
                   <select
-                    value={user.role === 'dispatcher' ? 'company' : (user.role || 'company')}
-                    onChange={e => updateRole(user.id, e.target.value)}
-                    disabled={saving === user.id || (!isPlatformOwner && user.role === 'admin')}
+                    value={normalizeAppRole(user.role) || 'company'}
+                    onChange={e => updateRole(user, e.target.value)}
+                    disabled={
+                      saving === user.id ||
+                      isPlatformOwnerUser({ email: user.email }) ||
+                      (!isPlatformOwner && normalizeAppRole(user.role) === 'admin')
+                    }
                     className="text-xs py-1.5 pl-2 pr-6"
                     style={{
-                      background: `${roleColor[user.role] || '#c9a84c'}15`,
-                      border: `1px solid ${roleColor[user.role] || '#c9a84c'}40`,
+                      background: `${roleColor[normalizeAppRole(user.role)] || '#c9a84c'}15`,
+                      border: `1px solid ${roleColor[normalizeAppRole(user.role)] || '#c9a84c'}40`,
                       borderRadius: 8,
-                      color: roleColor[user.role] || '#c9a84c',
+                      color: roleColor[normalizeAppRole(user.role)] || '#c9a84c',
                       fontWeight: 600,
                     }}
                   >
