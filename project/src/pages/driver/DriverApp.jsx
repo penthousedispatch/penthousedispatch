@@ -32,6 +32,10 @@ function buildRiderTrackingUrl(riderKey) {
   return `${window.location.origin}/rider?trip=${encodeURIComponent(riderKey)}`;
 }
 
+function getDriverOnboardingKey(driverId) {
+  return `pds_onboarding_seen:${driverId}`;
+}
+
 function DriverAccessChooser({ role, company, onSelectDriver }) {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -220,8 +224,6 @@ export default function DriverApp() {
   useEffect(() => { locationRef.current = location; }, [location]);
 
   useEffect(() => {
-    const seen = localStorage.getItem('pds_onboarding_seen');
-    if (!seen) setShowOnboarding(true);
     return () => {
       if (watchRef.current) navigator.geolocation.clearWatch(watchRef.current);
       if (pollRef.current) clearInterval(pollRef.current);
@@ -255,8 +257,9 @@ export default function DriverApp() {
     } catch {}
   }, [driverData?.id, ridePreferences]);
 
-  function launchDriverSession(data) {
+  async function launchDriverSession(data) {
     setLoggedIn(true);
+    setShowOnboarding(false);
     setDriverData({
       id: data.id,
       name: data.full_name || data.name,
@@ -270,7 +273,10 @@ export default function DriverApp() {
       photo: data.photo_data || data.photo,
       email: data.email || '',
     });
-    loadDriverRecord(data.id);
+    const loadedDriver = await loadDriverRecord(data.id);
+    const onboardingSeen = localStorage.getItem(getDriverOnboardingKey(data.id));
+    const onboardingComplete = Number(loadedDriver?.layer1_pct || data.layer1_pct || 0) >= 100;
+    setShowOnboarding(!onboardingSeen && !onboardingComplete);
   }
 
   async function endShiftAndLogout() {
@@ -366,6 +372,55 @@ export default function DriverApp() {
         if (createErr) logFailure('DriverApp:loadDriverRecord:createThread', createErr);
         if (newThread) setChatThreadId(newThread.id);
       }
+    }
+    return driver;
+  }
+
+  async function completeDriverOnboarding() {
+    const driverId = driverRecord?.id || driverData?.id || null;
+    if (!driverId) {
+      setShowOnboarding(false);
+      return;
+    }
+
+    localStorage.setItem(getDriverOnboardingKey(driverId), '1');
+    setShowOnboarding(false);
+
+    const completedAt = new Date().toISOString();
+    const wasIncomplete = Number(driverRecord?.layer1_pct || 0) < 100;
+
+    const { data: updatedDriver, error } = await supabase
+      .from('drivers')
+      .update({
+        layer1_pct: 100,
+        updated_at: completedAt,
+      })
+      .eq('id', driverId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      logFailure('DriverApp:completeDriverOnboarding:drivers', error);
+      return;
+    }
+
+    if (updatedDriver) {
+      setDriverRecord(updatedDriver);
+    }
+
+    if (wasIncomplete) {
+      await publishTripAlert(
+        'driver_onboarding_complete',
+        `${updatedDriver?.full_name || driverData?.name || 'Driver'} completed driver onboarding and is ready for company review.`,
+        'info',
+        {
+          company_id: updatedDriver?.company_id || driverRecord?.company_id || null,
+          onboarding_complete_at: completedAt,
+          layer1_pct: 100,
+          layer2_status: updatedDriver?.layer2_status || driverRecord?.layer2_status || 'not_submitted',
+          layer3_status: updatedDriver?.layer3_status || driverRecord?.layer3_status || 'not_ready',
+        }
+      );
     }
   }
 
@@ -977,7 +1032,7 @@ export default function DriverApp() {
   const hoursWorked = ((Date.now() - shiftStartRef.current) / 3600000).toFixed(1);
 
   if (showOnboarding) {
-    return <OnboardingSlides onDone={() => { setShowOnboarding(false); localStorage.setItem('pds_onboarding_seen', '1'); }} />;
+    return <OnboardingSlides onDone={completeDriverOnboarding} />;
   }
 
   if (!loggedIn) {

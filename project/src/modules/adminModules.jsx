@@ -21,6 +21,7 @@ import ApiKeyManager from '../pages/admin/ApiKeyManager';
 import PermissionsMatrix from '../pages/admin/PermissionsMatrix';
 import TenantManager from '../pages/admin/TenantManager';
 import TestModeSandbox from '../pages/admin/TestModeSandbox';
+import AdminRiderPreview from '../pages/admin/AdminRiderPreview';
 
 export const adminModules = {
   dispatch: {
@@ -114,5 +115,9 @@ export const adminModules = {
   sandbox: {
     name: 'Test Mode',
     component: TestModeSandbox,
+  },
+  riderPreview: {
+    name: 'Rider Preview',
+    component: AdminRiderPreview,
   },
 };

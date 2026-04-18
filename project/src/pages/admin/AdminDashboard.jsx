@@ -4,7 +4,7 @@ import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
   Sun, Moon, Globe, Key, Car, FlaskConical, Bot, MessageSquare,
-  Menu, X, RadioTower
+  Menu, X, RadioTower, Eye
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
@@ -44,6 +44,7 @@ const PLATFORM_TABS = [
   { path: '/admin/billing', label: 'Billing', icon: DollarSign },
   { path: '/admin/sentry', label: 'Sentry', icon: Settings },
   { path: '/admin/testing', label: 'Testing', icon: Cpu },
+  { path: '/admin/rider-preview', label: 'Rider Preview', icon: Eye },
   { path: '/admin/security', label: 'Security', icon: Shield },
   { path: '/admin/payroll', label: 'Payroll', icon: Banknote },
   { path: '/admin/incentives', label: 'Incentives', icon: Zap },
@@ -369,6 +370,15 @@ export default function AdminDashboard() {
             <Car className="w-3.5 h-3.5" />
             Driver App
           </Link>
+          <Link
+            to="/admin/rider-preview"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+            title="Open Rider App Preview"
+            style={{ background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.2)', color: '#7dd3fc', fontWeight: 600, textDecoration: 'none' }}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Rider App
+          </Link>
           <ThemeToggle />
           <button
             onClick={() => supabase.auth.signOut()}
@@ -401,6 +411,7 @@ export default function AdminDashboard() {
           <Route path="/admin/sentry" element={renderAdminModule('sentry')} />
           <Route path="/admin/sentry-guide" element={renderAdminModule('sentryGuide')} />
           <Route path="/admin/testing" element={renderAdminModule('testing')} />
+          <Route path="/admin/rider-preview" element={renderAdminModule('riderPreview')} />
           <Route path="/admin/chatbot" element={renderAdminModule('chatbot')} />
           <Route path="/admin/auto-scheduler" element={renderAdminModule('autoScheduler')} />
           <Route path="/admin/bots" element={renderAdminModule('bots')} />
