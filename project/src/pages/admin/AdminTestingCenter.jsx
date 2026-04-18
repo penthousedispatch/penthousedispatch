@@ -622,7 +622,7 @@ export default function AdminTestingCenter() {
   const logColor = { info: 'rgba(255,255,255,0.5)', success: '#00e5a0', error: '#ff4757', warn: '#f59e0b' };
 
   return (
-    <div className="h-full overflow-y-auto p-6" style={{ color: '#e5e7eb' }}>
+    <div className="h-full overflow-y-auto p-6 pb-32" style={{ color: '#e5e7eb' }}>
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>

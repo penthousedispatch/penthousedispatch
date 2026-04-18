@@ -261,7 +261,7 @@ function CompanyDrivers({ company }) {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 pb-32 max-w-5xl mx-auto">
       <div className="mb-4">
         <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Drivers</h2>
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
@@ -670,7 +670,7 @@ function CompanyTrips({ company }) {
   const statusColor = { pending: '#c9a84c', accepted: '#0ea5e9', completed: '#00e5a0', rejected: '#ff4757' };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 pb-32 max-w-4xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Trip History</h2>
       {loading ? (
         <div className="flex items-center justify-center h-40">
@@ -728,7 +728,7 @@ function CompanyInvoices({ company }) {
   const statusColor = { draft: '#c9a84c', sent: '#0ea5e9', paid: '#00e5a0', overdue: '#ff4757' };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 pb-32 max-w-4xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Invoices</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
         <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -851,7 +851,7 @@ function CompanyMarketplace({ company }) {
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
+    <div className="p-6 pb-32 max-w-5xl mx-auto space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Marketplace Trips</h2>
@@ -994,7 +994,7 @@ function CompanySettings({ company, setCompany }) {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
+    <div className="p-6 pb-32 max-w-2xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Company Settings</h2>
       <form onSubmit={handleSave} className="space-y-4">
         <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -1222,7 +1222,7 @@ function CompanyAIControls({ company, setCompany }) {
   ];
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-4">
+    <div className="p-6 pb-32 max-w-3xl mx-auto space-y-4">
       <div>
         <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>AI Settings</h2>
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Company admins can control routing, auto-assignment, and scheduling weights here without exposing platform-level AI providers.</p>
@@ -1390,7 +1390,7 @@ function CompanyGuides() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 pb-32 max-w-4xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Dashboard Guides</h2>
       <div className="rounded-xl p-4 mb-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
@@ -1652,7 +1652,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
         </div>
       )}
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto pb-8">
         <Routes>
           <Route
             index

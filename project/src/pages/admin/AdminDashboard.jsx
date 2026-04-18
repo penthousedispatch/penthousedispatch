@@ -111,7 +111,7 @@ function AdminPlatformHome() {
   ];
 
   return (
-    <div className="h-full overflow-y-auto p-6" style={{ color: '#e5e7eb' }}>
+    <div className="h-full overflow-y-auto p-6 pb-32" style={{ color: '#e5e7eb' }}>
       <div className="max-w-6xl mx-auto space-y-6">
         <div>
           <h1 className="text-xl font-700 mb-1" style={{ color: '#c9a84c', fontWeight: 700 }}>Platform Tools</h1>
@@ -388,7 +388,7 @@ export default function AdminDashboard() {
 
       <MobileDrawer open={mobileNav} onClose={() => setMobileNav(false)} />
 
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden pb-6">
         <Routes>
           <Route path="/" element={renderAdminModule('dispatch')} />
           <Route path="/admin/ops" element={renderAdminModule('ops')} />
