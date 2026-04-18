@@ -9,9 +9,77 @@ export const GUIDE_AUDIO_SOURCES = {
   rider_guide: '',
 };
 
+const GUIDE_AUDIO_STORAGE_PREFIX = 'pd_guide_audio:';
+
+function getStorageKey(key) {
+  return `${GUIDE_AUDIO_STORAGE_PREFIX}${key}`;
+}
+
+export function getGuideAudioRecord(key) {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(getStorageKey(key));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.src) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function getGuideAudioSrc(key) {
+  const stored = getGuideAudioRecord(key);
+  if (stored?.src && typeof stored.src === 'string' && stored.src.trim()) {
+    return stored.src.trim();
+  }
   const value = GUIDE_AUDIO_SOURCES[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+export function saveGuideAudioUrl(key, url, label = '') {
+  if (typeof window === 'undefined') return null;
+  const record = {
+    key,
+    type: 'url',
+    label: label || url,
+    src: String(url || '').trim(),
+    updatedAt: new Date().toISOString(),
+  };
+  window.localStorage.setItem(getStorageKey(key), JSON.stringify(record));
+  return record;
+}
+
+export function saveGuideAudioFile(key, file) {
+  if (typeof window === 'undefined') {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const record = {
+          key,
+          type: 'upload',
+          label: file?.name || `${key}.audio`,
+          src: String(reader.result || ''),
+          updatedAt: new Date().toISOString(),
+        };
+        window.localStorage.setItem(getStorageKey(key), JSON.stringify(record));
+        resolve(record);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read audio file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export function clearGuideAudio(key) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(getStorageKey(key));
 }
 
 export function useGuideAudioPlayback(src) {

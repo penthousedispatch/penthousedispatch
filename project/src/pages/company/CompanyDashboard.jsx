@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
 import ModuleBoundary from '../../components/app/ModuleBoundary';
 import { DEFAULT_COMPANY_SCHEDULER_PREFS, readCompanySchedulerPrefs, writeCompanySchedulerPrefs } from '../../lib/companySchedulerPrefs';
+import { clearGuideAudio, getGuideAudioRecord, saveGuideAudioFile, saveGuideAudioUrl } from '../../lib/guideAudio';
 import AddDriverModal from '../../components/drivers/AddDriverModal';
 import CSVImportModal from '../../components/drivers/CSVImportModal';
 import {
   Users, Navigation, FileText, Settings, LogOut,
-  DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck
+  DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck,
+  Upload, Link2, Headphones, RefreshCw
 } from 'lucide-react';
 import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
 
@@ -1162,6 +1164,11 @@ function CompanyAIControls({ company, setCompany }) {
 }
 
 function CompanyGuides() {
+  const GUIDE_AUDIO_ITEMS = [
+    { key: 'driver_onboarding', title: 'Driver Onboarding Audio', desc: 'Audio guide for first-time driver onboarding steps.' },
+    { key: 'driver_guide', title: 'Driver Guide Audio', desc: 'Full driver app instructions for shift, trip, and dispatch behavior.' },
+    { key: 'company_guide', title: 'Company Guide Audio', desc: 'Optional narrated overview for company dashboard training.' },
+  ];
   const guides = [
     {
       title: 'Dispatch Guide',
@@ -1188,10 +1195,145 @@ function CompanyGuides() {
       copy: 'AI Controls lets your company decide whether route planning, auto-assign, and driver motivation nudges are active without exposing platform-wide AI settings.',
     },
   ];
+  const [audioRecords, setAudioRecords] = useState(() =>
+    Object.fromEntries(GUIDE_AUDIO_ITEMS.map(item => [item.key, getGuideAudioRecord(item.key)]))
+  );
+  const [audioUrls, setAudioUrls] = useState({});
+  const [audioMessage, setAudioMessage] = useState('');
+  const fileRefs = useRef({});
+
+  function refreshAudioRecords(message = '') {
+    setAudioRecords(Object.fromEntries(GUIDE_AUDIO_ITEMS.map(item => [item.key, getGuideAudioRecord(item.key)])));
+    setAudioMessage(message);
+  }
+
+  async function handleAudioFile(key, event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      await saveGuideAudioFile(key, file);
+      refreshAudioRecords('Guide audio uploaded.');
+    } catch (error) {
+      setAudioMessage(error?.message || 'Audio upload failed.');
+    } finally {
+      if (fileRefs.current[key]) {
+        fileRefs.current[key].value = '';
+      }
+    }
+  }
+
+  function handleSaveUrl(key) {
+    const url = String(audioUrls[key] || '').trim();
+    if (!url) {
+      setAudioMessage('Paste an audio URL first.');
+      return;
+    }
+    saveGuideAudioUrl(key, url, url);
+    refreshAudioRecords('Guide audio link saved.');
+  }
+
+  function handleClearAudio(key) {
+    clearGuideAudio(key);
+    setAudioUrls(prev => ({ ...prev, [key]: '' }));
+    refreshAudioRecords('Guide audio removed.');
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h2 className="text-lg font-700 mb-4" style={{ fontWeight: 700 }}>Dashboard Guides</h2>
+      <div className="rounded-xl p-4 mb-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <p className="text-sm font-600 flex items-center gap-2" style={{ fontWeight: 600 }}>
+              <Headphones className="w-4 h-4" style={{ color: '#c9a84c' }} />
+              Guide Audio
+            </p>
+            <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.48)' }}>
+              Upload or paste audio links here so the guide and onboarding can play them directly under Guides.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => refreshAudioRecords('Guide audio refreshed.')}
+            className="px-3 py-2 rounded-xl text-sm flex items-center gap-2"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
+        {audioMessage && (
+          <p className="text-xs mb-3" style={{ color: '#c9a84c' }}>{audioMessage}</p>
+        )}
+        <div className="space-y-3">
+          {GUIDE_AUDIO_ITEMS.map(item => {
+            const record = audioRecords[item.key];
+            return (
+              <div key={item.key} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-600" style={{ fontWeight: 600 }}>{item.title}</p>
+                    <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{item.desc}</p>
+                  </div>
+                  <span className="text-xs px-2 py-1 rounded-full" style={{ background: record ? 'rgba(0,229,160,0.12)' : 'rgba(255,255,255,0.06)', color: record ? '#00e5a0' : 'rgba(255,255,255,0.45)' }}>
+                    {record ? (record.type === 'upload' ? 'Uploaded' : 'Linked') : 'No audio'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap mb-3">
+                  <input
+                    ref={el => { fileRefs.current[item.key] = el; }}
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={event => handleAudioFile(item.key, event)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileRefs.current[item.key]?.click()}
+                    className="px-3 py-2 rounded-xl text-sm flex items-center gap-2"
+                    style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
+                  >
+                    <Upload className="w-4 h-4" />
+                    Upload Audio
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleClearAudio(item.key)}
+                    className="px-3 py-2 rounded-xl text-sm"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex-1 min-w-[240px]">
+                    <input
+                      type="text"
+                      value={audioUrls[item.key] || ''}
+                      onChange={e => setAudioUrls(prev => ({ ...prev, [item.key]: e.target.value }))}
+                      placeholder="Or paste a hosted audio URL"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveUrl(item.key)}
+                    className="px-3 py-2 rounded-xl text-sm flex items-center gap-2"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                  >
+                    <Link2 className="w-4 h-4" />
+                    Save Link
+                  </button>
+                </div>
+                {record?.label && (
+                  <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                    Current source: {record.label}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {guides.map(guide => (
           <div key={guide.title} className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
