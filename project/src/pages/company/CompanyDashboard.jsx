@@ -11,7 +11,7 @@ import CSVImportModal from '../../components/drivers/CSVImportModal';
 import {
   Users, Navigation, FileText, Settings, LogOut,
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck,
-  Upload, Link2, Headphones, RefreshCw
+  Upload, Link2, Headphones, RefreshCw, Send, ClipboardList
 } from 'lucide-react';
 import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
 
@@ -23,8 +23,10 @@ function CompanyDrivers({ company }) {
   const [showCSVImport, setShowCSVImport] = useState(false);
   const [editingDriver, setEditingDriver] = useState(null);
   const [deletingDriver, setDeletingDriver] = useState(null);
+  const [onboardingDriver, setOnboardingDriver] = useState(null);
   const [savingDriver, setSavingDriver] = useState(false);
   const [driverTaxInfo, setDriverTaxInfo] = useState({});
+  const driverAppUrl = `${window.location.origin}/driver`;
 
   async function loadDriverTaxInfo(driverRows) {
     const driverIds = (driverRows || []).map(driver => driver.id).filter(Boolean);
@@ -124,6 +126,65 @@ function CompanyDrivers({ company }) {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  }
+
+  function sendDriverApp(driver) {
+    const driverName = driver.full_name || 'Driver';
+    const body = [
+      `Hi ${driverName},`,
+      '',
+      'Use this link to open the Penthouse Dispatch driver app and complete onboarding:',
+      driverAppUrl,
+      '',
+      'Please review the onboarding slides, guide audio, and profile requirements before starting your shift.',
+    ].join('\n');
+
+    if (driver.email) {
+      window.location.href = `mailto:${encodeURIComponent(driver.email)}?subject=${encodeURIComponent('Your Penthouse Dispatch Driver App Access')}&body=${encodeURIComponent(body)}`;
+      toastSuccess('Driver app invite prepared in email.');
+      return;
+    }
+
+    const cleanPhone = String(driver.phone || '').replace(/[^\d+]/g, '');
+    if (cleanPhone) {
+      window.location.href = `sms:${cleanPhone}?&body=${encodeURIComponent(body)}`;
+      toastSuccess('Driver app invite prepared in text message.');
+      return;
+    }
+
+    navigator.clipboard?.writeText(body).catch(() => {});
+    toastSuccess('Driver app invite copied. No email or phone was saved for this driver.');
+  }
+
+  function onboardingSummary(driver) {
+    const tax = driverTaxInfo[driver.id];
+    return [
+      {
+        label: 'Profile basics',
+        done: Boolean(driver.full_name && (driver.phone || driver.email) && driver.tlc_number),
+        detail: 'Name, TLC number, and at least one contact method',
+      },
+      {
+        label: 'Layer 1 app onboarding',
+        done: Number(driver.layer1_pct || 0) >= 100,
+        detail: `Completion ${driver.layer1_pct || 0}%`,
+      },
+      {
+        label: 'Company approval',
+        done: String(driver.layer2_status || '').toLowerCase() === 'approved_internal',
+        detail: `Status: ${driver.layer2_status || 'not_submitted'}`,
+      },
+      {
+        label: 'Dispatch / Sentry ready',
+        done: String(driver.layer3_status || '').toLowerCase() === 'ready',
+        detail: `Status: ${driver.layer3_status || 'not_ready'}`,
+      },
+      {
+        label: 'Tax / identity last 4',
+        done: Boolean(tax?.tax_id_last4),
+        detail: tax?.tax_id_last4 ? `SSN last 4 saved: ${tax.tax_id_last4}` : 'Last 4 not saved yet',
+      },
+    ];
   }
 
   async function handleSaveDriverEdits(e) {
@@ -270,19 +331,20 @@ function CompanyDrivers({ company }) {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
-          <div className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px_140px] gap-3 px-4 py-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.42)' }}>
+          <div className="grid grid-cols-[72px_minmax(220px,1.4fr)_1fr_120px_120px_160px_180px] gap-3 px-4 py-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.42)' }}>
             <span>#</span>
             <span>Name</span>
             <span>Phone</span>
             <span>TLC</span>
             <span>Status</span>
+            <span>Onboarding</span>
             <span>Actions</span>
           </div>
           <div style={{ background: '#0d1117' }}>
             {filteredDrivers.map((driver, index) => (
               <div
                 key={driver.id}
-                className="grid grid-cols-[72px_minmax(220px,1.5fr)_1fr_120px_120px_140px] gap-3 px-4 py-3 items-center"
+                className="grid grid-cols-[72px_minmax(220px,1.4fr)_1fr_120px_120px_160px_180px] gap-3 px-4 py-3 items-center"
                 style={{ borderTop: index === 0 ? 'none' : '1px solid rgba(255,255,255,0.06)' }}
               >
                 <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>{String(index + 1).padStart(3, '0')}</span>
@@ -312,7 +374,33 @@ function CompanyDrivers({ company }) {
                     {driver.status || 'offline'}
                   </span>
                 </div>
+                <div>
+                  <button
+                    onClick={() => setOnboardingDriver(driver)}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
+                    style={{
+                      background: Number(driver.layer1_pct || 0) >= 100 && String(driver.layer2_status || '').toLowerCase() === 'approved_internal'
+                        ? 'rgba(0,229,160,0.1)'
+                        : 'rgba(201,168,76,0.1)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      color: Number(driver.layer1_pct || 0) >= 100 && String(driver.layer2_status || '').toLowerCase() === 'approved_internal'
+                        ? '#00e5a0'
+                        : '#c9a84c',
+                    }}
+                  >
+                    <ClipboardList className="w-3.5 h-3.5" />
+                    {String(driver.layer3_status || '').toLowerCase() === 'ready' ? 'Ready' : 'Review'}
+                  </button>
+                </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => sendDriverApp(driver)}
+                    className="w-9 h-9 rounded-lg flex items-center justify-center"
+                    style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.18)', color: '#c9a84c' }}
+                    title="Send driver app"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => setEditingDriver({
                       ...driver,
@@ -497,6 +585,45 @@ function CompanyDrivers({ company }) {
                   style={{ background: 'rgba(255,71,87,0.14)', border: '1px solid rgba(255,71,87,0.25)', color: '#ff7a7a', fontWeight: 600 }}>
                   {savingDriver ? 'Deleting...' : 'Delete Driver'}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {onboardingDriver && (
+        <div className="fixed inset-0 z-50 overflow-y-auto p-4 sm:flex sm:items-center sm:justify-center" style={{ background: 'rgba(0,0,0,0.72)' }}>
+          <div className="mx-auto w-full max-w-2xl rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+              <div>
+                <p className="font-700 text-sm" style={{ fontWeight: 700 }}>Driver Onboarding Status</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{onboardingDriver.full_name}</p>
+              </div>
+              <button onClick={() => setOnboardingDriver(null)} className="btn-ghost w-7 h-7 flex items-center justify-center rounded-lg text-xs">✕</button>
+            </div>
+            <div className="p-5 space-y-3">
+              {onboardingSummary(onboardingDriver).map(item => (
+                <div key={item.label} className="rounded-xl p-4 flex items-start justify-between gap-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div>
+                    <p className="text-sm font-600" style={{ fontWeight: 600 }}>{item.label}</p>
+                    <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{item.detail}</p>
+                  </div>
+                  <span
+                    className="px-3 py-1 rounded-full text-xs"
+                    style={{
+                      background: item.done ? 'rgba(0,229,160,0.1)' : 'rgba(201,168,76,0.1)',
+                      color: item.done ? '#00e5a0' : '#c9a84c',
+                    }}
+                  >
+                    {item.done ? 'Complete' : 'Needs action'}
+                  </span>
+                </div>
+              ))}
+              <div className="rounded-xl p-4" style={{ background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.16)' }}>
+                <p className="text-sm font-600" style={{ color: '#dff4ff', fontWeight: 600 }}>What the driver receives</p>
+                <p className="text-xs mt-2" style={{ color: 'rgba(223,244,255,0.72)', lineHeight: 1.6 }}>
+                  Sending the driver app opens the same driver route with onboarding slides, guide audio, and the company-required profile setup. Full Social Security collection should stay with your external verification provider; this app stores only the last 4.
+                </p>
               </div>
             </div>
           </div>
@@ -1377,15 +1504,34 @@ function renderCompanyModule(name, element) {
 }
 
 export default function CompanyDashboard({ previewMode = false, companyOverride = null }) {
-  const { company, setCompany, profile } = useApp();
+  const { company, setCompany, profile, org } = useApp();
   const activeCompany = companyOverride || company;
   const [mobileNav, setMobileNav] = useState(false);
+  const [platformAiPaused, setPlatformAiPaused] = useState(false);
   const importSource = React.useMemo(() => {
     const match = activeCompany?.notes?.match(/IMPORT_SOURCE:([A-Z_]+)/);
     return match?.[1] || 'MANUAL';
   }, [activeCompany?.notes]);
   const companyDisplayName = activeCompany?.app_display_name || activeCompany?.company_name || 'Penthouse Dispatch';
   const basePath = previewMode && activeCompany?.id ? `/admin/company-preview/${activeCompany.id}` : '';
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadPlatformAiState() {
+      let query = supabase.from('ai_settings').select('all_bots_paused').order('updated_at', { ascending: false }).limit(1);
+      if (org?.id) {
+        query = supabase.from('ai_settings').select('all_bots_paused').eq('org_id', org.id).limit(1);
+      }
+      const { data } = await query.maybeSingle();
+      if (mounted) setPlatformAiPaused(Boolean(data?.all_bots_paused));
+    }
+
+    loadPlatformAiState();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, activeCompany?.id]);
 
   const tabs = [
     { path: previewMode ? `${basePath}` : (basePath || '/'), routePath: '/', label: previewMode ? 'Company Dashboard' : 'Dispatch', icon: LayoutGrid, exact: true },
@@ -1429,7 +1575,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
         <StatusChip label={`Company Admin: ${activeCompany?.company_name || 'Subscriber'}`} color="#c9a84c" />
         <StatusChip label={`Import: ${importSource}`} color="#0ea5e9" />
         <StatusChip label={activeCompany?.white_label_enabled ? 'White-label enabled' : 'Platform branding active'} color={activeCompany?.white_label_enabled ? '#00e5a0' : 'rgba(255,255,255,0.6)'} />
-        <StatusChip label={activeCompany?.ai_routing_enabled ? 'AI routing on' : 'AI routing off'} color={activeCompany?.ai_routing_enabled ? '#00e5a0' : '#ff4757'} />
+        <StatusChip label={activeCompany?.ai_routing_enabled && !platformAiPaused ? 'AI routing on' : 'AI routing off'} color={activeCompany?.ai_routing_enabled && !platformAiPaused ? '#00e5a0' : '#ff4757'} />
       </div>
 
       <header className="flex items-center justify-between px-4 h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
