@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
 import PayoutsTab from '../dispatcher/PayoutsTab';
+import PayRatesSection from '../dispatcher/PayRatesSection';
 import ModuleBoundary from '../../components/app/ModuleBoundary';
 import { DEFAULT_COMPANY_SCHEDULER_PREFS, readCompanySchedulerPrefs, writeCompanySchedulerPrefs } from '../../lib/companySchedulerPrefs';
 import { clearGuideAudio, getGuideAudioRecord, saveGuideAudioFile, saveGuideAudioUrl } from '../../lib/guideAudio';
@@ -956,6 +957,20 @@ function CompanyDriverPay({ company }) {
   return (
     <div className="pb-48">
       <div className="max-w-6xl mx-auto px-5 py-5 space-y-4">
+        <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(201,168,76,0.12)' }}>
+          <div className="flex items-start gap-3">
+            <DollarSign className="w-5 h-5 mt-0.5" style={{ color: '#c9a84c' }} />
+            <div>
+              <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Driver pay rates</p>
+              <p className="text-sm mt-1 leading-6" style={{ color: 'rgba(255,255,255,0.48)' }}>
+                Update hourly or per-trip pay for every driver in your company fleet from one place. This is the company-wide pay screen you were using before.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <PayRatesSection companyIdOverride={company?.id || null} />
+        </div>
         <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(0,229,160,0.12)' }}>
           <div className="flex items-start gap-3">
             <CreditCard className="w-5 h-5 mt-0.5" style={{ color: '#00e5a0' }} />

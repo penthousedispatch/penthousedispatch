@@ -4,8 +4,10 @@ import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { toastError, toastSuccess } from '../../utils/errorHandler';
 
-export default function PayRatesSection() {
+export default function PayRatesSection({ companyIdOverride = null }) {
   const { drivers, loadDrivers } = useApp();
+  const [companyDrivers, setCompanyDrivers] = useState([]);
+  const [companyLoading, setCompanyLoading] = useState(false);
   const [rates, setRates] = useState({});
   const [saving, setSaving] = useState({});
   const [saved, setSaved] = useState({});
@@ -16,13 +18,44 @@ export default function PayRatesSection() {
   const [bulkMessage, setBulkMessage] = useState('');
   const [bulkError, setBulkError] = useState('');
 
+  const scopedDrivers = companyIdOverride ? companyDrivers : drivers;
+
+  async function loadScopedDrivers() {
+    if (!companyIdOverride) {
+      await loadDrivers();
+      return;
+    }
+
+    setCompanyLoading(true);
+    const { data, error } = await supabase
+      .from('drivers')
+      .select('*')
+      .eq('company_id', companyIdOverride)
+      .eq('is_active', true)
+      .order('full_name');
+
+    if (error) {
+      toastError(error?.message || 'Failed to load company drivers for pay rates.');
+      setCompanyDrivers([]);
+      setCompanyLoading(false);
+      return;
+    }
+
+    setCompanyDrivers(data || []);
+    setCompanyLoading(false);
+  }
+
+  useEffect(() => {
+    loadScopedDrivers();
+  }, [companyIdOverride]);
+
   useEffect(() => {
     const initial = {};
-    drivers.forEach(d => {
+    scopedDrivers.forEach(d => {
       initial[d.id] = { pay_rate: d.pay_rate ?? 18, pay_rate_type: d.pay_rate_type || 'hourly' };
     });
     setRates(initial);
-  }, [drivers]);
+  }, [scopedDrivers]);
 
   function setRate(driverId, field, value) {
     setRates(prev => ({ ...prev, [driverId]: { ...prev[driverId], [field]: value } }));
@@ -66,12 +99,12 @@ export default function PayRatesSection() {
     }));
     toastSuccess('Driver pay rate saved.');
     setTimeout(() => setSaved(prev => ({ ...prev, [driverId]: false })), 2000);
-    await loadDrivers();
+    await loadScopedDrivers();
   }
 
   async function applyBulk() {
     if (!bulkRate) return;
-    const targetDriverIds = drivers.map(driver => driver.id).filter(Boolean);
+    const targetDriverIds = scopedDrivers.map(driver => driver.id).filter(Boolean);
     if (!targetDriverIds.length) {
       setBulkError('No scoped drivers were found for this update.');
       toastError('No drivers available for bulk pay-rate update.');
@@ -97,7 +130,7 @@ export default function PayRatesSection() {
       return;
     }
 
-    await loadDrivers();
+    await loadScopedDrivers();
     setRates(prev => {
       const next = { ...prev };
       targetDriverIds.forEach(driverId => {
@@ -165,7 +198,9 @@ export default function PayRatesSection() {
         )}
       </div>
 
-      {drivers.length === 0 ? (
+      {companyLoading ? (
+        <p className="text-sm py-8 text-center" style={{ color: 'rgba(255,255,255,0.3)' }}>Loading drivers...</p>
+      ) : scopedDrivers.length === 0 ? (
         <p className="text-sm py-8 text-center" style={{ color: 'rgba(255,255,255,0.3)' }}>No drivers found</p>
       ) : (
         <div className="rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
@@ -178,7 +213,7 @@ export default function PayRatesSection() {
               </tr>
             </thead>
             <tbody>
-              {drivers.map(driver => {
+              {scopedDrivers.map(driver => {
                 const r = rates[driver.id] || { pay_rate: 18, pay_rate_type: 'hourly' };
                 return (
                   <tr key={driver.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
