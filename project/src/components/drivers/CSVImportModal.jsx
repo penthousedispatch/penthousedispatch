@@ -104,7 +104,7 @@ function downloadTemplate() {
   URL.revokeObjectURL(url);
 }
 
-export default function CSVImportModal({ onClose }) {
+export default function CSVImportModal({ onClose, companyIdOverride = null }) {
   const { company, profile } = useApp();
   const [preview, setPreview] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -135,7 +135,7 @@ export default function CSVImportModal({ onClose }) {
   async function importDrivers(driverList) {
     setImporting(true);
     const perDriverResults = [];
-    const scopedCompanyId = profile?.role === 'company' ? company?.id || null : null;
+    const scopedCompanyId = resolvedCompanyId;
 
     for (const d of driverList) {
       const firstName = (d.first_name || '').trim();
@@ -166,7 +166,7 @@ export default function CSVImportModal({ onClose }) {
         tlc_number: tlc,
         gender: (d.gender || '').trim(),
         dob: (d.dob || '').trim(),
-        company_id: profile?.role === 'company' ? company?.id || null : null,
+        company_id: resolvedCompanyId,
         status: 'offline',
         is_active: isActive,
       };
@@ -419,3 +419,4 @@ export default function CSVImportModal({ onClose }) {
     </div>
   );
 }
+  const resolvedCompanyId = companyIdOverride || (profile?.role === 'company' ? company?.id || null : null);

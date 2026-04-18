@@ -19,7 +19,7 @@ async function uploadDriverPhoto(file, driverNum) {
   return urlData.publicUrl;
 }
 
-export default function AddDriverModal({ onClose }) {
+export default function AddDriverModal({ onClose, companyIdOverride = null }) {
   const { company, profile } = useApp();
   const [form, setForm] = useState({ full_name: '', phone: '', email: '', shift_hours: '7am-5pm', home_address: '' });
   const [photoFile, setPhotoFile] = useState(null);
@@ -27,6 +27,8 @@ export default function AddDriverModal({ onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef();
+
+  const resolvedCompanyId = companyIdOverride || (profile?.role === 'company' ? company?.id || null : null);
 
   function handlePhotoChange(e) {
     const file = e.target.files[0];
@@ -65,7 +67,7 @@ export default function AddDriverModal({ onClose }) {
       home_address: form.home_address,
       preferred_zones: detectServiceZone(form.home_address || '') !== 'default' ? [detectServiceZone(form.home_address || '')] : [],
       photo_data: photoUrl,
-      company_id: profile?.role === 'company' ? company?.id || null : null,
+      company_id: resolvedCompanyId,
       status: 'offline',
       is_active: true,
     }).select().maybeSingle();

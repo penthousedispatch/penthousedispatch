@@ -342,6 +342,7 @@ function CompanyDrivers({ company }) {
 
       {showAddDriver && (
         <AddDriverModal
+          companyIdOverride={company?.id || null}
           onClose={() => {
             setShowAddDriver(false);
             loadCompanyDrivers();
@@ -351,6 +352,7 @@ function CompanyDrivers({ company }) {
 
       {showCSVImport && (
         <CSVImportModal
+          companyIdOverride={company?.id || null}
           onClose={() => {
             setShowCSVImport(false);
             loadCompanyDrivers();
