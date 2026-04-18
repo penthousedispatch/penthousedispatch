@@ -6,7 +6,7 @@ import { ensurePlatformAdminOrg, isPlatformOwnerUser } from '../../lib/platformA
 import { toastError, toastSuccess, toastWarn } from '../../utils/errorHandler';
 import { Users, ShieldCheck, RefreshCw } from 'lucide-react';
 
-const ROLES = ['admin', 'company', 'driver', 'rider'];
+const ROLES = ['admin', 'company', 'driver'];
 
 export default function AdminUsers() {
   const { isPlatformOwner, user: sessionUser } = useApp();
@@ -77,9 +77,6 @@ export default function AdminUsers() {
         if (membershipError) throw membershipError;
       } else {
         const profilePayload = { role: nextRole };
-        if (nextRole === 'rider') {
-          profilePayload.company_id = null;
-        }
 
         const { error: profileError } = await supabase
           .from('profiles')

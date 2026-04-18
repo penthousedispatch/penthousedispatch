@@ -279,10 +279,15 @@ function AppRoutes() {
   }
 
   const needsOnboarding = role === 'company' && !org && !company;
+  const needsPasswordChange = Boolean(profile?.require_password_change);
   const defaultRolePath = defaultPathForRole(role);
 
   if (!role) {
     return <UnsupportedRoleScreen rawRole={profile?.role} />;
+  }
+
+  if (needsPasswordChange && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
   }
 
   return (

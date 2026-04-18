@@ -11,6 +11,7 @@ export default function ChangeMyPassword() {
   const [loading, setLoading] = useState(false);
   const [hasSession, setHasSession] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [forceChangeMode, setForceChangeMode] = useState(false);
 
   const passwordValid =
     newPassword.length >= 12 &&
@@ -33,6 +34,17 @@ export default function ChangeMyPassword() {
       if (!mounted) return;
 
       setHasSession(Boolean(session));
+      if (session?.user?.id) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('require_password_change')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        if (mounted) {
+          setForceChangeMode(Boolean(profile?.require_password_change));
+        }
+      }
       setCheckingSession(false);
     }
 
@@ -112,10 +124,23 @@ export default function ChangeMyPassword() {
         return;
       }
 
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user?.id) {
+        await supabase
+          .from('profiles')
+          .update({ require_password_change: false })
+          .eq('id', user.id);
+      }
+
       sessionStorage.removeItem("pd_password_recovery");
-      setStatus("Your password was updated successfully. You can sign in now.");
+      setForceChangeMode(false);
+      setStatus("Your password was updated successfully. Taking you back into the app...");
       setNewPassword("");
       setConfirmPassword("");
+      setTimeout(() => navigate("/"), 1200);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Something went wrong.");
     } finally {
@@ -139,8 +164,9 @@ export default function ChangeMyPassword() {
       <h1>Reset Password</h1>
 
       <p style={{ marginTop: 8 }}>
-        Enter your email to receive a reset link. After you open that email link,
-        come back here and choose your new password.
+        {forceChangeMode
+          ? "This account is using a temporary password. Choose a new password now before continuing."
+          : "Enter your email to receive a reset link. After you open that email link, come back here and choose your new password."}
       </p>
 
       <div style={{ marginTop: 20 }}>
@@ -160,13 +186,15 @@ export default function ChangeMyPassword() {
           }}
         />
 
-        <button
-          onClick={sendResetLink}
-          disabled={loading}
-          style={{ padding: "10px 16px", marginBottom: 20 }}
-        >
-          {loading ? "Sending..." : "Send Password Reset Email"}
-        </button>
+        {!forceChangeMode && (
+          <button
+            onClick={sendResetLink}
+            disabled={loading}
+            style={{ padding: "10px 16px", marginBottom: 20 }}
+          >
+            {loading ? "Sending..." : "Send Password Reset Email"}
+          </button>
+        )}
 
         <h2 style={{ marginBottom: 8 }}>Choose New Password</h2>
 
@@ -174,11 +202,15 @@ export default function ChangeMyPassword() {
           <p style={{ marginBottom: 16 }}>Checking reset link...</p>
         ) : !hasSession ? (
           <p style={{ marginBottom: 16 }}>
-            No active reset session yet. Open the password reset link from your email first.
+            {forceChangeMode
+              ? "Sign in with the temporary password first, then set a permanent one here."
+              : "No active reset session yet. Open the password reset link from your email first."}
           </p>
         ) : (
           <p style={{ marginBottom: 16, color: "green" }}>
-            Reset link confirmed. You can set a new password now.
+            {forceChangeMode
+              ? "Temporary password accepted. Set a permanent password now."
+              : "Reset link confirmed. You can set a new password now."}
           </p>
         )}
 
