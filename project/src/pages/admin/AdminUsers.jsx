@@ -49,6 +49,38 @@ export default function AdminUsers() {
     setSaving(userRecord.id);
 
     try {
+      let linkedCompanyId = userRecord.company_id || null;
+
+      if (nextRole === 'company' && !linkedCompanyId) {
+        const ownedCompanyResult = await supabase
+          .from('companies')
+          .select('id')
+          .eq('owner_user_id', userRecord.id)
+          .maybeSingle();
+
+        linkedCompanyId = ownedCompanyResult.data?.id || null;
+
+        if (!linkedCompanyId && userRecord?.email) {
+          const billingCompanyResult = await supabase
+            .from('companies')
+            .select('id')
+            .ilike('billing_contact_email', userRecord.email)
+            .maybeSingle();
+
+          linkedCompanyId = billingCompanyResult.data?.id || null;
+        }
+      }
+
+      if (nextRole === 'driver' && userRecord?.email) {
+        const driverCompanyResult = await supabase
+          .from('drivers')
+          .select('company_id')
+          .ilike('email', userRecord.email)
+          .maybeSingle();
+
+        linkedCompanyId = driverCompanyResult.data?.company_id || linkedCompanyId || null;
+      }
+
       if (nextRole === 'admin') {
         const platformOrg = await ensurePlatformAdminOrg(sessionUser, { forceBootstrap: true });
 
@@ -76,7 +108,10 @@ export default function AdminUsers() {
 
         if (membershipError) throw membershipError;
       } else {
-        const profilePayload = { role: nextRole };
+        const profilePayload = {
+          role: nextRole,
+          company_id: nextRole === 'company' || nextRole === 'driver' ? linkedCompanyId : null,
+        };
 
         const { error: profileError } = await supabase
           .from('profiles')
@@ -85,15 +120,17 @@ export default function AdminUsers() {
 
         if (profileError) throw profileError;
 
-        if (currentRole === 'admin') {
-          const { error: membershipError } = await supabase
-            .from('org_members')
-            .delete()
-            .eq('user_id', userRecord.id)
-            .in('role', ['admin', 'superadmin']);
+        const { error: membershipError } = await supabase
+          .from('org_members')
+          .delete()
+          .eq('user_id', userRecord.id)
+          .in('role', ['admin', 'superadmin']);
 
-          if (membershipError) throw membershipError;
-        }
+        if (membershipError) throw membershipError;
+      }
+
+      if (nextRole === 'company' && !linkedCompanyId) {
+        toastWarn('Role changed to company, but this user is not linked to a company yet. Link or create their company record next.');
       }
 
       toastSuccess(`${userRecord.full_name || userRecord.email || 'User'} is now ${nextRole}.`);

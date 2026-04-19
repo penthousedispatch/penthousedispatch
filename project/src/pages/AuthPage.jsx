@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, Lock, Mail, User, Building2, Database } from 'lucide-react';
 import { getAuthRedirectUrl } from '../lib/mobileRuntime';
 
@@ -358,6 +358,11 @@ export default function AuthPage() {
         <p className="text-center mt-4 text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
           Penthouse Dispatch v1.0 — Powered by AI
         </p>
+        <div className="mt-3 flex items-center justify-center gap-4 text-xs">
+          <Link to="/privacy" style={{ color: 'rgba(255,255,255,0.42)' }}>Privacy</Link>
+          <Link to="/terms" style={{ color: 'rgba(255,255,255,0.42)' }}>Terms</Link>
+          <Link to="/support" style={{ color: 'rgba(255,255,255,0.42)' }}>Support</Link>
+        </div>
       </div>
     </div>
   );

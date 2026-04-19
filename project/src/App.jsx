@@ -6,6 +6,7 @@ import { supabase } from './lib/supabase';
 import AuthPage from './pages/AuthPage';
 import DriverApp from './pages/driver/DriverApp';
 import RiderTracking from './pages/rider/RiderTracking';
+import PublicInfoPage from './pages/PublicInfoPage';
 import LoadingScreen from './components/ui/LoadingScreen';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import CompanyDashboard from './pages/company/CompanyDashboard';
@@ -294,6 +295,9 @@ function AppRoutes() {
         <Route path="/driver" element={<DriverApp />} />
         <Route path="/rider" element={<RiderTracking />} />
         <Route path="/change-password" element={<ChangeMyPassword />} />
+        <Route path="/privacy" element={<PublicInfoPage variant="privacy" />} />
+        <Route path="/terms" element={<PublicInfoPage variant="terms" />} />
+        <Route path="/support" element={<PublicInfoPage variant="support" />} />
         <Route
           path="/*"
           element={<Navigate to={`/auth?next=${encodeURIComponent(requestedPath)}`} replace />}
@@ -324,6 +328,9 @@ function AppRoutes() {
       <Route path="/rider" element={<RiderTracking />} />
       <Route path="/company/onboarding" element={<CompanyOnboarding />} />
       <Route path="/change-password" element={<ChangeMyPassword />} />
+      <Route path="/privacy" element={<PublicInfoPage variant="privacy" />} />
+      <Route path="/terms" element={<PublicInfoPage variant="terms" />} />
+      <Route path="/support" element={<PublicInfoPage variant="support" />} />
       <Route path="/auth" element={<Navigate to={safeNextPath === '/' ? defaultRolePath : safeNextPath} replace />} />
 
       {role === 'admin' && <Route path="/*" element={<AdminDashboard />} />}
