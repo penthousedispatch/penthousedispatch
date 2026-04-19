@@ -124,6 +124,10 @@ const DEFAULT_BOT_PROVIDER_CONFIGS = {
   },
 };
 
+const DEFAULT_SCHEDULER_DEFAULTS = {
+  preschedule_from_work_shifts: false,
+};
+
 function Toggle({ value, onChange, color = '#c9a84c', disabled = false }) {
   return (
     <button
@@ -160,6 +164,7 @@ export default function AISettingsPanel() {
   const [filterType, setFilterType] = useState('all');
   const [syncingBot, setSyncingBot] = useState(null);
   const [resolvedOrgId, setResolvedOrgId] = useState(null);
+  const [schedulerDefaults, setSchedulerDefaults] = useState(DEFAULT_SCHEDULER_DEFAULTS);
 
   useEffect(() => {
     let mounted = true;
@@ -301,6 +306,12 @@ export default function AISettingsPanel() {
       },
     });
 
+    const schedulerDefaultsMemory = await getBotMemory(resolvedOrgId, 'scheduler_bot', 'scheduler_defaults');
+    setSchedulerDefaults({
+      ...DEFAULT_SCHEDULER_DEFAULTS,
+      ...(schedulerDefaultsMemory?.memory_value || {}),
+    });
+
     const { data: botConfigs } = await supabase
       .from('bot_config')
       .select('bot_id, kill_switch')
@@ -359,6 +370,7 @@ export default function AISettingsPanel() {
     await Promise.all([
       saveBotMemory(resolvedOrgId, 'codex_bot', 'provider_config', botProviderConfigs.codex_bot),
       saveBotMemory(resolvedOrgId, 'claude_bot', 'provider_config', botProviderConfigs.claude_bot),
+      saveBotMemory(resolvedOrgId, 'scheduler_bot', 'scheduler_defaults', schedulerDefaults),
     ]);
 
     setSaved(true);
@@ -654,6 +666,19 @@ export default function AISettingsPanel() {
                   <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>AI-powered trip scoring in Full-Day Scheduler</p>
                 </div>
                 <Toggle value={form.scheduling_enabled} onChange={() => setForm({ ...form, scheduling_enabled: !form.scheduling_enabled })} />
+              </label>
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <p className="text-sm" style={{ color: '#e5e7eb' }}>Pre-Schedule Full Day From Work Shifts</p>
+                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>Use driver work shifts as the starting point when building the day ahead for company fleets.</p>
+                </div>
+                <Toggle
+                  value={schedulerDefaults.preschedule_from_work_shifts}
+                  onChange={() => setSchedulerDefaults(prev => ({
+                    ...prev,
+                    preschedule_from_work_shifts: !prev.preschedule_from_work_shifts,
+                  }))}
+                />
               </label>
             </div>
           </>

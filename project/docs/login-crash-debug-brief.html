@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Penthouse Dispatch Login Crash Debug Brief</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Arial, sans-serif;
+      line-height: 1.5;
+      color: #111827;
+      margin: 40px;
+    }
+    h1, h2, h3 {
+      color: #111827;
+      margin-top: 28px;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 28px;
+    }
+    h2 {
+      font-size: 20px;
+      border-bottom: 1px solid #e5e7eb;
+      padding-bottom: 6px;
+    }
+    p, li {
+      font-size: 14px;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #f3f4f6;
+      border-radius: 6px;
+    }
+    code {
+      padding: 2px 6px;
+    }
+    pre {
+      padding: 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    ul {
+      margin-top: 6px;
+    }
+    .muted {
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <h1>Penthouse Dispatch Login Crash Debug Brief</h1>
+  <p class="muted">Generated April 17, 2026</p>
+
+  <h2>Current Symptom</h2>
+  <p>
+    User can sometimes reach the sign-in screen, submit credentials, briefly sees
+    <code>Account Still Loading</code>, and then the app goes to a black screen or never reaches the dashboard.
+  </p>
+  <p>
+    Earlier, some admin routes such as <code>/admin/companies</code>, <code>/admin/testing</code>, and
+    <code>/admin/sentry</code> also rendered as black/blank pages.
+  </p>
+
+  <h2>Desired Role Model</h2>
+  <ul>
+    <li><code>admin</code> = platform-wide owner</li>
+    <li><code>company</code> = company dispatcher/operations role</li>
+    <li><code>driver</code> = belongs to a company</li>
+    <li><code>rider</code> = rider-facing user</li>
+  </ul>
+  <p>
+    Legacy <code>dispatcher</code> should behave like <code>company</code>, not be a separate primary role.
+  </p>
+
+  <h2>What Is Already Confirmed</h2>
+  <ul>
+    <li>Supabase env values are present in deployed frontend bundles.</li>
+    <li>Preview protection is no longer the blocker.</li>
+    <li>Custom domains are still unreliable because DNS is not fully corrected, so testing should use exact deployment URLs.</li>
+    <li>Backend migrations and Sentry diagnostics edge function were already applied/deployed earlier.</li>
+    <li>Headless browser fetch of the deployment showed the sign-in page HTML rendering, so the app can load unauthenticated.</li>
+  </ul>
+
+  <h2>Current Highest-Probability Failure Path</h2>
+  <p>
+    The authenticated boot path in <code>AppContext.jsx</code> is still fragile. The session appears valid, but the app
+    can end up with no usable profile/role/company state quickly enough after sign-in. That leaves the app in the
+    <code>MissingProfileScreen</code> / <code>Account Still Loading</code> path, and after that a downstream runtime
+    issue may still be blanking the app.
+  </p>
+
+  <h2>Important Files</h2>
+  <ul>
+    <li><code>/Users/penthouse/Documents/New project/project/src/context/AppContext.jsx</code></li>
+    <li><code>/Users/penthouse/Documents/New project/project/src/App.jsx</code></li>
+    <li><code>/Users/penthouse/Documents/New project/project/src/pages/AuthPage.jsx</code></li>
+    <li><code>/Users/penthouse/Documents/New project/project/src/lib/roles.js</code></li>
+    <li><code>/Users/penthouse/Documents/New project/project/src/pages/admin/AdminDashboard.jsx</code></li>
+    <li><code>/Users/penthouse/Documents/New project/project/src/pages/company/CompanyDashboard.jsx</code></li>
+  </ul>
+
+  <h2>Recent Fixes Already Attempted</h2>
+  <ul>
+    <li><code>59ab128</code> Redirect protected routes to auth</li>
+    <li><code>261eb64</code> Harden post-login account routing</li>
+    <li><code>3b3ec10</code> Align roles around admin and company dispatch</li>
+    <li><code>f79e3a7</code> Harden authenticated role routing</li>
+    <li><code>ec2e048</code> Surface async runtime crashes after login</li>
+    <li><code>802c27e</code> Timeout stuck Supabase session bootstrap</li>
+    <li><code>c945c3f</code> Stop blocking dashboard on account data load</li>
+    <li><code>ecec2d7</code> Stabilize admin route loading</li>
+    <li><code>af8d267</code> Remove alert widgets from dashboard boot path</li>
+    <li><code>5171744</code> Retry and backfill profiles after login</li>
+    <li><code>4f2abc0</code> Infer fallback account role from live data</li>
+  </ul>
+
+  <h2>What The Code Currently Does</h2>
+  <ul>
+    <li><code>normalizeAppRole()</code> maps malformed roles and maps legacy <code>dispatcher</code> to <code>company</code>.</li>
+    <li>Initial <code>supabase.auth.getSession()</code> is timeout-wrapped.</li>
+    <li>Profile lookup now retries.</li>
+    <li>If no profile is found, fallback profile creation tries to infer role from:
+      <ul>
+        <li>auth metadata role</li>
+        <li><code>companies.owner_user_id</code></li>
+        <li><code>companies.billing_contact_email</code></li>
+        <li><code>drivers.email</code></li>
+        <li>then falls back to <code>admin</code></li>
+      </ul>
+    </li>
+    <li>Admin/company shells no longer lazy-load their critical route modules.</li>
+    <li>Alert inbox and supervisor badge were removed from the critical dashboard boot path.</li>
+  </ul>
+
+  <h2>Observed Browser/Deployment Behavior</h2>
+  <pre>Unauthenticated deployment fetch showed the login page HTML rendering normally.
+Authenticated user still reports: "Account Still Loading" for longer, then black screen.</pre>
+
+  <h2>Best Next Debug Angles</h2>
+  <ol>
+    <li>Add explicit boot-stage logging/UI in <code>AppContext.jsx</code> so the app shows exactly which step it is in:
+      session, profile, role, company, org, route mount.</li>
+    <li>Inspect browser console after successful sign-in to capture the first runtime exception.</li>
+    <li>Check whether the authenticated session user id matches the expected row in <code>profiles</code>.</li>
+    <li>Verify whether RLS or query errors on <code>companies</code> / <code>org_members</code> are throwing after profile resolution.</li>
+    <li>Temporarily bypass company/org hydration entirely after login and render a minimal dashboard shell to prove whether the crash is boot-state or page-component related.</li>
+  </ol>
+
+  <h2>Useful Summary For Another Bot</h2>
+  <pre>The app is a React/Vite + Supabase multi-tenant NEMT platform.
+The big issue is post-login authenticated boot.
+Unauthenticated login page renders, but after login the user briefly sees "Account Still Loading" and then gets a black screen.
+Session is likely valid. Failure is probably in profile/role/company bootstrap or a runtime error immediately after that.
+Several hardening fixes are already applied, but the issue persists.
+Focus on AppContext boot sequencing, authenticated route mount, and the first runtime exception after login.</pre>
+</body>
+</html>

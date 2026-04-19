@@ -1526,6 +1526,27 @@ function CompanyAIControls({ company, setCompany }) {
         ))}
         <div className="flex items-center justify-between rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div>
+            <p className="text-sm font-600" style={{ fontWeight: 600 }}>Pre-Schedule From Driver Work Shifts</p>
+            <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
+              Build the day in advance using each driver&apos;s saved work shift. Drivers can set their shift, and company admins can edit it from the Drivers tab.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSchedulerPrefs(prev => ({ ...prev, preschedule_from_work_shifts: !prev.preschedule_from_work_shifts }))}
+            className="px-3 py-1.5 rounded-lg text-xs"
+            style={{
+              background: schedulerPrefs.preschedule_from_work_shifts ? 'rgba(0,229,160,0.12)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${schedulerPrefs.preschedule_from_work_shifts ? 'rgba(0,229,160,0.24)' : 'rgba(255,255,255,0.08)'}`,
+              color: schedulerPrefs.preschedule_from_work_shifts ? '#00e5a0' : 'rgba(255,255,255,0.55)',
+              fontWeight: 600,
+            }}
+          >
+            {schedulerPrefs.preschedule_from_work_shifts ? 'Enabled' : 'Disabled'}
+          </button>
+        </div>
+        <div className="flex items-center justify-between rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div>
             <p className="text-sm font-600" style={{ fontWeight: 600 }}>Shared Ride Suggestions</p>
             <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>Allow AI routing to favor same-direction rides that can be stacked safely.</p>
           </div>

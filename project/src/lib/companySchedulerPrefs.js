@@ -5,6 +5,7 @@ export const DEFAULT_COMPANY_SCHEDULER_PREFS = {
   proximity_weight: 7,
   zone_weight: 10,
   shared_rides_enabled: true,
+  preschedule_from_work_shifts: false,
 };
 
 export function readCompanySchedulerPrefs(company) {
