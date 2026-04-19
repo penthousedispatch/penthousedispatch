@@ -348,12 +348,12 @@ function AppRoutes() {
       <Route path="/support" element={<PublicInfoPage variant="support" />} />
       <Route path="/auth" element={<Navigate to={safeNextPath === '/' ? defaultRolePath : safeNextPath} replace />} />
 
-      {role === 'admin' && <Route path="/*" element={<AdminDashboard />} />}
-      {role === 'company' && <Route path="/*" element={<CompanyDashboard />} />}
-
       {needsOnboarding && (
         <Route path="/*" element={<Navigate to="/company/onboarding" replace />} />
       )}
+
+      {role === 'admin' && <Route path="/*" element={<AdminDashboard />} />}
+      {role === 'company' && !needsOnboarding && <Route path="/*" element={<CompanyDashboard />} />}
 
       {!needsOnboarding && <Route path="/*" element={<Navigate to={defaultRolePath} replace />} />}
     </Routes>
