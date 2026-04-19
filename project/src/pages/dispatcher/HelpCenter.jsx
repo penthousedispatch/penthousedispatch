@@ -135,13 +135,13 @@ export default function HelpCenter() {
                 </Step>
 
                 <Step n="2" title="Open Settings → SentryMS API">
-                  Navigate to <strong style={{ color: '#c9a84c' }}>Settings</strong> in the top navigation, then click <strong style={{ color: '#c9a84c' }}>SentryMS API</strong> in the sidebar. Make sure <strong style={{ color: '#c9a84c' }}>Sandbox Mode</strong> is ON (yellow indicator).
+                  Navigate to <strong style={{ color: '#c9a84c' }}>Settings</strong> in the top navigation, then click <strong style={{ color: '#c9a84c' }}>SentryMS API</strong> in the sidebar. Make sure <strong style={{ color: '#c9a84c' }}>Sandbox Mode</strong> is ON (yellow indicator) and choose the right webhook auth mode for your setup, either bearer header or token URL.
                 </Step>
 
                 <Step n="3" title="Enter Your Credentials">
                   Select <strong style={{ color: '#c9a84c' }}>Basic Auth</strong> and enter your sandbox username and password. The base URL should remain:
                   <CodeBlock>https://dsp-integration.test.sentryms.com</CodeBlock>
-                  Click <strong style={{ color: '#c9a84c' }}>Save Settings</strong>.
+                  Click <strong style={{ color: '#c9a84c' }}>Save Settings</strong>. If your receiver endpoints use tokenized URLs, copy the generated URLs from the Sentry setup area and send those exact links to Sentry.
                 </Step>
 
                 <Step n="4" title="Test the Connection">
@@ -151,7 +151,7 @@ export default function HelpCenter() {
                 <Step n="5" title="Pull Marketplace Trips">
                   Go to <strong style={{ color: '#c9a84c' }}>Bot Team</strong> and enable <strong style={{ color: '#00e5a0' }}>SentryBot</strong>. It will automatically pull trips from the marketplace every 60 seconds.
                   <br /><br />
-                  Or, go to <strong style={{ color: '#c9a84c' }}>Dispatch</strong> tab and click the refresh button to pull trips manually.
+                  Or, go to <strong style={{ color: '#c9a84c' }}>Dispatch</strong> or <strong style={{ color: '#c9a84c' }}>Marketplace</strong> and click the refresh button to pull trips manually.
                 </Step>
 
                 <Step n="6" title="Sync Drivers from SentryMS">
@@ -195,12 +195,12 @@ export default function HelpCenter() {
                 {
                   name: 'SentryBot', color: '#00e5a0', icon: Radio,
                   what: 'Polls the SentryMS marketplace API on an interval and imports new trips into your queue.',
-                  when: 'Enable immediately after connecting to Sentry. Recommended interval: 60 seconds.',
-                  requires: 'SentryMS API configured and connected in Settings.',
+                  when: 'Enable immediately after connecting to Sentry. Recommended interval: 60 seconds. If Sentry is not connected yet, this bot should stay off instead of self-enabling.',
+                  requires: 'SentryMS API configured and connected in Settings, or a manual marketplace refresh when testing.',
                 },
                 {
                   name: 'SchedulerBot', color: '#c9a84c', icon: Zap,
-                  what: 'Runs the AI routing engine to match available trips to online drivers based on proximity, price, and mileage. Targets $60/hr per driver.',
+                  what: 'Runs the AI routing engine to match available trips to online drivers based on proximity, price, mileage, preferred zones, and shared-ride settings. Targets your configured revenue goals.',
                   when: 'Enable after SentryBot is pulling trips. Set to every 5 minutes.',
                   requires: 'Drivers online, trips in queue. Configure in Auto-Sched tab first.',
                 },
@@ -282,6 +282,9 @@ export default function HelpCenter() {
                 </AccordionItem>
                 <AccordionItem title="How does proximity work without GPS?">
                   If a driver doesn't have GPS coordinates in the system, the bot skips the proximity score and uses only price and mileage efficiency. Ensure drivers have the mobile app active to share location.
+                </AccordionItem>
+                <AccordionItem title="What happens when AI is turned off globally?">
+                  If Admin uses All Off or the kill switch, company AI routing badges and AI-driven automation should reflect that state. Company-level AI settings stay saved, but routing pauses until Admin turns the platform back on.
                 </AccordionItem>
               </div>
             </div>

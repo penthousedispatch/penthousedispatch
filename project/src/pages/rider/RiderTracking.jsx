@@ -70,6 +70,8 @@ export default function RiderTracking() {
       tracking?.puAddress ? `Pickup is ${tracking.puAddress}.` : '',
       tracking?.doAddress ? `Dropoff is ${tracking.doAddress}.` : '',
       'Keep this page open to follow your driver in real time.',
+      'You can use the compact map button to make more room for trip details.',
+      tracking?.trackingUrl ? 'Use the copy or share buttons to send the tracking link to a family member or caregiver.' : '',
     ].filter(Boolean).join(' ');
   }, [tracking]);
   const riderAudioSrc = getGuideAudioSrc('rider_guide');
@@ -292,7 +294,7 @@ export default function RiderTracking() {
             <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.55)' }}>
               {usingUploadedAudio
                 ? 'Rider audio guide is available here so instructions can be heard instead of read.'
-                : 'Voice helper can read the rider instructions aloud from here.'}
+                : 'Voice helper can read the rider instructions aloud from here, including pickup, dropoff, and live tracking help.'}
             </p>
             <div className="flex items-center gap-2 flex-wrap">
               <button
@@ -352,6 +354,13 @@ export default function RiderTracking() {
             </div>
           </div>
           <span className="text-xs px-2 py-1 rounded-full" style={{ background: `${branding.brand_primary}18`, color: branding.brand_primary }}>Rider View</span>
+        </div>
+
+        <div className="rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)' }}>RIDER GUIDE</p>
+          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.62)', lineHeight: 1.7 }}>
+            Watch the live map, use <strong style={{ color: '#e5e7eb' }}>Compact Map</strong> if you need more room for trip details, and use <strong style={{ color: '#e5e7eb' }}>Copy</strong> or <strong style={{ color: '#e5e7eb' }}>Share</strong> to send your tracking link to someone helping you follow the ride.
+          </p>
         </div>
 
         <div className="space-y-2">

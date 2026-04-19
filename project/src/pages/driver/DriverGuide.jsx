@@ -10,6 +10,7 @@ const SECTIONS = [
     title: 'How Trips Work',
     items: [
       { q: 'How do I get trips?', a: 'Tap "Request Rides Near Me" to signal to dispatch that you\'re available. When a new trip is assigned, your phone will vibrate and a trip card will appear.' },
+      { q: 'What do the trip preference buttons mean?', a: 'The short-trip, nearby-chain, and shared-ride preference buttons tell dispatch and AI routing what kinds of trips you want first. Use them to favor 2 to 4 mile rides, tighter pickup proximity, or same-direction shared rides.' },
       { q: 'How long do I have to accept?', a: 'You have 15 seconds to accept or reject a trip. A countdown timer shows on screen. If you don\'t respond, the trip is automatically rejected.' },
       { q: 'What do the colors mean?', a: 'Green dot = Pickup location. Red dot = Dropoff location. Gold = earnings and confirmations. Blue = navigation actions.' },
       { q: 'How do I report a trip issue?', a: 'While on a trip, tap the three-dot menu (⋮) in the top-right of the trip card, then tap "Report an Issue" to send a note to dispatch.' },
@@ -65,7 +66,7 @@ const SECTIONS = [
       { q: 'Where do I see my earnings?', a: 'Your today\'s earnings show in the gold badge at the top of the screen. Trip count is shown below it.' },
       { q: 'How is hourly pay calculated?', a: 'Your hourly rate × hours worked since your shift started. The shift timer begins when you log in.' },
       { q: 'How is per-trip pay calculated?', a: 'Your per-trip rate × number of completed trips. Each completed trip adds to your total.' },
-      { q: 'How do I set up payment?', a: 'Tap the card icon in the top-right header to open Payment Setup. Add your bank account details for direct deposit.' },
+      { q: 'How do I set up payment?', a: 'Tap the card icon in the top-right header to open Payment Setup. Complete the secure Stripe payout onboarding there so your company can send ACH payouts.' },
     ],
   },
   {
@@ -74,6 +75,7 @@ const SECTIONS = [
     title: 'Schedule & Incentives',
     items: [
       { q: 'Where is my daily schedule?', a: 'Tap the checkmark icon in the top-right header to open your schedule. Pre-scheduled trips for the day are shown here.' },
+      { q: 'How do my preferred zones help?', a: 'Preferred Zones tells the routing system where you like to work, such as Brooklyn, Queens, Manhattan, the Bronx, Staten Island, or Long Island. Your company can give that setting more weight in AI routing.' },
       { q: 'What are incentive bonuses?', a: 'Dispatch may set goals like "Complete 10 trips = $50 bonus". Progress toasts appear automatically as you get closer to a goal.' },
       { q: 'What is the Penthouse AI message?', a: 'The AI sends motivational tips and earnings insights during your shift. These appear as gold notification cards at the top of the screen.' },
     ],
@@ -228,7 +230,7 @@ export default function DriverGuide({ onClose }) {
 
         <div className="pt-2 pb-6 text-center">
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>
-            Still need help? Use the chat button to message dispatch directly.
+            Still need help? Use the chat button to message dispatch directly, or reopen onboarding from the menu if your company needs you to review setup steps again.
           </p>
         </div>
       </div>

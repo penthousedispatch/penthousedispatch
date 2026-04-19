@@ -1404,19 +1404,27 @@ function CompanyGuides() {
   const guides = [
     {
       title: 'Dispatch Guide',
-      copy: 'Use Company Dashboard to watch your live fleet map, review trip assignments, and keep drivers moving in real time. Add or import drivers first so dispatch can route work to your company only.',
+      copy: 'Use Company Dashboard to watch your live fleet map, review trip assignments, and keep drivers moving in real time. Admin preview can open your company map or trip view directly, while company users can refresh marketplace trips manually and dispatch from the same live board.',
     },
     {
       title: 'Drivers Guide',
-      copy: 'The Drivers tab shows only your company drivers. Add, import, edit, export, and remove drivers there, then keep their photo, phone, TLC, and status up to date before sending them into the field.',
+      copy: 'The Drivers tab shows only your company drivers. Add, import, edit, export, send the app link, and remove drivers there, then keep their photo, phone, TLC, pay rate, and status up to date before sending them into the field.',
+    },
+    {
+      title: 'Onboarding Review Guide',
+      copy: 'When a driver completes onboarding, the company gets an alert for review. Use the driver roster and onboarding summary to confirm app onboarding, company profile details, and the secure last-4/verification workflow before the driver starts taking live work.',
+    },
+    {
+      title: 'Driver Pay Guide',
+      copy: 'Driver Pay lets your company manage hourly or per-mile/per-trip rates, review payout status, and send secure ACH payouts. Keep full company bank linking in an external secure provider such as Plaid or Stripe Financial Connections, while this app stores only the display label and last 4.',
     },
     {
       title: 'Guide Audio Guide',
-      copy: 'Use the Guide Audio section above to upload onboarding and guide audio files or paste hosted audio links. Drivers and riders who struggle with English can listen instead of only reading.',
+      copy: 'Use the Guide Audio section above to upload onboarding and guide audio files or paste hosted audio links. Uploaded audio now overrides the robotic fallback voice in driver onboarding, driver guide, rider tracking, and company training whenever an audio file is present.',
     },
     {
       title: 'Marketplace Guide',
-      copy: 'Marketplace shows imported provider trips for your company. Use the refresh and assignment tools there to inspect incoming work and move trips into dispatch. Rider tracking links are generated once a driver accepts the trip.',
+      copy: 'Marketplace shows imported provider trips for your company. Use the manual refresh button there to pull trips from Sentry, inspect incoming work, and move trips into dispatch. Rider tracking links are generated as soon as a driver accepts the trip, and riders can copy or share that live link.',
     },
     {
       title: 'Trip History Guide',
@@ -1428,11 +1436,11 @@ function CompanyGuides() {
     },
     {
       title: 'Settings Guide',
-      copy: 'Settings is where your company can update branding, payout information, and white-label preferences. Leave blanks now and complete them later if needed.',
+      copy: 'Settings is where your company can update branding, payout information, payout destination labels, billing contact details, and white-label preferences. Save company contact information there so invoices, notifications, and driver communications reach the right inbox.',
     },
     {
       title: 'AI Controls Guide',
-      copy: 'AI Settings lets your company control route planning, auto-assign, driver motivation nudges, and scheduling priorities like price, proximity, preferred zones, and shared rides without exposing platform-wide AI providers.',
+      copy: 'AI Settings lets your company control route planning, auto-assign, driver motivation nudges, and scheduling priorities like price, proximity, preferred zones, and shared rides without exposing platform-wide AI providers. When the platform kill switch or All Off is active, the green AI routing badge turns off so your company can see that routing is paused.',
     },
   ];
   const [audioRecords, setAudioRecords] = useState(() =>
