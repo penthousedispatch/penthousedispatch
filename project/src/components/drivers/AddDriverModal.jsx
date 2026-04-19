@@ -30,17 +30,27 @@ export default function AddDriverModal({ onClose, companyIdOverride = null }) {
 
   const [resolvedCompanyId, setResolvedCompanyId] = useState(companyIdOverride || (profile?.role === 'company' ? company?.id || profile?.company_id || null : null));
 
+  async function syncProfileCompanyId(companyId) {
+    if (!user?.id || !companyId || profile?.company_id === companyId) return;
+    await supabase
+      .from('profiles')
+      .update({ company_id: companyId, updated_at: new Date().toISOString() })
+      .eq('id', user.id);
+  }
+
   useEffect(() => {
     let mounted = true;
 
     async function resolveCompanyId() {
       if (companyIdOverride) {
+        await syncProfileCompanyId(companyIdOverride);
         if (mounted) setResolvedCompanyId(companyIdOverride);
         return;
       }
 
       const directCompanyId = profile?.role === 'company' ? (company?.id || profile?.company_id || null) : null;
       if (directCompanyId) {
+        await syncProfileCompanyId(directCompanyId);
         if (mounted) setResolvedCompanyId(directCompanyId);
         return;
       }
@@ -52,7 +62,13 @@ export default function AddDriverModal({ onClose, companyIdOverride = null }) {
 
       const normalizedEmail = String(user.email || '').trim().toLowerCase();
       const lookups = [
-        supabase.from('companies').select('id').eq('owner_user_id', user.id).maybeSingle(),
+        supabase
+          .from('companies')
+          .select('id')
+          .eq('owner_user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
       ];
 
       if (normalizedEmail) {
@@ -70,6 +86,7 @@ export default function AddDriverModal({ onClose, companyIdOverride = null }) {
       for (const lookup of lookups) {
         const { data } = await lookup;
         if (data?.id) {
+          await syncProfileCompanyId(data.id);
           if (mounted) setResolvedCompanyId(data.id);
           return;
         }

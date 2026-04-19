@@ -31,6 +31,14 @@ function CompanyDrivers({ company }) {
   const [driverTaxInfo, setDriverTaxInfo] = useState({});
   const driverAppUrl = `${window.location.origin}/driver`;
 
+  async function syncProfileCompanyId(companyId) {
+    if (!user?.id || !companyId || profile?.company_id === companyId) return;
+    await supabase
+      .from('profiles')
+      .update({ company_id: companyId, updated_at: new Date().toISOString() })
+      .eq('id', user.id);
+  }
+
   async function loadDriverTaxInfo(driverRows) {
     const driverIds = (driverRows || []).map(driver => driver.id).filter(Boolean);
     if (driverIds.length) {
@@ -57,7 +65,13 @@ function CompanyDrivers({ company }) {
     if (!companyId && user?.id) {
       const normalizedEmail = String(user.email || '').trim().toLowerCase();
       const lookups = [
-        supabase.from('companies').select('id').eq('owner_user_id', user.id).maybeSingle(),
+        supabase
+          .from('companies')
+          .select('id')
+          .eq('owner_user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
       ];
 
       if (normalizedEmail) {
@@ -76,6 +90,7 @@ function CompanyDrivers({ company }) {
         const { data: resolvedCompany } = await lookup;
         if (resolvedCompany?.id) {
           companyId = resolvedCompany.id;
+          await syncProfileCompanyId(companyId);
           break;
         }
       }
@@ -1080,6 +1095,29 @@ function CompanySettings({ company, setCompany }) {
     e.preventDefault();
     if (!company?.id) return;
     setSaving(true);
+    const normalizedCompanyName = String(form.company_name || '').trim();
+    if (normalizedCompanyName) {
+      const { data: nameConflict, error: nameConflictError } = await supabase
+        .from('companies')
+        .select('id, company_name')
+        .ilike('company_name', normalizedCompanyName)
+        .neq('id', company.id)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (nameConflictError) {
+        handleSupabaseError(nameConflictError, 'CompanySettings:companyNameCheck', { fallback: 'Failed to validate company name.' });
+        setSaving(false);
+        return;
+      }
+
+      if (nameConflict?.id) {
+        toastError(`${nameConflict.company_name || 'That company name'} is already in use.`);
+        setSaving(false);
+        return;
+      }
+    }
     const { data, error } = await supabase.from('companies').update({ ...form, updated_at: new Date().toISOString() }).eq('id', company.id).select().maybeSingle();
     if (error) {
       handleSupabaseError(error, 'CompanySettings:handleSave', { fallback: 'Failed to save company settings.' });
