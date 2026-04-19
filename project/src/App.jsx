@@ -22,6 +22,21 @@ function defaultPathForRole(role) {
   return '/';
 }
 
+function companySetupIncomplete(company) {
+  if (!company) return true;
+
+  const requiredFields = [
+    company.company_name,
+    company.legal_entity,
+    company.billing_contact_name,
+    company.billing_contact_email,
+    company.phone,
+    company.address,
+  ];
+
+  return requiredFields.some(value => !String(value || '').trim());
+}
+
 function MissingProfileScreen() {
   const { user, repairAccountProfile } = useApp();
   const [repairing, setRepairing] = React.useState(false);
@@ -310,7 +325,7 @@ function AppRoutes() {
     return <MissingProfileScreen />;
   }
 
-  const needsOnboarding = role === 'company' && !org && !company;
+  const needsOnboarding = role === 'company' && !org && companySetupIncomplete(company);
   const needsPasswordChange = Boolean(profile?.require_password_change);
   const defaultRolePath = defaultPathForRole(role);
 

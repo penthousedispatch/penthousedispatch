@@ -48,7 +48,7 @@ const STEPS = [
 ];
 
 export default function CompanyOnboarding() {
-  const { user, setCompany } = useApp();
+  const { user, company, setCompany } = useApp();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -186,7 +186,7 @@ export default function CompanyOnboarding() {
     setSaving(true);
     setError('');
 
-    const { data: comp, error: compErr } = await supabase.from('companies').insert({
+    const companyPayload = {
       owner_user_id: user.id,
       company_name: form.company_name,
       legal_entity: form.legal_entity,
@@ -199,13 +199,19 @@ export default function CompanyOnboarding() {
       sentry_username: form.sentry_username,
       sentry_password: form.sentry_password,
       sentry_api_key: form.sentry_api_key,
-      onboarding_status: 'agreement_signed',
-      is_approved: false,
+      onboarding_status: company?.is_approved ? 'approved' : 'agreement_signed',
+      is_approved: Boolean(company?.is_approved),
       notes: [
         `IMPORT_SOURCE:${form.import_source.toUpperCase()}`,
         form.asm_notes ? `ASM_NOTES:${form.asm_notes}` : '',
       ].filter(Boolean).join('\n'),
-    }).select().maybeSingle();
+    };
+
+    const companyQuery = company?.id
+      ? supabase.from('companies').update({ ...companyPayload, updated_at: new Date().toISOString() }).eq('id', company.id)
+      : supabase.from('companies').insert(companyPayload);
+
+    const { data: comp, error: compErr } = await companyQuery.select().maybeSingle();
 
     if (compErr || !comp) {
       setError(compErr?.message || 'Failed to save company');
@@ -213,12 +219,14 @@ export default function CompanyOnboarding() {
       return;
     }
 
-    await supabase.from('company_agreements').insert({
-      company_id: comp.id,
-      user_id: user.id,
-      agreement_version: 'v1.0',
-      agreement_text: AGREEMENT_TEXT,
-    });
+    if (!company?.id) {
+      await supabase.from('company_agreements').insert({
+        company_id: comp.id,
+        user_id: user.id,
+        agreement_version: 'v1.0',
+        agreement_text: AGREEMENT_TEXT,
+      });
+    }
 
     await supabase.from('profiles').update({ role: 'company', company_id: comp.id }).eq('id', user.id);
 
