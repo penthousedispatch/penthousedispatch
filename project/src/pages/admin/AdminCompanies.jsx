@@ -76,17 +76,29 @@ export default function AdminCompanies() {
   async function handleApprove(company) {
     if (!isPlatformOwner) return;
     setSaving(true);
-    await supabase.from('companies').update({
+    const { error: companyError } = await supabase.from('companies').update({
       is_approved: true,
       onboarding_status: 'approved',
       baseline_fleet_size: drivers.length || company.baseline_fleet_size || 1,
       notes: note,
       updated_at: new Date().toISOString(),
     }).eq('id', company.id);
-    await supabase.from('profiles').update({ role: 'company' }).eq('id', company.owner_user_id);
+    if (companyError) {
+      toastError(companyError.message || 'Failed to approve company.');
+      setSaving(false);
+      return;
+    }
+
+    const { error: profileError } = await supabase.from('profiles').update({ role: 'company' }).eq('id', company.owner_user_id);
+    if (profileError) {
+      toastError(profileError.message || 'Company approved, but updating the owner profile failed.');
+      setSaving(false);
+      return;
+    }
     setNote('');
     setSelected(null);
     setSaving(false);
+    toastSuccess(`${company.company_name || 'Company'} approved.`);
     await loadCompanies();
   }
 
@@ -143,21 +155,32 @@ export default function AdminCompanies() {
   async function handleReject(company) {
     if (!isPlatformOwner) return;
     setSaving(true);
-    await supabase.from('companies').update({
+    const { error } = await supabase.from('companies').update({
       is_approved: false,
       onboarding_status: 'rejected',
       notes: note,
       updated_at: new Date().toISOString(),
     }).eq('id', company.id);
+    if (error) {
+      toastError(error.message || 'Failed to reject company.');
+      setSaving(false);
+      return;
+    }
     setNote('');
     setSelected(null);
     setSaving(false);
+    toastSuccess(`${company.company_name || 'Company'} rejected.`);
     await loadCompanies();
   }
 
   async function handleSuspend(company) {
     if (!isPlatformOwner) return;
-    await supabase.from('companies').update({ is_suspended: !company.is_suspended, updated_at: new Date().toISOString() }).eq('id', company.id);
+    const { error } = await supabase.from('companies').update({ is_suspended: !company.is_suspended, updated_at: new Date().toISOString() }).eq('id', company.id);
+    if (error) {
+      toastError(error.message || 'Failed to update company suspension.');
+      return;
+    }
+    toastSuccess(`${company.company_name || 'Company'} ${company.is_suspended ? 'restored' : 'suspended'}.`);
     await loadCompanies();
   }
 
@@ -165,7 +188,7 @@ export default function AdminCompanies() {
     if (!isPlatformOwner || !selected?.id) return;
     if (!selected?.id) return;
     setSaving(true);
-    await supabase.from('companies').update({
+    const { error } = await supabase.from('companies').update({
       company_name: selected.company_name || '',
       legal_entity: selected.legal_entity || '',
       phone: selected.phone || '',
@@ -175,7 +198,13 @@ export default function AdminCompanies() {
       tax_id: selected.tax_id || '',
       updated_at: new Date().toISOString(),
     }).eq('id', selected.id);
+    if (error) {
+      toastError(error.message || 'Failed to save company changes.');
+      setSaving(false);
+      return;
+    }
     setSaving(false);
+    toastSuccess(`${selected.company_name || 'Company'} saved.`);
     await loadCompanies();
   }
 
