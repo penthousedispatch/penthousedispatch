@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Upload, CheckCircle, Camera, Download, AlertCircle, Check } from 'lucide-react';
+import { X, Upload, CheckCircle, Camera, AlertCircle, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 
-const CSV_DRIVERS = [
+export const CSV_DRIVERS = [
   { first_name: 'BARTHELEMY', last_name: 'ADJAVEHOUEDE', phone: '6312029396', gender: 'Male', dob: '01/01/1960', license_number: '273447679', license_state: 'New York', license_class: 'E', tlc_number: '5596965', status: 'Active' },
   { first_name: 'RAKESH', last_name: 'DUBEY', phone: '9178485148', gender: 'Male', dob: '12/31/1970', license_number: '169418192', license_state: 'New York', license_class: 'E', tlc_number: '5991134', status: 'Active' },
   { first_name: 'Ingrid', last_name: 'Patrone', phone: '6462200186', gender: 'Female', dob: '03/20/1971', license_number: '569866876', license_state: 'New York', license_class: 'E', tlc_number: '5446004', status: 'Active' },
@@ -90,18 +90,6 @@ function parseCSVRobust(text) {
   });
 
   return { rows, headers };
-}
-
-function downloadTemplate() {
-  const headers = 'first_name,last_name,phone,gender,dob,license_number,license_state,license_class,tlc_number,status';
-  const sample = 'JOHN,DOE,2125551234,Male,01/15/1985,123456789,New York,E,1234567,Active';
-  const blob = new Blob([headers + '\n' + sample], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'driver_import_template.csv';
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 export default function CSVImportModal({ onClose, companyIdOverride = null, onImported = null }) {
@@ -345,18 +333,9 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
       <div className="mx-auto flex w-full max-w-lg flex-col rounded-2xl animate-slide-up overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '90vh' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
           <p className="font-700 text-sm" style={{ fontWeight: 700 }}>Import Drivers</p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={downloadTemplate}
-              className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
-              title="Download CSV template"
-            >
-              <Download className="w-3 h-3" /> Template
-            </button>
-            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg btn-ghost">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg btn-ghost">
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
