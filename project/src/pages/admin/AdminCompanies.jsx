@@ -56,6 +56,22 @@ export default function AdminCompanies() {
     setDrivers(data || []);
   }
 
+  function guessCompanyNameFromProfile(profileRow) {
+    const email = String(profileRow?.email || '').trim().toLowerCase();
+    const localName = String(profileRow?.full_name || '').trim();
+    const domain = email.includes('@') ? email.split('@')[1] : '';
+    const base = domain ? domain.split('.')[0] : '';
+    const normalized = (base || localName || 'New Company')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b(limo|dispatch|express|transport|transportation|services?|llc|inc|corp)\b/gi, match => match.toUpperCase());
+
+    return normalized
+      .split(' ')
+      .filter(Boolean)
+      .map(word => /^[A-Z0-9]+$/.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+
   async function handleApprove(company) {
     if (!isPlatformOwner) return;
     setSaving(true);
@@ -69,6 +85,48 @@ export default function AdminCompanies() {
     await supabase.from('profiles').update({ role: 'company' }).eq('id', company.owner_user_id);
     setNote('');
     setSelected(null);
+    setSaving(false);
+    await loadCompanies();
+  }
+
+  async function handleApprovePendingSignup(profileRow) {
+    if (!isPlatformOwner || !profileRow?.id) return;
+    setSaving(true);
+
+    const companyName = guessCompanyNameFromProfile(profileRow);
+    const now = new Date().toISOString();
+
+    const { data: createdCompany, error: companyError } = await supabase
+      .from('companies')
+      .insert({
+        owner_user_id: profileRow.id,
+        company_name: companyName,
+        legal_entity: companyName,
+        billing_contact_name: profileRow.full_name || companyName,
+        billing_contact_email: profileRow.email || '',
+        onboarding_status: 'approved',
+        is_approved: true,
+        notes: 'ADMIN_APPROVED_SIGNUP:true',
+        updated_at: now,
+      })
+      .select()
+      .maybeSingle();
+
+    if (companyError || !createdCompany) {
+      setSaving(false);
+      return;
+    }
+
+    await supabase
+      .from('profiles')
+      .update({
+        role: 'company',
+        full_name: profileRow.full_name || companyName,
+        company_id: createdCompany.id,
+        updated_at: now,
+      })
+      .eq('id', profileRow.id);
+
     setSaving(false);
     await loadCompanies();
   }
@@ -212,6 +270,21 @@ export default function AdminCompanies() {
                   </div>
                   <div className="text-xs" style={{ color: 'rgba(255,255,255,0.38)' }}>
                     {profileRow.created_at ? new Date(profileRow.created_at).toLocaleString() : 'Just created'}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleApprovePendingSignup(profileRow)}
+                      disabled={saving || !isPlatformOwner}
+                      className="px-3 py-1.5 text-xs rounded-lg"
+                      style={{
+                        background: 'rgba(0,229,160,0.08)',
+                        border: '1px solid rgba(0,229,160,0.2)',
+                        color: '#00e5a0',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {saving ? 'Saving...' : 'Approve Signup'}
+                    </button>
                   </div>
                 </div>
               ))}
