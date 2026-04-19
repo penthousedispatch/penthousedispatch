@@ -126,6 +126,8 @@ export function AppProvider({ children }) {
       .from('companies')
       .select('id, company_name')
       .eq('owner_user_id', u.id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (ownerCompanyResult.data?.id) {
@@ -137,6 +139,8 @@ export function AppProvider({ children }) {
         .from('companies')
         .select('id, company_name')
         .ilike('billing_contact_email', email)
+        .order('updated_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (billingCompanyResult.data?.id) {
@@ -223,8 +227,8 @@ export function AppProvider({ children }) {
         if (error) logFailure('getSession', error);
         setUser(session?.user ?? null);
         if (session?.user) {
-          setLoading(false);
-          loadUserData(session.user);
+          setLoading(true);
+          await loadUserData(session.user);
         } else {
           setLoading(false);
         }
@@ -247,7 +251,7 @@ export function AppProvider({ children }) {
       initialSessionResolvedRef.current = true;
       setUser(session?.user ?? null);
       if (session?.user) {
-        setLoading(false);
+        setLoading(true);
         (async () => { await loadUserData(session.user); })();
       } else {
         setProfile(null);
@@ -366,7 +370,13 @@ export function AppProvider({ children }) {
         }
 
         if (!comp && !compErr) {
-          const result = await supabase.from('companies').select('*').eq('owner_user_id', u.id).maybeSingle();
+          const result = await supabase
+            .from('companies')
+            .select('*')
+            .eq('owner_user_id', u.id)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
           comp = result.data;
           compErr = result.error;
         }

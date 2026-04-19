@@ -25,6 +25,10 @@ function defaultPathForRole(role) {
 function companySetupIncomplete(company) {
   if (!company) return true;
 
+  if (company.is_approved || String(company.onboarding_status || '').toLowerCase() === 'approved') {
+    return false;
+  }
+
   const requiredFields = [
     company.company_name,
     company.legal_entity,
@@ -297,7 +301,7 @@ function AppRoutes() {
     };
   }, [navigate]);
 
-  if (loading && !user) return <LoadingScreen />;
+  if (loading) return <LoadingScreen />;
 
   const role = normalizeAppRole(profile?.role);
 

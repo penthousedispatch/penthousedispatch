@@ -196,7 +196,13 @@ export default function CompanyOnboarding() {
       const lookupCandidates = [];
 
       lookupCandidates.push(
-        supabase.from('companies').select('*').eq('owner_user_id', user.id).maybeSingle()
+        supabase
+          .from('companies')
+          .select('*')
+          .eq('owner_user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
       );
 
       if (normalizedBillingEmail) {
@@ -234,6 +240,29 @@ export default function CompanyOnboarding() {
           existingCompany = data;
           break;
         }
+      }
+    }
+
+    if (normalizedCompanyName) {
+      const { data: nameConflict, error: nameConflictError } = await supabase
+        .from('companies')
+        .select('id, company_name')
+        .ilike('company_name', form.company_name.trim())
+        .neq('id', existingCompany?.id || '00000000-0000-0000-0000-000000000000')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (nameConflictError) {
+        setError(nameConflictError.message || 'Failed to check company name.');
+        setSaving(false);
+        return;
+      }
+
+      if (nameConflict?.id) {
+        setError(`${nameConflict.company_name || 'That company name'} is already in use. Please use a different company name.`);
+        setSaving(false);
+        return;
       }
     }
 
