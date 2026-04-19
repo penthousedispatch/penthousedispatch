@@ -270,9 +270,12 @@ export default function AdminCompanies() {
                 <CompanyRow
                   key={company.id}
                   company={company}
+                  isPlatformOwner={isPlatformOwner}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
                   onOpenDashboard={() => handleOpenDashboard(company)}
                   onOpenTrips={() => handleOpenTrips(company)}
+                  onApprove={() => handleApprove(company)}
+                  onReject={() => handleReject(company)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
@@ -347,9 +350,12 @@ export default function AdminCompanies() {
                 <CompanyRow
                   key={company.id}
                   company={company}
+                  isPlatformOwner={isPlatformOwner}
                   onView={() => { setSelected(company); loadDriversForCompany(company.id); }}
                   onOpenDashboard={() => handleOpenDashboard(company)}
                   onOpenTrips={() => handleOpenTrips(company)}
+                  onApprove={() => handleApprove(company)}
+                  onReject={() => handleReject(company)}
                   onSuspend={() => handleSuspend(company)}
                 />
               ))}
@@ -474,8 +480,9 @@ export default function AdminCompanies() {
   );
 }
 
-function CompanyRow({ company, onView, onOpenDashboard, onOpenTrips, onSuspend }) {
+function CompanyRow({ company, isPlatformOwner, onView, onOpenDashboard, onOpenTrips, onApprove, onReject, onSuspend }) {
   const st = STATUS_COLORS[company.onboarding_status] || STATUS_COLORS.pending;
+  const showApprovalActions = !company.is_approved && company.onboarding_status !== 'rejected';
   return (
     <div className="flex items-center gap-4 p-4 rounded-xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
       <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.2)' }}>
@@ -497,6 +504,24 @@ function CompanyRow({ company, onView, onOpenDashboard, onOpenTrips, onSuspend }
         <button onClick={onView} className="btn-ghost px-3 py-1.5 text-xs flex items-center gap-1.5">
           <Eye className="w-3 h-3" /> Review
         </button>
+        {showApprovalActions && isPlatformOwner && (
+          <>
+            <button
+              onClick={onReject}
+              className="px-3 py-1.5 text-xs rounded-lg"
+              style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff4757' }}
+            >
+              Reject
+            </button>
+            <button
+              onClick={onApprove}
+              className="px-3 py-1.5 text-xs rounded-lg"
+              style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0' }}
+            >
+              Approve
+            </button>
+          </>
+        )}
         <a
           href={`/admin/company-preview/${company.id}`}
           onClick={e => {
