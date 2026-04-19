@@ -15,6 +15,7 @@ const STATUS_COLORS = {
 export default function AdminCompanies() {
   const { setAdminPreviewCompany, isPlatformOwner } = useApp();
   const [companies, setCompanies] = useState([]);
+  const [pendingProfiles, setPendingProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [note, setNote] = useState('');
@@ -30,7 +31,23 @@ export default function AdminCompanies() {
       .from('companies')
       .select('id, company_name, billing_contact_email, onboarding_status, is_suspended, is_approved, owner_user_id, created_at, legal_entity, phone, billing_contact_name, address, tax_id, baseline_fleet_size')
       .order('created_at', { ascending: false });
-    setCompanies(data || []);
+    const companyRows = data || [];
+    setCompanies(companyRows);
+
+    const linkedUserIds = new Set(companyRows.map(row => row.owner_user_id).filter(Boolean));
+    const linkedCompanyIds = new Set(companyRows.map(row => row.id).filter(Boolean));
+
+    const { data: rawProfiles } = await supabase
+      .from('profiles')
+      .select('id, email, full_name, role, company_id, created_at')
+      .eq('role', 'company')
+      .order('created_at', { ascending: false });
+
+    const unresolvedProfiles = (rawProfiles || []).filter(profile =>
+      !linkedUserIds.has(profile.id) && !linkedCompanyIds.has(profile.company_id)
+    );
+
+    setPendingProfiles(unresolvedProfiles);
     setLoading(false);
   }
 
@@ -162,6 +179,41 @@ export default function AdminCompanies() {
                   onOpenTrips={() => handleOpenTrips(company)}
                   onSuspend={() => handleSuspend(company)}
                 />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {pendingProfiles.length > 0 && (
+          <div className="mb-6">
+            <p className="text-xs font-700 uppercase tracking-wider mb-3" style={{ color: '#0ea5e9', fontWeight: 700 }}>Pending Company Signups</p>
+            <div className="space-y-2">
+              {pendingProfiles.map(profileRow => (
+                <div
+                  key={profileRow.id}
+                  className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap"
+                  style={{ background: '#0d1117', border: '1px solid rgba(14,165,233,0.2)' }}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>
+                        {profileRow.full_name || 'Company signup'}
+                      </span>
+                      <span
+                        className="text-xs px-2 py-1 rounded-full"
+                        style={{ background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(14,165,233,0.25)', color: '#0ea5e9' }}
+                      >
+                        Signup only
+                      </span>
+                    </div>
+                    <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                      {profileRow.email || 'No email saved'} · This account exists, but no company application row is attached yet.
+                    </p>
+                  </div>
+                  <div className="text-xs" style={{ color: 'rgba(255,255,255,0.38)' }}>
+                    {profileRow.created_at ? new Date(profileRow.created_at).toLocaleString() : 'Just created'}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
