@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { Building2, CheckCircle, XCircle, Clock, Eye, Users, AlertTriangle, Route } from 'lucide-react';
 import DriverRouteView from '../../components/drivers/DriverRouteView';
+import { toastError, toastSuccess } from '../../utils/errorHandler';
 
 const STATUS_COLORS = {
   pending: { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)', color: '#f59e0b' },
@@ -113,11 +114,12 @@ export default function AdminCompanies() {
       .maybeSingle();
 
     if (companyError || !createdCompany) {
+      toastError(companyError?.message || 'Failed to approve pending company signup.');
       setSaving(false);
       return;
     }
 
-    await supabase
+    const { error: profileError } = await supabase
       .from('profiles')
       .update({
         role: 'company',
@@ -127,6 +129,13 @@ export default function AdminCompanies() {
       })
       .eq('id', profileRow.id);
 
+    if (profileError) {
+      toastError(profileError.message || 'Company was created, but linking the signup profile failed.');
+      setSaving(false);
+      return;
+    }
+
+    toastSuccess(`${profileRow.full_name || profileRow.email || companyName} approved successfully.`);
     setSaving(false);
     await loadCompanies();
   }
