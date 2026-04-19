@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, Upload, CheckCircle, Camera, Download, AlertCircle, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
@@ -105,7 +105,7 @@ function downloadTemplate() {
 }
 
 export default function CSVImportModal({ onClose, companyIdOverride = null, onImported = null }) {
-  const { company, profile } = useApp();
+  const { company, profile, user } = useApp();
   const [preview, setPreview] = useState(null);
   const [importing, setImporting] = useState(false);
   const [results, setResults] = useState(null);
@@ -113,7 +113,59 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
   const [driverResults, setDriverResults] = useState([]);
   const [parseError, setParseError] = useState(null);
   const fileRef = useRef();
-  const resolvedCompanyId = companyIdOverride || (profile?.role === 'company' ? company?.id || null : null);
+  const [resolvedCompanyId, setResolvedCompanyId] = useState(companyIdOverride || (profile?.role === 'company' ? company?.id || profile?.company_id || null : null));
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function resolveCompanyId() {
+      if (companyIdOverride) {
+        if (mounted) setResolvedCompanyId(companyIdOverride);
+        return;
+      }
+
+      const directCompanyId = profile?.role === 'company' ? (company?.id || profile?.company_id || null) : null;
+      if (directCompanyId) {
+        if (mounted) setResolvedCompanyId(directCompanyId);
+        return;
+      }
+
+      if (!user?.id) {
+        if (mounted) setResolvedCompanyId(null);
+        return;
+      }
+
+      const normalizedEmail = String(user.email || '').trim().toLowerCase();
+      const lookups = [
+        supabase.from('companies').select('id').eq('owner_user_id', user.id).maybeSingle(),
+      ];
+
+      if (normalizedEmail) {
+        lookups.push(
+          supabase
+            .from('companies')
+            .select('id')
+            .ilike('billing_contact_email', normalizedEmail)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        );
+      }
+
+      for (const lookup of lookups) {
+        const { data } = await lookup;
+        if (data?.id) {
+          if (mounted) setResolvedCompanyId(data.id);
+          return;
+        }
+      }
+
+      if (mounted) setResolvedCompanyId(null);
+    }
+
+    resolveCompanyId();
+    return () => { mounted = false; };
+  }, [company?.id, companyIdOverride, profile?.company_id, profile?.role, user?.email, user?.id]);
 
   function handleFile(e) {
     const file = e.target.files[0];
@@ -362,7 +414,7 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
                     fontWeight: mode === m ? 600 : 400,
                     border: 'none',
                   }}>
-                    {m === 'builtin' ? 'Load Test Drivers' : 'Upload CSV File'}
+                    {m === 'builtin' ? 'Load Fleet Drivers' : 'Upload CSV File'}
                   </button>
                 ))}
               </div>
@@ -372,11 +424,11 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
                   <div className="flex items-start gap-2 p-3 rounded-xl mb-3" style={{ background: 'rgba(0,229,160,0.06)', border: '1px solid rgba(0,229,160,0.15)' }}>
                     <Check className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#00e5a0' }} />
                     <p className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                      These are test accounts preserved for dispatch testing. Importing re-adds them if previously deleted.
+                      These fleet records attach to this company and stay in the company dashboard until the company deletes them.
                     </p>
                   </div>
                   <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                    {CSV_DRIVERS.length} test drivers ready to import:
+                    {CSV_DRIVERS.length} fleet drivers ready to import:
                   </p>
                   <div className="space-y-1.5 max-h-52 overflow-y-auto mb-4">
                     {CSV_DRIVERS.map((d, i) => (
@@ -395,7 +447,7 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
                     className="btn-gold w-full py-3 flex items-center justify-center gap-2"
                   >
                     <Upload className="w-4 h-4" />
-                    {importing ? 'Importing...' : `Import ${CSV_DRIVERS.length} Test Drivers`}
+                    {importing ? 'Importing...' : `Import ${CSV_DRIVERS.length} Fleet Drivers`}
                   </button>
                 </div>
               )}

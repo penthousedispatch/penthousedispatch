@@ -18,6 +18,7 @@ import {
 import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
 
 function CompanyDrivers({ company }) {
+  const { user, profile } = useApp();
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -51,12 +52,46 @@ function CompanyDrivers({ company }) {
   }
 
   async function loadCompanyDrivers() {
-    if (!company?.id) return;
+    let companyId = company?.id || profile?.company_id || null;
+
+    if (!companyId && user?.id) {
+      const normalizedEmail = String(user.email || '').trim().toLowerCase();
+      const lookups = [
+        supabase.from('companies').select('id').eq('owner_user_id', user.id).maybeSingle(),
+      ];
+
+      if (normalizedEmail) {
+        lookups.push(
+          supabase
+            .from('companies')
+            .select('id')
+            .ilike('billing_contact_email', normalizedEmail)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        );
+      }
+
+      for (const lookup of lookups) {
+        const { data: resolvedCompany } = await lookup;
+        if (resolvedCompany?.id) {
+          companyId = resolvedCompany.id;
+          break;
+        }
+      }
+    }
+
+    if (!companyId) {
+      setDrivers([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const { data, error } = await supabase
       .from('drivers')
       .select('*')
-      .eq('company_id', company.id)
+      .eq('company_id', companyId)
       .eq('is_active', true)
       .order('full_name');
 
@@ -84,7 +119,7 @@ function CompanyDrivers({ company }) {
 
   useEffect(() => {
     loadCompanyDrivers();
-  }, [company?.id]);
+  }, [company?.id, profile?.company_id, user?.id, user?.email]);
 
   const statusColor = { online: '#00e5a0', offline: 'rgba(255,255,255,0.3)', on_trip: '#c9a84c', break: '#f59e0b' };
   const filteredDrivers = drivers.filter(driver => {

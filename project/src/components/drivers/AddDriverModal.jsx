@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, User, Phone, Mail, Camera, Upload } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
@@ -20,7 +20,7 @@ async function uploadDriverPhoto(file, driverNum) {
 }
 
 export default function AddDriverModal({ onClose, companyIdOverride = null }) {
-  const { company, profile } = useApp();
+  const { company, profile, user } = useApp();
   const [form, setForm] = useState({ full_name: '', phone: '', email: '', shift_hours: '7am-5pm', home_address: '' });
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
@@ -28,7 +28,59 @@ export default function AddDriverModal({ onClose, companyIdOverride = null }) {
   const [error, setError] = useState('');
   const fileRef = useRef();
 
-  const resolvedCompanyId = companyIdOverride || (profile?.role === 'company' ? company?.id || null : null);
+  const [resolvedCompanyId, setResolvedCompanyId] = useState(companyIdOverride || (profile?.role === 'company' ? company?.id || profile?.company_id || null : null));
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function resolveCompanyId() {
+      if (companyIdOverride) {
+        if (mounted) setResolvedCompanyId(companyIdOverride);
+        return;
+      }
+
+      const directCompanyId = profile?.role === 'company' ? (company?.id || profile?.company_id || null) : null;
+      if (directCompanyId) {
+        if (mounted) setResolvedCompanyId(directCompanyId);
+        return;
+      }
+
+      if (!user?.id) {
+        if (mounted) setResolvedCompanyId(null);
+        return;
+      }
+
+      const normalizedEmail = String(user.email || '').trim().toLowerCase();
+      const lookups = [
+        supabase.from('companies').select('id').eq('owner_user_id', user.id).maybeSingle(),
+      ];
+
+      if (normalizedEmail) {
+        lookups.push(
+          supabase
+            .from('companies')
+            .select('id')
+            .ilike('billing_contact_email', normalizedEmail)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        );
+      }
+
+      for (const lookup of lookups) {
+        const { data } = await lookup;
+        if (data?.id) {
+          if (mounted) setResolvedCompanyId(data.id);
+          return;
+        }
+      }
+
+      if (mounted) setResolvedCompanyId(null);
+    }
+
+    resolveCompanyId();
+    return () => { mounted = false; };
+  }, [company?.id, companyIdOverride, profile?.company_id, profile?.role, user?.email, user?.id]);
 
   function handlePhotoChange(e) {
     const file = e.target.files[0];
@@ -43,6 +95,7 @@ export default function AddDriverModal({ onClose, companyIdOverride = null }) {
     e.preventDefault();
     if (!form.full_name.trim()) { setError('Name required'); return; }
     if (!photoFile) { setError('Driver photo is required'); return; }
+    if (!resolvedCompanyId) { setError('No company is attached to this driver yet. Reopen the company Drivers tab and try again.'); return; }
 
     setLoading(true);
     setError('');
