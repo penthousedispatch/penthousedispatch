@@ -328,7 +328,7 @@ export default function AuthPage() {
                   const { error: otpError } = await supabase.auth.signInWithOtp({
                     email: email.trim(),
                     options: {
-                      emailRedirectTo: `${window.location.origin}/auth?auth=magic`,
+                      emailRedirectTo: getAuthRedirectUrl('/auth?auth=magic'),
                     },
                   });
 
