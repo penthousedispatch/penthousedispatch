@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { sentryApi } from '../../lib/sentryApi';
+import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle, ChevronRight, ChevronLeft, Building2, User, Zap,
   FileText, AlertTriangle, RefreshCw, Download
@@ -49,6 +50,7 @@ const STEPS = [
 
 export default function CompanyOnboarding() {
   const { user, company, setCompany } = useApp();
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -199,8 +201,8 @@ export default function CompanyOnboarding() {
       sentry_username: form.sentry_username,
       sentry_password: form.sentry_password,
       sentry_api_key: form.sentry_api_key,
-      onboarding_status: company?.is_approved ? 'approved' : 'agreement_signed',
-      is_approved: Boolean(company?.is_approved),
+      onboarding_status: 'approved',
+      is_approved: true,
       notes: [
         `IMPORT_SOURCE:${form.import_source.toUpperCase()}`,
         form.asm_notes ? `ASM_NOTES:${form.asm_notes}` : '',
@@ -232,7 +234,7 @@ export default function CompanyOnboarding() {
 
     setCompany(comp);
     setSaving(false);
-    setStep(4);
+    navigate('/', { replace: true });
   }
 
   function canAdvance() {
@@ -496,20 +498,20 @@ export default function CompanyOnboarding() {
                 <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.3)' }}>
                   <CheckCircle className="w-7 h-7" style={{ color: '#00e5a0' }} />
                 </div>
-                <h2 className="text-lg font-700 mb-2" style={{ fontWeight: 700 }}>Application Submitted!</h2>
+                <h2 className="text-lg font-700 mb-2" style={{ fontWeight: 700 }}>Setup Complete!</h2>
                 <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>
-                  Your company account is pending admin approval. You will receive access once reviewed.
+                  Your company account is now active. Sign in with your password and continue into the company dashboard.
                 </p>
                 <div className="space-y-2 text-left p-4 rounded-xl mb-5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  {[`Company: ${form.company_name}`, `Billing: ${form.billing_contact_email}`, 'Status: Pending Review'].map(line => (
+                  {[`Company: ${form.company_name}`, `Billing: ${form.billing_contact_email}`, 'Status: Active'].map(line => (
                     <div key={line} className="flex items-center gap-2 text-sm">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#c9a84c' }} />
                       <span style={{ color: 'rgba(255,255,255,0.6)' }}>{line}</span>
                     </div>
                   ))}
                 </div>
-                <button onClick={() => supabase.auth.signOut()} className="btn-ghost w-full py-3 text-sm">
-                  Sign Out
+                <button onClick={() => navigate('/', { replace: true })} className="btn-ghost w-full py-3 text-sm">
+                  Continue to Dashboard
                 </button>
               </div>
             )}

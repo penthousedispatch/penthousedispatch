@@ -1665,16 +1665,16 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
     { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  if (!previewMode && !activeCompany?.is_approved && activeCompany?.onboarding_status !== 'approved') {
+  if (!previewMode && activeCompany?.onboarding_status === 'rejected') {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#07090d' }}>
         <div className="max-w-sm text-center">
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)' }}>
             <AlertTriangle className="w-8 h-8" style={{ color: '#c9a84c' }} />
           </div>
-          <h2 className="text-xl font-700 mb-2" style={{ fontWeight: 700 }}>Pending Approval</h2>
+          <h2 className="text-xl font-700 mb-2" style={{ fontWeight: 700 }}>Access Paused</h2>
           <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, lineHeight: 1.6 }}>
-            Your company account is under review. You'll have full access once an admin approves your application.
+            Your company account has been rejected or paused. Contact Penthouse Dispatch support if you need this access restored.
           </p>
           <button onClick={() => supabase.auth.signOut()} className="btn-ghost mt-6 px-5 py-2.5 text-sm flex items-center gap-2 mx-auto">
             <LogOut className="w-4 h-4" /> Sign Out
