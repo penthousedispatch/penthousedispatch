@@ -89,11 +89,13 @@ export default function AdminCompanies() {
       return;
     }
 
-    const { error: profileError } = await supabase.from('profiles').update({ role: 'company' }).eq('id', company.owner_user_id);
-    if (profileError) {
-      toastError(profileError.message || 'Company approved, but updating the owner profile failed.');
-      setSaving(false);
-      return;
+    if (company.owner_user_id) {
+      const { error: profileError } = await supabase.from('profiles').update({ role: 'company' }).eq('id', company.owner_user_id);
+      if (profileError) {
+        toastError(profileError.message || 'Company approved, but updating the owner profile failed.');
+        setSaving(false);
+        return;
+      }
     }
     setNote('');
     setSelected(null);
@@ -453,22 +455,26 @@ export default function AdminCompanies() {
               >
                 {saving ? 'Saving...' : 'Save Company Data'}
               </button>
-              <button
-                onClick={() => handleReject(selected)}
-                disabled={saving || !isPlatformOwner}
-                className="flex-1 py-2.5 rounded-xl text-sm font-600"
-                style={{ background: 'rgba(255,71,87,0.1)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontWeight: 600 }}
-              >
-                Reject
-              </button>
-              <button
-                onClick={() => handleApprove(selected)}
-                disabled={saving || !isPlatformOwner}
-                className="flex-1 py-2.5 rounded-xl text-sm font-600"
-                style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.3)', color: '#00e5a0', fontWeight: 600 }}
-              >
-                {saving ? 'Saving...' : 'Approve'}
-              </button>
+              {selected.onboarding_status !== 'rejected' && !selected.is_approved && (
+                <>
+                  <button
+                    onClick={() => handleReject(selected)}
+                    disabled={saving || !isPlatformOwner}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-600"
+                    style={{ background: 'rgba(255,71,87,0.1)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontWeight: 600 }}
+                  >
+                    Reject
+                  </button>
+                  <button
+                    onClick={() => handleApprove(selected)}
+                    disabled={saving || !isPlatformOwner}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-600"
+                    style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.3)', color: '#00e5a0', fontWeight: 600 }}
+                  >
+                    {saving ? 'Saving...' : 'Approve'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
