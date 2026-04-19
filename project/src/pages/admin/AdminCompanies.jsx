@@ -199,8 +199,8 @@ export default function AdminCompanies() {
       `Type DELETE to permanently remove ${company.company_name || 'this company'} and its saved company data.`
     );
 
-    if (finalCheck !== 'DELETE') {
-      toastError('Company delete cancelled. Type DELETE exactly to confirm.');
+    if (String(finalCheck || '').trim().toUpperCase() !== 'DELETE') {
+      toastError('Company delete cancelled. Type DELETE to confirm.');
       return;
     }
 
