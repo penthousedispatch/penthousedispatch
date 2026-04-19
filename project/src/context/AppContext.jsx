@@ -357,6 +357,7 @@ export function AppProvider({ children }) {
       if (normalizedProfRole === 'company') {
         let comp = null;
         let compErr = null;
+        const normalizedUserEmail = (u?.email || '').trim().toLowerCase();
 
         if (prof.company_id) {
           const result = await supabase.from('companies').select('*').eq('id', prof.company_id).maybeSingle();
@@ -370,8 +371,29 @@ export function AppProvider({ children }) {
           compErr = result.error;
         }
 
+        if (!comp && !compErr && normalizedUserEmail) {
+          const result = await supabase
+            .from('companies')
+            .select('*')
+            .ilike('billing_contact_email', normalizedUserEmail)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          comp = result.data;
+          compErr = result.error;
+        }
+
         if (compErr) logFailure('loadUserData:companies', compErr);
         setCompany(comp);
+        if (comp?.id && prof.company_id !== comp.id) {
+          supabase
+            .from('profiles')
+            .update({ company_id: comp.id, updated_at: new Date().toISOString() })
+            .eq('id', u.id)
+            .then(({ error }) => {
+              if (error) logFailure('loadUserData:syncCompanyId', error);
+            });
+        }
         if (comp) {
           setLoading(false);
           Promise.allSettled([

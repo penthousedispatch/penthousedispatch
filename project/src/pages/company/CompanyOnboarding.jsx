@@ -188,6 +188,55 @@ export default function CompanyOnboarding() {
     setSaving(true);
     setError('');
 
+    const normalizedBillingEmail = String(form.billing_contact_email || user.email || '').trim().toLowerCase();
+    const normalizedCompanyName = String(form.company_name || '').trim().toLowerCase();
+    let existingCompany = company || null;
+
+    if (!existingCompany?.id) {
+      const lookupCandidates = [];
+
+      lookupCandidates.push(
+        supabase.from('companies').select('*').eq('owner_user_id', user.id).maybeSingle()
+      );
+
+      if (normalizedBillingEmail) {
+        lookupCandidates.push(
+          supabase
+            .from('companies')
+            .select('*')
+            .ilike('billing_contact_email', normalizedBillingEmail)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        );
+      }
+
+      if (normalizedCompanyName) {
+        lookupCandidates.push(
+          supabase
+            .from('companies')
+            .select('*')
+            .ilike('company_name', form.company_name.trim())
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        );
+      }
+
+      for (const candidate of lookupCandidates) {
+        const { data, error: lookupError } = await candidate;
+        if (lookupError) {
+          setError(lookupError.message || 'Failed to look up company.');
+          setSaving(false);
+          return;
+        }
+        if (data?.id) {
+          existingCompany = data;
+          break;
+        }
+      }
+    }
+
     const companyPayload = {
       owner_user_id: user.id,
       company_name: form.company_name,
@@ -209,8 +258,8 @@ export default function CompanyOnboarding() {
       ].filter(Boolean).join('\n'),
     };
 
-    const companyQuery = company?.id
-      ? supabase.from('companies').update({ ...companyPayload, updated_at: new Date().toISOString() }).eq('id', company.id)
+    const companyQuery = existingCompany?.id
+      ? supabase.from('companies').update({ ...companyPayload, updated_at: new Date().toISOString() }).eq('id', existingCompany.id)
       : supabase.from('companies').insert(companyPayload);
 
     const { data: comp, error: compErr } = await companyQuery.select().maybeSingle();
@@ -221,7 +270,7 @@ export default function CompanyOnboarding() {
       return;
     }
 
-    if (!company?.id) {
+    if (!existingCompany?.id) {
       await supabase.from('company_agreements').insert({
         company_id: comp.id,
         user_id: user.id,
