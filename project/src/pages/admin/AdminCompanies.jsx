@@ -186,6 +186,47 @@ export default function AdminCompanies() {
     await loadCompanies();
   }
 
+  async function handleDeleteCompany(company) {
+    if (!isPlatformOwner || !company?.id) return;
+
+    const confirmed = window.confirm(
+      `Delete ${company.company_name || 'this company'} and remove its company data? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    const finalCheck = window.prompt(
+      `Type DELETE to permanently remove ${company.company_name || 'this company'} and its saved company data.`
+    );
+
+    if (finalCheck !== 'DELETE') {
+      toastError('Company delete cancelled. Type DELETE exactly to confirm.');
+      return;
+    }
+
+    setSaving(true);
+
+    const { error } = await supabase.rpc('admin_delete_company', {
+      target_company_id: company.id,
+    });
+
+    if (error) {
+      toastError(error.message || 'Failed to delete company.');
+      setSaving(false);
+      return;
+    }
+
+    if (selected?.id === company.id) {
+      setSelected(null);
+      setDrivers([]);
+      setRouteDriver(null);
+    }
+
+    setSaving(false);
+    toastSuccess(`${company.company_name || 'Company'} deleted permanently.`);
+    await loadCompanies();
+  }
+
   async function handleSaveCompanyEdits() {
     if (!isPlatformOwner || !selected?.id) return;
     if (!selected?.id) return;
@@ -279,6 +320,7 @@ export default function AdminCompanies() {
                   onApprove={() => handleApprove(company)}
                   onReject={() => handleReject(company)}
                   onSuspend={() => handleSuspend(company)}
+                  onDelete={() => handleDeleteCompany(company)}
                 />
               ))}
             </div>
@@ -359,6 +401,7 @@ export default function AdminCompanies() {
                   onApprove={() => handleApprove(company)}
                   onReject={() => handleReject(company)}
                   onSuspend={() => handleSuspend(company)}
+                  onDelete={() => handleDeleteCompany(company)}
                 />
               ))}
             </div>
@@ -475,6 +518,16 @@ export default function AdminCompanies() {
                   </button>
                 </>
               )}
+              {isPlatformOwner && (
+                <button
+                  onClick={() => handleDeleteCompany(selected)}
+                  disabled={saving}
+                  className="px-4 py-2.5 rounded-xl text-sm font-600"
+                  style={{ background: 'rgba(255,71,87,0.1)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontWeight: 600 }}
+                >
+                  Delete Company
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -486,7 +539,7 @@ export default function AdminCompanies() {
   );
 }
 
-function CompanyRow({ company, isPlatformOwner, onView, onOpenDashboard, onOpenTrips, onApprove, onReject, onSuspend }) {
+function CompanyRow({ company, isPlatformOwner, onView, onOpenDashboard, onOpenTrips, onApprove, onReject, onSuspend, onDelete }) {
   const st = STATUS_COLORS[company.onboarding_status] || STATUS_COLORS.pending;
   const showApprovalActions = !company.is_approved && company.onboarding_status !== 'rejected';
   return (
@@ -557,6 +610,15 @@ function CompanyRow({ company, isPlatformOwner, onView, onOpenDashboard, onOpenT
         >
           {company.is_suspended ? 'Unsuspend' : 'Suspend'}
         </button>
+        {isPlatformOwner && (
+          <button
+            onClick={onDelete}
+            className="px-3 py-1.5 text-xs rounded-lg"
+            style={{ background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.28)', color: '#ff7a7a' }}
+          >
+            Delete
+          </button>
+        )}
       </div>
     </div>
   );
