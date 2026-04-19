@@ -64,6 +64,8 @@ export default function LiveDispatch() {
     setRefreshing(true);
     await refreshTripsFromSentry();
     await loadDrivers();
+    await loadTrips();
+    await loadAssignments();
     setRefreshing(false);
   }
 
@@ -460,24 +462,23 @@ export default function LiveDispatch() {
             </p>
             <div className="flex gap-1.5">
               {!isCompanyUser && (
-                <>
-                  <button
-                    onClick={() => setShowWalkthrough(true)}
-                    className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
-                    title="Test dispatch walkthrough"
-                  >
-                    <BookOpen className="w-3 h-3" /> Test
-                  </button>
-                  <button
-                    onClick={handleRefresh}
-                    disabled={refreshing}
-                    className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </button>
-                </>
+                <button
+                  onClick={() => setShowWalkthrough(true)}
+                  className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
+                  title="Test dispatch walkthrough"
+                >
+                  <BookOpen className="w-3 h-3" /> Test
+                </button>
               )}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="btn-ghost px-2 py-1 text-xs flex items-center gap-1"
+                title={isCompanyUser ? 'Refresh company trips' : 'Refresh trips'}
+              >
+                <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? 'Refreshing' : 'Refresh'}
+              </button>
             </div>
           </div>
           {isCompanyUser && (
@@ -521,18 +522,21 @@ export default function LiveDispatch() {
           {isCompanyUser ? (
             companyTripView === 'queue' ? (
               companyOpenTrips.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">
-                  <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.1)' }}>
-                    <Navigation className="w-6 h-6" style={{ color: '#c9a84c' }} />
-                  </div>
-                  <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                    No open trips are available for dispatch right now.
-                  </p>
-                  <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.28)' }}>
-                    Imported provider trips will appear here for your company dispatch team to assign.
-                  </p>
+              <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.1)' }}>
+                  <Navigation className="w-6 h-6" style={{ color: '#c9a84c' }} />
                 </div>
-              ) : (
+                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                  No open trips are available for dispatch right now.
+                </p>
+                <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.28)' }}>
+                  Imported provider trips will appear here for your company dispatch team to assign.
+                </p>
+                <button onClick={handleRefresh} disabled={refreshing} className="btn-gold text-xs px-4 py-2">
+                  {refreshing ? 'Refreshing...' : 'Refresh Trips'}
+                </button>
+              </div>
+            ) : (
                 companyOpenTrips.map(trip => (
                   <TripCard
                     key={trip.id}
