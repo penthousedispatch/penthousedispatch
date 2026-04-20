@@ -388,7 +388,7 @@ export default function AdminDashboard() {
             <LogOut className="w-4 h-4" />
           </button>
           <button
-            className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg btn-ghost"
+            className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg btn-ghost"
             onClick={() => setMobileNav(!mobileNav)}
           >
             <Menu className="w-4 h-4" />
