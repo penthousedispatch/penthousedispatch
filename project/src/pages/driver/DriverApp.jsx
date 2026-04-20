@@ -721,6 +721,51 @@ export default function DriverApp() {
     await fbSet(`sos_alerts/${driverData?.id}`, { status: 'cancelled', cancelledAt: Date.now() });
   }
 
+  function buildSentryLifecyclePayload(statusId, extra = {}) {
+    const coords = locationRef.current || location || {};
+    const sentryDriverId = driverRecord?.sentry_driver_id || driverRecord?.id || driverData?.id || null;
+    const sentryVehicleId = driverRecord?.sentry_vehicle_id || driverRecord?.id || null;
+
+    return {
+      status_id: statusId,
+      driver: {
+        id: sentryDriverId,
+        name: driverRecord?.full_name || driverData?.name || 'Driver',
+        phone: driverRecord?.phone || driverData?.phone || '',
+        email: driverRecord?.email || driverData?.email || '',
+      },
+      vehicle: {
+        id: sentryVehicleId,
+        lat: coords?.lat || driverRecord?.current_lat || null,
+        lng: coords?.lng || driverRecord?.current_lng || null,
+        plate: driverRecord?.vehicle_plate || '',
+        timestamp: new Date().toISOString(),
+      },
+      ...extra,
+    };
+  }
+
+  async function sendSentryLifecycleStatus(tripId, statusId, extra = {}) {
+    if (!tripId || !sentryApi.enabled || !sentryApi.features.tripStatusUpdate) return;
+
+    const payload = buildSentryLifecyclePayload(statusId, extra);
+    const sentryResult = await sentryApi.updateTripStatus(tripId, payload);
+
+    await supabase.from('sentry_sync_log').insert({
+      sync_type: `trip_status_${statusId}`,
+      direction: 'export',
+      record_type: 'trip',
+      external_id: String(tripId),
+      status: sentryResult.ok ? 'success' : 'failed',
+      error_message: sentryResult.ok ? '' : (sentryResult.error || `HTTP ${sentryResult.status}`),
+      payload,
+    });
+
+    if (!sentryResult.ok) {
+      logFailure(`DriverApp:tripStatus:${statusId}`, { status: sentryResult.status, error: sentryResult.error });
+    }
+  }
+
   async function acceptTrip() {
     if (!currentTrip) return;
     stopCountdown();
@@ -768,6 +813,14 @@ export default function DriverApp() {
           payload: { driver_id: driverData.id, trip_processing_status_id: 1 },
         });
       }
+
+      await sendSentryLifecycleStatus(currentTrip.tripId, 2, {
+        assigned_at: acceptedAt,
+        accepted_at: acceptedAt,
+      });
+      await sendSentryLifecycleStatus(currentTrip.tripId, 3, {
+        en_route_at: acceptedAt,
+      });
     }
 
     await publishTripAlert(
@@ -833,6 +886,9 @@ export default function DriverApp() {
     }
 
     setCurrentTrip(prev => ({ ...prev, arrivedAt }));
+    await sendSentryLifecycleStatus(currentTrip.tripId, 4, {
+      pick_up_arrival_timestamp: arrivedAt,
+    });
     await publishTripAlert(
       'driver_arrived_pickup',
       `${driverData?.name || 'Driver'} arrived at pickup for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
@@ -853,6 +909,10 @@ export default function DriverApp() {
       if (error) logFailure('DriverApp:confirmPickup:trip_assignments', error);
     }
     stopPickupWait();
+    await sendSentryLifecycleStatus(currentTrip?.tripId, 5, {
+      pick_up_timestamp: pickedUpAt,
+      pick_up_arrival_timestamp: currentTrip?.arrivedAt || pickedUpAt,
+    });
     await publishTripAlert(
       'driver_picked_up_rider',
       `${driverData?.name || 'Driver'} picked up the rider for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
@@ -917,15 +977,9 @@ export default function DriverApp() {
         .update({ status: 'completed' })
         .eq('sentry_trip_id', String(currentTrip.tripId));
 
-      if (sentryApi.enabled && sentryApi.features.tripStatusUpdate) {
-        const sentryResult = await sentryApi.updateTripStatus(currentTrip.tripId, {
-          status_id: 7,
-          completed_at: completedAt,
-        });
-        if (!sentryResult.ok) {
-          logFailure('DriverApp:completeTrip:sentryUpdateStatus', { status: sentryResult.status, error: sentryResult.error });
-        }
-      }
+      await sendSentryLifecycleStatus(currentTrip.tripId, 7, {
+        completed_at: completedAt,
+      });
     }
 
     if (driverRecord?.id) {

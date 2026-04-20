@@ -4,7 +4,7 @@ import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
   Sun, Moon, Globe, Key, Car, FlaskConical, Bot, MessageSquare,
-  Menu, X, RadioTower, Eye
+  Menu, X, RadioTower, Eye, Route as RouteIcon
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
@@ -45,6 +45,7 @@ const PLATFORM_TABS = [
   { path: '/admin/sentry', label: 'Sentry', icon: Settings },
   { path: '/admin/testing', label: 'Testing', icon: Cpu },
   { path: '/admin/rider-preview', label: 'Rider Preview', icon: Eye },
+  { path: '/admin/trips', label: 'Trips', icon: RouteIcon },
   { path: '/admin/security', label: 'Security', icon: Shield },
   { path: '/admin/payroll', label: 'Payroll', icon: Banknote },
   { path: '/admin/incentives', label: 'Incentives', icon: Zap },
@@ -412,6 +413,7 @@ export default function AdminDashboard() {
           <Route path="/admin/sentry-guide" element={renderAdminModule('sentryGuide')} />
           <Route path="/admin/testing" element={renderAdminModule('testing')} />
           <Route path="/admin/rider-preview" element={renderAdminModule('riderPreview')} />
+          <Route path="/admin/trips" element={renderAdminModule('trips')} />
           <Route path="/admin/chatbot" element={renderAdminModule('chatbot')} />
           <Route path="/admin/auto-scheduler" element={renderAdminModule('autoScheduler')} />
           <Route path="/admin/bots" element={renderAdminModule('bots')} />
