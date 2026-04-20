@@ -22,7 +22,6 @@ import PermissionsMatrix from '../pages/admin/PermissionsMatrix';
 import TenantManager from '../pages/admin/TenantManager';
 import TestModeSandbox from '../pages/admin/TestModeSandbox';
 import AdminRiderPreview from '../pages/admin/AdminRiderPreview';
-import AdminTripsCenter from '../pages/admin/AdminTripsCenter';
 
 export const adminModules = {
   dispatch: {
@@ -120,9 +119,5 @@ export const adminModules = {
   riderPreview: {
     name: 'Rider Preview',
     component: AdminRiderPreview,
-  },
-  trips: {
-    name: 'Trips',
-    component: AdminTripsCenter,
   },
 };

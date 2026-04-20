@@ -13,7 +13,7 @@ import CSVImportModal, { CSV_DRIVERS } from '../../components/drivers/CSVImportM
 import {
   Users, Navigation, FileText, Settings, LogOut,
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck,
-  Upload, Link2, Headphones, RefreshCw, Send, ClipboardList
+  Upload, Link2, Headphones, RefreshCw, Send, ClipboardList, Menu, X
 } from 'lucide-react';
 import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
 
@@ -1852,6 +1852,81 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
     { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
   ];
 
+  function CompanyMobileDrawer() {
+    if (!mobileNav) return null;
+
+    return (
+      <div
+        className="fixed inset-0 z-50 md:hidden flex"
+        style={{ background: 'rgba(0,0,0,0.62)', backdropFilter: 'blur(4px)' }}
+        onClick={() => setMobileNav(false)}
+      >
+        <div
+          className="flex flex-col w-72 h-full overflow-y-auto"
+          style={{ background: '#0d1117', borderRight: '1px solid rgba(255,255,255,0.08)' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between px-4 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+            <div>
+              <p className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>{companyDisplayName}</p>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Company Admin Dashboard</p>
+            </div>
+            <button
+              onClick={() => setMobileNav(false)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg btn-ghost"
+              title="Close menu"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {previewMode && activeCompany?.id && (
+            <Link
+              to="/admin/companies"
+              onClick={() => setMobileNav(false)}
+              className="mx-4 mt-4 inline-flex items-center justify-center gap-2 px-3 py-3 rounded-xl text-sm transition-all"
+              style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none', fontWeight: 600 }}
+            >
+              Back To Companies
+            </Link>
+          )}
+
+          <div className="mt-4 flex flex-col">
+            {tabs.map(({ path, label, icon: Icon, exact }) => (
+              <NavLink
+                key={path}
+                to={path}
+                end={exact}
+                onClick={() => setMobileNav(false)}
+                className="flex items-center gap-3 px-4 py-3.5 text-sm font-medium transition-all border-b"
+                style={({ isActive }) => ({
+                  color: isActive ? '#c9a84c' : 'rgba(255,255,255,0.62)',
+                  background: isActive ? 'rgba(201,168,76,0.08)' : 'transparent',
+                  borderColor: 'rgba(255,255,255,0.04)',
+                  textDecoration: 'none',
+                })}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </NavLink>
+            ))}
+          </div>
+
+          <div className="mt-auto px-4 py-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+            <button
+              onClick={() => supabase.auth.signOut()}
+              className="w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl text-sm transition-all"
+              style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.15)', color: '#ff4757', fontWeight: 600 }}
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!previewMode && activeCompany?.onboarding_status === 'rejected') {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#07090d' }}>
@@ -1931,33 +2006,13 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
           <button onClick={() => supabase.auth.signOut()} className="w-8 h-8 flex items-center justify-center rounded-lg btn-ghost" title="Sign out">
             <LogOut className="w-4 h-4" />
           </button>
-          <button className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg btn-ghost" onClick={() => setMobileNav(!mobileNav)}>
-            <LayoutGrid className="w-4 h-4" />
+          <button className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg btn-ghost" onClick={() => setMobileNav(true)} title="Open menu">
+            <Menu className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      {mobileNav && (
-        <div className="md:hidden flex flex-col border-b" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#0d1117' }}>
-          {tabs.map(({ path, label, icon: Icon, exact }) => (
-            <NavLink
-              key={path}
-              to={path}
-              end={exact}
-              onClick={() => setMobileNav(false)}
-              className="flex items-center gap-3 px-4 py-3 text-sm border-b"
-              style={({ isActive }) => ({
-                color: isActive ? '#c9a84c' : 'rgba(255,255,255,0.6)',
-                background: isActive ? 'rgba(201,168,76,0.08)' : 'transparent',
-                borderColor: 'rgba(255,255,255,0.04)',
-              })}
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </NavLink>
-          ))}
-        </div>
-      )}
+      <CompanyMobileDrawer />
 
       <main className="flex-1 overflow-y-auto pb-16">
         <Routes>
