@@ -218,8 +218,8 @@ export const PROVIDER_REGISTRY = [
     planRequired: 'free',
     fields: [
       { key: 'api_key', label: 'API Key', type: 'password', placeholder: 're_...' },
-      { key: 'from_email', label: 'From Email', type: 'email', placeholder: 'ops@penthousedispatch.com' },
-      { key: 'reply_to_email', label: 'Reply-To Email', type: 'email', placeholder: 'support@penthousedispatch.com' },
+      { key: 'from_email', label: 'From Email', type: 'email', placeholder: 'ops@penthousedps.com' },
+      { key: 'reply_to_email', label: 'Reply-To Email', type: 'email', placeholder: 'support@penthousedps.com' },
     ],
     docsUrl: 'https://vercel.com/marketplace/resend',
   },
@@ -403,7 +403,7 @@ export const PROVIDER_REGISTRY = [
     fields: [
       { key: 'api_key', label: 'API Key', type: 'password', placeholder: 'Your Checkly API key' },
       { key: 'check_group', label: 'Check Group', type: 'text', placeholder: 'Penthouse Dispatch Core Routes' },
-      { key: 'alert_email', label: 'Alert Email', type: 'email', placeholder: 'alerts@penthousedispatch.com' },
+      { key: 'alert_email', label: 'Alert Email', type: 'email', placeholder: 'alerts@penthousedps.com' },
     ],
     docsUrl: 'https://vercel.com/integrations/checkly',
   },
