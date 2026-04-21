@@ -191,7 +191,7 @@ export default function IncentivesPanel() {
     }
 
     if (!orgId) {
-      setSaveError('Organization not found. Make sure you are logged in as a dispatcher.');
+      setSaveError('Organization not found. Make sure you are logged in with an admin or company account.');
       setSaving(false);
       return;
     }
@@ -288,6 +288,12 @@ export default function IncentivesPanel() {
 
   const activeIncentives = incentives.filter(i => i.is_active);
   const pastIncentives = incentives.filter(i => !i.is_active);
+  const enrolledDriverIds = new Set(enrollments.map(enrollment => enrollment.driver_id).filter(Boolean));
+  const earnedCount = enrollments.filter(enrollment => enrollment.earned).length;
+  const activeBonusExposure = activeIncentives.reduce((sum, incentive) => {
+    const activeEnrollmentCount = getEnrollmentsForIncentive(incentive.id).length;
+    return sum + (parseFloat(incentive.bonus_amount || 0) * Math.max(1, activeEnrollmentCount));
+  }, 0);
 
   const getEnrollmentsForIncentive = (incId) => {
     return enrollments.filter(e => e.incentive_id === incId).map(e => ({
@@ -320,6 +326,28 @@ export default function IncentivesPanel() {
               New Incentive
             </button>
           </div>
+        </div>
+
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+          {[
+            { label: 'Active Programs', value: activeIncentives.length, tone: '#c9a84c' },
+            { label: 'Drivers Enrolled', value: enrolledDriverIds.size, tone: '#0ea5e9' },
+            { label: 'Goals Earned', value: earnedCount, tone: '#00e5a0' },
+            { label: 'Bonus Exposure', value: `$${activeBonusExposure.toFixed(0)}`, tone: '#f59e0b' },
+          ].map((card) => (
+            <div
+              key={card.label}
+              className="rounded-xl px-4 py-4"
+              style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}
+            >
+              <p className="text-[11px] uppercase tracking-wider mb-1" style={{ color: 'rgba(255,255,255,0.38)', fontWeight: 700 }}>
+                {card.label}
+              </p>
+              <p className="text-xl font-700" style={{ color: card.tone, fontWeight: 700 }}>
+                {card.value}
+              </p>
+            </div>
+          ))}
         </div>
 
         {showForm && (
