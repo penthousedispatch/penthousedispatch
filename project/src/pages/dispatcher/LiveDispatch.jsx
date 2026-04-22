@@ -21,7 +21,7 @@ import CSVImportModal from '../../components/drivers/CSVImportModal';
 import DeleteConfirmModal from '../../components/drivers/DeleteConfirmModal';
 import DispatchWalkthrough from '../../components/dispatch/DispatchWalkthrough';
 import ChatPanel from '../../components/chat/ChatPanel';
-import { toastError, toastSuccess } from '../../utils/errorHandler';
+import { toastFleetImportSummary } from '../../utils/fleetImportSummaryToast';
 
 const TEST_TRIP_MARKER = '[TEST_TRIP]';
 const TEST_NOTE_PREFIX = '[TEST_NOTE]';
@@ -30,27 +30,6 @@ const LOCAL_ACTIVE_ASSIGNMENT_STATUSES = new Set(['pending', 'accepted', 'arrive
 function toEpoch(value) {
   const parsed = new Date(value || 0).getTime();
   return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function toastFleetImportOutcome(payload) {
-  if (!payload) return;
-  const a = payload.added || 0;
-  const u = payload.updated || 0;
-  const k = payload.unchanged || 0;
-  const s = payload.skipped || 0;
-  const f = payload.failed || 0;
-  if (a + u + k > 0) {
-    const parts = [];
-    if (a) parts.push(`${a} added`);
-    if (u) parts.push(`${u} updated`);
-    if (k) parts.push(`${k} unchanged`);
-    if (s) parts.push(`${s} skipped`);
-    toastSuccess(`Fleet import: ${parts.join(', ')}.`);
-  } else if (s && !f) {
-    toastSuccess(`Fleet import: ${s} skipped (no rows changed).`);
-  } else if (f) {
-    toastError(`Fleet import: ${f} failed — see import summary.`);
-  }
 }
 
 function normalizeSyncEntry(row) {
@@ -1415,7 +1394,7 @@ export default function LiveDispatch() {
         <CSVImportModal
           companyIdOverride={company?.id || null}
           onImported={(payload) => {
-            toastFleetImportOutcome(payload);
+            toastFleetImportSummary(payload);
             loadDrivers();
           }}
           onClose={() => { setShowCSVImport(false); loadDrivers(); }}
