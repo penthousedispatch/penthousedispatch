@@ -22,6 +22,7 @@ import DeleteConfirmModal from '../../components/drivers/DeleteConfirmModal';
 import DispatchWalkthrough from '../../components/dispatch/DispatchWalkthrough';
 import ChatPanel from '../../components/chat/ChatPanel';
 import { toastFleetImportSummary } from '../../utils/fleetImportSummaryToast';
+import { logFailure } from '../../utils/errorHandler';
 
 const TEST_TRIP_MARKER = '[TEST_TRIP]';
 const TEST_NOTE_PREFIX = '[TEST_NOTE]';
@@ -121,6 +122,17 @@ function extractSentryError(result) {
   }
 }
 
+async function setDriverNotificationWithRetry(driverId, payload) {
+  let lastErr = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fbSet(`driver_notifications/${driverId}`, payload);
+    if (res.ok) return { ok: true };
+    lastErr = res.error || 'unknown';
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 280 * (attempt + 1)));
+  }
+  return { ok: false, error: lastErr };
+}
+
 function buildMarketplaceTakePayload(tripId, driver) {
   const payload = {
     related_trips: [{ trip_id: tripId }],
@@ -150,7 +162,20 @@ function buildMarketplaceTakePayload(tripId, driver) {
 }
 
 export default function LiveDispatch() {
-  const { profile, company, drivers, trips, assignments, loadDrivers, loadTrips, loadAssignments, refreshTripsFromSentry, runAISchedulerPipeline, sentryStatus } = useApp();
+  const {
+    profile,
+    company,
+    adminPreviewCompany,
+    drivers,
+    trips,
+    assignments,
+    loadDrivers,
+    loadTrips,
+    loadAssignments,
+    refreshTripsFromSentry,
+    runAISchedulerPipeline,
+    sentryStatus,
+  } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const [take5Driver, setTake5Driver] = useState(null);
   const [showAddDriver, setShowAddDriver] = useState(false);
@@ -184,6 +209,12 @@ export default function LiveDispatch() {
   const schedulerPrefs = readCompanySchedulerPrefs(company);
 
   const isCompanyUser = profile?.role === 'company';
+  const isAdminCompanyPreview = profile?.role === 'admin' && !!adminPreviewCompany?.id;
+  /** Company workspace or admin previewing a company: manual assigns should still run locally when Sentry marketplace take fails (e.g. HTTP 409). */
+  const scopedDispatchTestMode = isCompanyUser || isAdminCompanyPreview;
+  const scopedTestAssignOptions = () =>
+    scopedDispatchTestMode ? { isTestTrip: true, testingNote: testNoteDraft } : {};
+
   const canManageFleet = isCompanyUser;
 
   const assignedTripIds = new Set(assignments.filter(a => a.status !== 'rejected').map(a => a.trip_id));
@@ -281,6 +312,7 @@ export default function LiveDispatch() {
 
     const lastModifiedAt = trip.sentry_last_modified_at || '';
     let takeResult = { ok: true };
+    let testTakeBypassed = false;
 
     if (sentryApi.enabled && sentryApi.features.marketplaceTrips) {
       takeResult = await sentryApi.takeMarketplaceTrip(
@@ -308,9 +340,30 @@ export default function LiveDispatch() {
 
     if (!takeResult.ok) {
       const takeErrorMessage = extractSentryError(takeResult);
-      showToast(`Sentry did not confirm this trip take. ${takeErrorMessage}`, 'error');
-      setAssigning(null);
-      return;
+      if (options.isTestTrip) {
+        testTakeBypassed = true;
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'marketplace_take_test_local_bypass',
+          direction: 'internal',
+          record_type: 'trip',
+          external_id: trip.sentry_trip_id,
+          status: 'success',
+          error_message: takeErrorMessage,
+          payload: {
+            driver_id: driver.id,
+            driver_name: driver.full_name,
+            reason: 'isTestTrip',
+          },
+        });
+        showToast(
+          `Sentry did not confirm this marketplace take, but a test trip will still be assigned locally so the driver can run the in-app checklist. ${takeErrorMessage}`,
+          'error'
+        );
+      } else {
+        showToast(`Sentry did not confirm this trip take. ${takeErrorMessage}`, 'error');
+        setAssigning(null);
+        return;
+      }
     }
 
     const { error } = await supabase.from('trip_assignments').insert({
@@ -341,7 +394,12 @@ export default function LiveDispatch() {
           driver_name: driver.full_name,
         },
       });
-      showToast(`Trip was taken in Sentry, but local assignment failed: ${error.message}`, 'error');
+      showToast(
+        testTakeBypassed
+          ? `Test trip could not be saved locally: ${error.message}`
+          : `Trip was taken in Sentry, but local assignment failed: ${error.message}`,
+        'error'
+      );
       setAssigning(null);
       return;
     }
@@ -369,7 +427,7 @@ export default function LiveDispatch() {
       })
       .eq('sentry_trip_id', trip.sentry_trip_id);
 
-    await fbSet(`driver_notifications/${driver.id}`, {
+    const notificationPayload = {
       type: 'new_trip',
       tripId: trip.sentry_trip_id,
       lastModifiedAt,
@@ -381,7 +439,19 @@ export default function LiveDispatch() {
       assignedAt: Date.now(),
       testingNote: options.testingNote || '',
       isTestTrip: Boolean(options.isTestTrip),
-    });
+    };
+    const notifyResult = await setDriverNotificationWithRetry(driver.id, notificationPayload);
+    if (!notifyResult.ok) {
+      logFailure('LiveDispatch:driver_notification', {
+        driverId: driver.id,
+        tripId: trip.sentry_trip_id,
+        error: notifyResult.error,
+      });
+      showToast(
+        `Assignment is saved, but the driver's device did not get the Firebase ping after retries (${notifyResult.error || 'unknown'}). The driver app will still pick this up from the assignment record on the next sync.`,
+        'error'
+      );
+    }
 
     if (sentryApi.enabled && sentryApi.features.tripAcceptReject) {
       const processedResult = await sentryApi.reportTripProcessed(trip.sentry_trip_id, lastModifiedAt);
@@ -995,7 +1065,7 @@ export default function LiveDispatch() {
               }
             }}
             onAssignTrip={(trip) => {
-              assignTrip(trip, selectedDriver);
+              assignTrip(trip, selectedDriver, scopedTestAssignOptions());
             }}
           />
         )}
@@ -1153,7 +1223,7 @@ export default function LiveDispatch() {
                     trip={trip}
                     selected={selectedTrip?.id === trip.id}
                     onClick={() => setSelectedTrip(prev => prev?.id === trip.id ? null : trip)}
-                    onAssign={selectedDriver ? () => assignTrip(trip, selectedDriver) : null}
+                    onAssign={selectedDriver ? () => assignTrip(trip, selectedDriver, scopedTestAssignOptions()) : null}
                     assigning={assigning === trip.sentry_trip_id}
                     assigned={assignedTripIds.has(trip.sentry_trip_id)}
                     syncStatus={tripSyncMap[String(trip.sentry_trip_id || '')] || null}
@@ -1293,7 +1363,7 @@ export default function LiveDispatch() {
                 trip={trip}
                 selected={selectedTrip?.id === trip.id}
                 onClick={() => setSelectedTrip(prev => prev?.id === trip.id ? null : trip)}
-                onAssign={selectedDriver ? () => assignTrip(trip, selectedDriver) : null}
+                onAssign={selectedDriver ? () => assignTrip(trip, selectedDriver, scopedTestAssignOptions()) : null}
                 assigning={assigning === trip.sentry_trip_id}
                 assigned={assignedTripIds.has(trip.sentry_trip_id)}
                 syncStatus={tripSyncMap[String(trip.sentry_trip_id || '')] || null}
@@ -1321,7 +1391,7 @@ export default function LiveDispatch() {
           driver={take5Driver}
           trips={scoredTrips.slice(0, 5)}
           onClose={() => setTake5Driver(null)}
-          onAssign={(trip) => assignTrip(trip, take5Driver)}
+          onAssign={(trip) => assignTrip(trip, take5Driver, scopedTestAssignOptions())}
         />
       )}
 

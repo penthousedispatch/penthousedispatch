@@ -38,6 +38,16 @@ function getDriverOnboardingKey(driverId) {
   return `pds_onboarding_seen:${driverId}`;
 }
 
+const DRIVER_TEST_TRIP_MARKER = '[TEST_TRIP]';
+
+function parseTripAssignmentNotesForOffer(notes = '') {
+  const safe = String(notes || '');
+  const isTestTrip = safe.includes(DRIVER_TEST_TRIP_MARKER);
+  const testNoteMatch = safe.match(/\[TEST_NOTE\]([\s\S]*)/);
+  const testingNote = testNoteMatch?.[1]?.trim() || '';
+  return { isTestTrip, testingNote };
+}
+
 function DriverAccessChooser({ role, company, onSelectDriver, onExit }) {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -636,6 +646,7 @@ export default function DriverApp() {
   }
 
   async function pollForNotifications(driver) {
+    let surfacedTripFromFirebase = false;
     const result = await fbGet(`driver_notifications/${driver.id}`);
     if (result.ok && result.data) {
       const notif = result.data;
@@ -643,6 +654,47 @@ export default function DriverApp() {
         setShowSchedule(true);
       } else if (notif.tripId && sheetStateRef.current === 'waiting') {
         setCurrentTrip(notif);
+        setSheetState('new_trip');
+        startTripCountdown(15);
+        if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+        surfacedTripFromFirebase = true;
+      }
+    }
+
+    if (!surfacedTripFromFirebase && sheetStateRef.current === 'waiting' && driver?.id) {
+      const { data: pendingRow, error: pendingErr } = await supabase
+        .from('trip_assignments')
+        .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, created_at')
+        .eq('driver_id', driver.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pendingErr) {
+        logFailure('DriverApp:pollForNotifications:pending_assignment', pendingErr);
+      } else if (pendingRow?.trip_id) {
+        const { data: mtRow } = await supabase
+          .from('marketplace_trips')
+          .select('sentry_last_modified_at')
+          .eq('sentry_trip_id', String(pendingRow.trip_id))
+          .maybeSingle();
+
+        const parsedNotes = parseTripAssignmentNotesForOffer(pendingRow.notes);
+        const offer = {
+          type: 'new_trip',
+          tripId: pendingRow.trip_id,
+          lastModifiedAt: mtRow?.sentry_last_modified_at || '',
+          puAddress: pendingRow.pu_address || '',
+          doAddress: pendingRow.do_address || '',
+          puTime: pendingRow.pu_time || '',
+          deliveryPrice: pendingRow.delivery_price,
+          mileage: pendingRow.mileage,
+          assignedAt: Date.now(),
+          testingNote: parsedNotes.testingNote,
+          isTestTrip: parsedNotes.isTestTrip,
+        };
+        setCurrentTrip(offer);
         setSheetState('new_trip');
         startTripCountdown(15);
         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
@@ -1312,17 +1364,23 @@ export default function DriverApp() {
     : earnings;
 
   const hoursWorked = ((Date.now() - shiftStartRef.current) / 3600000).toFixed(1);
-  const tripStarted = Boolean(
-    currentTrip?.acceptedAt ||
-    currentTrip?.arrivedAt ||
-    currentTrip?.pickedUpAt ||
-    ['navigation', 'to_dropoff'].includes(sheetState)
-  );
   const testChecklist = [
-    { label: 'Accept trip', done: tripStarted },
-    { label: 'Arrive at pickup', done: Boolean(currentTrip?.arrivedAt) || sheetState === 'to_dropoff' },
+    {
+      label: 'Accept trip',
+      done:
+        Boolean(currentTrip?.acceptedAt) ||
+        sheetState === 'navigation' ||
+        sheetState === 'to_dropoff',
+    },
+    {
+      label: 'Arrive at pickup',
+      done: Boolean(currentTrip?.arrivedAt) || sheetState === 'to_dropoff',
+    },
     { label: 'Pick up rider', done: Boolean(currentTrip?.pickedUpAt) },
-    { label: 'Complete trip', done: tripStarted && sheetState === 'waiting' && !currentTrip },
+    {
+      label: 'Complete trip',
+      done: false,
+    },
   ];
 
   if (showOnboarding) {
