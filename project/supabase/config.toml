@@ -9,5 +9,8 @@ verify_jwt = false
 [functions.sentry-provider]
 verify_jwt = false
 
+[functions.sentry-outbound]
+verify_jwt = false
+
 [functions.ai-threat-research]
 verify_jwt = false
