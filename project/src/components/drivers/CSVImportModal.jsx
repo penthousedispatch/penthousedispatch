@@ -92,6 +92,27 @@ function parseCSVRobust(text) {
   return { rows, headers };
 }
 
+function isUniqueViolation(err) {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return code === '23505' || msg.includes('duplicate key') || msg.includes('unique constraint') || msg.includes('already exists');
+}
+
+function fleetImportFieldsMatch(existing, payload) {
+  const eq = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
+  return (
+    eq(existing.full_name, payload.full_name)
+    && eq(existing.phone, payload.phone)
+    && eq(existing.license_number, payload.license_number)
+    && eq(existing.license_state, payload.license_state)
+    && eq(existing.license_class, payload.license_class)
+    && eq(existing.gender, payload.gender)
+    && eq(existing.dob, payload.dob)
+    && Boolean(existing.is_active) === Boolean(payload.is_active)
+  );
+}
+
 export default function CSVImportModal({ onClose, companyIdOverride = null, onImported = null }) {
   const { company, profile, user } = useApp();
   const [preview, setPreview] = useState(null);
@@ -239,18 +260,25 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
         is_active: isActive,
       };
 
-      const { data: existing, error: lookupError } = await supabase
+      const { data: existingRows, error: lookupError } = await supabase
         .from('drivers')
-        .select('id, full_name, company_id, is_active')
+        .select('id, full_name, phone, company_id, is_active, license_number, license_state, license_class, gender, dob')
         .eq('tlc_number', tlc)
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
 
+      const existing = Array.isArray(existingRows) && existingRows[0] ? existingRows[0] : null;
       let error = lookupError || null;
       let finalStatus = 'failed';
       let finalReason = lookupError?.message || 'Database error';
 
       if (!error && existing) {
+        if (fleetImportFieldsMatch(existing, payload) && String(existing.company_id || '') === String(scopedCompanyId || '')) {
+          finalStatus = 'unchanged';
+          finalReason = 'Same TLC — row already matches this import (no edit needed).';
+          perDriverResults.push({ name: fullName, status: finalStatus, reason: finalReason });
+          continue;
+        }
+
         const { error: updateError } = await supabase
           .from('drivers')
           .update({
@@ -262,10 +290,11 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
           .eq('id', existing.id);
         error = updateError || null;
         if (!error) {
-          finalStatus = existing.company_id && existing.company_id !== scopedCompanyId ? 'updated' : 'updated';
-          finalReason = existing.company_id && existing.company_id !== scopedCompanyId
-            ? `Moved existing TLC record into this company (was: ${existing.full_name})`
-            : `Updated existing record (was: ${existing.full_name})`;
+          finalStatus = 'updated';
+          finalReason =
+            existing.company_id && String(existing.company_id) !== String(scopedCompanyId)
+              ? `TLC found — attached to this company (was: ${existing.full_name || 'other company'})`
+              : 'TLC found — row updated from this import.';
         }
       } else if (!error) {
         const { error: insertError } = await supabase
@@ -275,6 +304,10 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
         if (!error) {
           finalStatus = 'added';
           finalReason = 'New driver added';
+        } else if (isUniqueViolation(insertError)) {
+          error = null;
+          finalStatus = 'unchanged';
+          finalReason = 'TLC already in database (unique) — not duplicated. Existing record kept.';
         }
       }
 
@@ -295,18 +328,20 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
 
     const added = perDriverResults.filter(r => r.status === 'added').length;
     const updated = perDriverResults.filter(r => r.status === 'updated').length;
+    const unchanged = perDriverResults.filter(r => r.status === 'unchanged').length;
     const skipped = perDriverResults.filter(r => r.status === 'skipped').length;
     const failed = perDriverResults.filter(r => r.status === 'failed').length;
 
     setDriverResults(perDriverResults);
-    setResults({ added, updated, skipped, failed });
+    setResults({ added, updated, unchanged, skipped, failed });
     setImporting(false);
     if (fileRef.current) fileRef.current.value = '';
-    if ((added > 0 || updated > 0) && typeof onImported === 'function') {
+    if ((added > 0 || updated > 0 || unchanged > 0) && typeof onImported === 'function') {
       onImported({
         companyId: scopedCompanyId,
         added,
         updated,
+        unchanged,
         skipped,
         failed,
         records: perDriverResults,
@@ -317,6 +352,7 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
   const statusColor = (s) => ({
     added: '#00e5a0',
     updated: '#c9a84c',
+    unchanged: '#7dd3fc',
     skipped: 'rgba(255,255,255,0.3)',
     failed: '#ff4757',
   }[s] || 'rgba(255,255,255,0.3)');
@@ -324,6 +360,7 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
   const statusIcon = (s) => ({
     added: '✓',
     updated: '↻',
+    unchanged: '=',
     skipped: '–',
     failed: '✕',
   }[s] || '–');
@@ -342,11 +379,17 @@ export default function CSVImportModal({ onClose, companyIdOverride = null, onIm
           {results ? (
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3">
-                <CheckCircle className="w-8 h-8 flex-shrink-0" style={{ color: '#00e5a0' }} />
+                <CheckCircle className="w-8 h-8 flex-shrink-0" style={{ color: results.failed > 0 ? '#c9a84c' : '#00e5a0' }} />
                 <div>
-                  <p className="font-700 text-sm" style={{ fontWeight: 700, color: '#00e5a0' }}>Import Complete</p>
+                  <p className="font-700 text-sm" style={{ fontWeight: 700, color: results.failed > 0 ? '#c9a84c' : '#00e5a0' }}>Import Complete</p>
                   <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                    {results.added} added · {results.updated} updated · {results.skipped} skipped
+                    <span style={{ color: '#00e5a0' }}>{results.added} added</span>
+                    {' · '}
+                    <span style={{ color: '#c9a84c' }}>{results.updated} updated</span>
+                    {' · '}
+                    <span style={{ color: '#7dd3fc' }}>{results.unchanged ?? 0} unchanged</span>
+                    {' · '}
+                    <span style={{ color: 'rgba(255,255,255,0.35)' }}>{results.skipped} skipped</span>
                     {results.failed > 0 && <span style={{ color: '#ff4757' }}> · {results.failed} failed</span>}
                   </p>
                 </div>

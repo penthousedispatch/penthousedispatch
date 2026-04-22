@@ -15,7 +15,7 @@ import {
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck,
   Upload, Link2, Headphones, RefreshCw, Send, ClipboardList, Menu, X
 } from 'lucide-react';
-import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
+import { handleSupabaseError, toastError, toastSuccess } from '../../utils/errorHandler';
 
 function CompanyDrivers({ company }) {
   const { user, profile } = useApp();
@@ -221,9 +221,22 @@ function CompanyDrivers({ company }) {
 
   async function applyImportedDrivers(payload) {
     await loadCompanyDrivers();
-    const importedCount = (payload?.added || 0) + (payload?.updated || 0);
-    if (importedCount > 0) {
-      toastSuccess(`${importedCount} driver${importedCount === 1 ? '' : 's'} synced into this company fleet.`);
+    const a = payload?.added || 0;
+    const u = payload?.updated || 0;
+    const k = payload?.unchanged || 0;
+    const s = payload?.skipped || 0;
+    const f = payload?.failed || 0;
+    if (a + u + k > 0) {
+      const parts = [];
+      if (a) parts.push(`${a} added`);
+      if (u) parts.push(`${u} updated`);
+      if (k) parts.push(`${k} unchanged`);
+      if (s) parts.push(`${s} skipped`);
+      toastSuccess(`Fleet import: ${parts.join(', ')}.`);
+    } else if (s && !f) {
+      toastSuccess(`Fleet import: ${s} skipped (no rows changed).`);
+    } else if (f) {
+      toastError(`Fleet import: ${f} failed — see import summary for each row.`);
     }
   }
 

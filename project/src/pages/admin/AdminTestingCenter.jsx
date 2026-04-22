@@ -256,24 +256,29 @@ export default function AdminTestingCenter() {
     const authSetupPending = !result.authenticated && !!result.error && /unauthorized|jwt|token|auth/i.test(result.error);
     addLog(
       testId,
-      `Auth: ${result.authenticated ? 'SUCCESS' : authSetupPending ? 'SETUP PENDING' : 'FAILED'}`,
+      `Auth: ${result.authenticated ? 'OK' : authSetupPending ? 'NEEDS CREDENTIALS (401-style)' : 'FAIL'}`,
       result.authenticated ? 'success' : authSetupPending ? 'warn' : 'error',
     );
     if (result.latencyMs) addLog(testId, `Latency: ${result.latencyMs}ms`);
-    if (result.error) addLog(testId, `Error: ${result.error}`, authSetupPending ? 'warn' : 'error');
+    if (result.error) addLog(testId, `Detail: ${result.error}`, authSetupPending ? 'warn' : 'error');
     if (result.error === 'Failed to fetch') {
-      addLog(testId, 'This usually means the browser could not reach Sentry directly due to CORS/network restrictions. It does not prove your credentials or webhook endpoints are wrong.', 'warn');
-      addLog(testId, 'If Sentry already confirmed your endpoints, treat this page result as a browser limitation unless the saved config test also fails inside Sentry.', 'warn');
+      addLog(testId, 'Network: browser could not complete the request (often edge function URL, CORS, or offline). Check Network tab for the exact failing URL and status.', 'warn');
     }
     if (result.hint) addLog(testId, `Hint: ${result.hint}`, result.authenticated ? 'info' : 'warn');
     if (authSetupPending) {
-      addLog(testId, 'Sentry authentication is not fully wired yet. This is expected before final connection and should be treated as setup pending, not a broken app.', 'warn');
+      addLog(testId, 'Action: open Admin → Sentry, save a valid base URL and username/password or API key, then run this test again.', 'warn');
     }
 
     if (result.authenticated) {
       addLog(testId, 'Fetching marketplace trips...');
       const tripsResult = await sentryApi.getMarketplaceTrips();
-      addLog(testId, `Marketplace trips: ${tripsResult.ok ? 'OK' : 'FAILED'}`, tripsResult.ok ? 'success' : 'error');
+      addLog(
+        testId,
+        tripsResult.ok
+          ? `Marketplace trips: OK (${Array.isArray(tripsResult.data) ? tripsResult.data.length : 0} rows in response)`
+          : `Marketplace trips: FAIL — ${tripsResult.error || `HTTP ${tripsResult.status || '?'}`}`,
+        tripsResult.ok ? 'success' : 'error',
+      );
     }
 
     setResult(testId, result.authenticated ? 'pass' : 'fail');
@@ -363,12 +368,12 @@ export default function AdminTestingCenter() {
         } else {
           const text = await res.text().catch(() => '');
           const setupPending = res.status === 401;
-          addLog(testId, `${ep.name}: ${setupPending ? 'SETUP PENDING' : 'FAIL'} — HTTP ${res.status} ${text}`, setupPending ? 'warn' : 'error');
+          addLog(testId, `${ep.name}: ${setupPending ? 'HTTP 401 (auth)' : 'FAIL'} — ${res.status} ${text.slice(0, 180)}`, setupPending ? 'warn' : 'error');
           if (res.status === 401 && text.includes('authorization header')) {
-            addLog(testId, 'This is a local test-header mismatch, not proof that Sentry rejected the endpoint. The receiver is alive, but this page did not reach it with valid auth.', 'warn');
+            addLog(testId, 'Note: 401 here means this test did not send the same Authorization header Sentry will use in production (query secret vs bearer).', 'warn');
           }
           if (setupPending) {
-            addLog(testId, 'Sentry webhook auth is not fully connected yet. The receiver route is up; this local test is just not presenting the final auth in the same way Sentry will.', 'warn');
+            addLog(testId, 'Action: confirm webhook secret in Admin → Sentry matches how receivers are deployed (query `?secret=` vs bearer).', 'warn');
           }
           allPassed = false;
         }

@@ -1157,8 +1157,8 @@ export default function BotTeamPanel() {
         result.error,
       );
       return setupPending
-        ? { summary: `Sentry setup pending — ${result.error}` }
-        : { error: result.error, summary: `Failed to pull trips: ${result.error}` };
+        ? { summary: `Sentry auth incomplete — ${result.error}` }
+        : { error: result.error, summary: `Trip pull failed: ${result.error}` };
     }
     await logBotAction('sentry_bot', 'SentryBot', 'Scheduled trip pull', 'pull_trips', 'low', 'executed', `Pulled ${result?.count || 0} trips`);
     return { summary: `Pulled ${result?.count || 0} trips from marketplace` };
@@ -1245,8 +1245,8 @@ export default function BotTeamPanel() {
     }
     return {
       summary: sentrySetupPending
-        ? `Sentry setup pending · ${activeDrivers} drivers active · ${trips.length} trips loaded`
-        : `Sentry ${result.authenticated ? 'connected' : 'disconnected'} (${result.latencyMs || '?'}ms) · ${activeDrivers} drivers active · ${trips.length} trips loaded`,
+        ? `Sentry not authenticated yet · ${activeDrivers} drivers online · ${trips.length} trips in list`
+        : `Sentry ${result.authenticated ? 'connected' : 'disconnected'} (${result.latencyMs || '?'}ms) · ${activeDrivers} drivers online · ${trips.length} trips in list`,
       error: issues.length > 0 ? issues.join('; ') : null,
     };
   }
