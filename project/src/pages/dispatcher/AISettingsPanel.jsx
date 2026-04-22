@@ -7,7 +7,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { getBotMemory, saveBotMemory, testAIConnection } from '../../utils/aiMotivation';
-import { ensurePlatformAdminOrg } from '../../lib/platformAdminOrg';
+import { resolveOrgIdForAdmin } from '../../lib/resolveOrgId';
 
 const PROVIDERS = [
   { id: 'disabled', label: 'Disabled', icon: '🚫', desc: 'No AI features' },
@@ -83,6 +83,15 @@ const BOT_SERVICES = [
     icon: Bot,
     color: '#c084fc',
   },
+  {
+    id: 'general_bot',
+    field: 'general_bot_enabled',
+    name: 'General',
+    role: 'Audit & Oversight Reviewer',
+    desc: 'Audits the work of the other bots and flags weak, noisy, or risky decisions.',
+    icon: Bot,
+    color: '#34d399',
+  },
 ];
 
 const CORE_BOT_IDS = ['sentry_bot', 'scheduler_bot', 'health_bot', 'security_bot'];
@@ -102,6 +111,7 @@ const DEFAULT_FORM = {
   security_bot_enabled: true,
   codex_bot_enabled: false,
   claude_bot_enabled: false,
+  general_bot_enabled: false,
   all_bots_paused: false,
 };
 
@@ -118,6 +128,14 @@ const DEFAULT_BOT_PROVIDER_CONFIGS = {
     provider: 'anthropic',
     api_key: '',
     model: 'claude-3-5-sonnet-latest',
+    base_url: '',
+    temperature: 0.2,
+    max_tokens: 500,
+  },
+  general_bot: {
+    provider: 'openai',
+    api_key: '',
+    model: 'gpt-4o-mini',
     base_url: '',
     temperature: 0.2,
     max_tokens: 500,
@@ -153,7 +171,7 @@ export default function AISettingsPanel() {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [botProviderConfigs, setBotProviderConfigs] = useState(DEFAULT_BOT_PROVIDER_CONFIGS);
   const [showKey, setShowKey] = useState(false);
-  const [showBotKeys, setShowBotKeys] = useState({ codex_bot: false, claude_bot: false });
+  const [showBotKeys, setShowBotKeys] = useState({ codex_bot: false, claude_bot: false, general_bot: false });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -170,60 +188,13 @@ export default function AISettingsPanel() {
     let mounted = true;
 
     async function resolveOrgId() {
-      if (org?.id) {
-        setResolvedOrgId(org.id);
-        return;
-      }
-
-      if (!user?.id) {
-        setResolvedOrgId(null);
-        return;
-      }
-
-      const { data: membership } = await supabase
-        .from('org_members')
-        .select('org_id')
-        .eq('user_id', user.id)
-        .limit(1)
-        .maybeSingle();
-
-      if (membership?.org_id) {
-        if (mounted) setResolvedOrgId(membership.org_id);
-        return;
-      }
-
-      if (isPlatformOwner || role === 'admin') {
-        try {
-          const platformOrg = await ensurePlatformAdminOrg(user, { forceBootstrap: true });
-          if (platformOrg?.id) {
-            if (mounted) setResolvedOrgId(platformOrg.id);
-            return;
-          }
-        } catch (error) {
-          console.warn('AISettingsPanel: failed to bootstrap admin org', error);
-        }
-      }
-
-      const { data: latestAiRow } = await supabase
-        .from('ai_settings')
-        .select('org_id')
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (latestAiRow?.org_id) {
-        if (mounted) setResolvedOrgId(latestAiRow.org_id);
-        return;
-      }
-
-      const { data: fallbackOrg } = await supabase
-        .from('organizations')
-        .select('id')
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      if (mounted) setResolvedOrgId(fallbackOrg?.id || null);
+      const nextOrgId = await resolveOrgIdForAdmin({
+        orgId: org?.id || null,
+        user,
+        isPlatformOwner,
+        role,
+      });
+      if (mounted) setResolvedOrgId(nextOrgId);
     }
 
     resolveOrgId();
@@ -286,13 +257,15 @@ export default function AISettingsPanel() {
         security_bot_enabled: data.security_bot_enabled ?? true,
         codex_bot_enabled: false,
         claude_bot_enabled: false,
+        general_bot_enabled: false,
         all_bots_paused: data.all_bots_paused ?? false,
       });
     }
 
-    const [codexMemory, claudeMemory] = await Promise.all([
+    const [codexMemory, claudeMemory, generalMemory] = await Promise.all([
       getBotMemory(resolvedOrgId, 'codex_bot'),
       getBotMemory(resolvedOrgId, 'claude_bot'),
+      getBotMemory(resolvedOrgId, 'general_bot'),
     ]);
 
     setBotProviderConfigs({
@@ -303,6 +276,10 @@ export default function AISettingsPanel() {
       claude_bot: {
         ...DEFAULT_BOT_PROVIDER_CONFIGS.claude_bot,
         ...(claudeMemory?.memory_value || {}),
+      },
+      general_bot: {
+        ...DEFAULT_BOT_PROVIDER_CONFIGS.general_bot,
+        ...(generalMemory?.memory_value || {}),
       },
     });
 
@@ -316,13 +293,14 @@ export default function AISettingsPanel() {
       .from('bot_config')
       .select('bot_id, kill_switch')
       .eq('org_id', resolvedOrgId)
-      .in('bot_id', ['codex_bot', 'claude_bot']);
+      .in('bot_id', ['codex_bot', 'claude_bot', 'general_bot']);
 
     const botKillMap = Object.fromEntries((botConfigs || []).map(row => [row.bot_id, row.kill_switch]));
     setForm(prev => ({
       ...prev,
       codex_bot_enabled: botKillMap.codex_bot === undefined ? false : !botKillMap.codex_bot,
       claude_bot_enabled: botKillMap.claude_bot === undefined ? false : !botKillMap.claude_bot,
+      general_bot_enabled: botKillMap.general_bot === undefined ? false : !botKillMap.general_bot,
     }));
   }
 
@@ -370,6 +348,7 @@ export default function AISettingsPanel() {
     await Promise.all([
       saveBotMemory(resolvedOrgId, 'codex_bot', 'provider_config', botProviderConfigs.codex_bot),
       saveBotMemory(resolvedOrgId, 'claude_bot', 'provider_config', botProviderConfigs.claude_bot),
+      saveBotMemory(resolvedOrgId, 'general_bot', 'provider_config', botProviderConfigs.general_bot),
       saveBotMemory(resolvedOrgId, 'scheduler_bot', 'scheduler_defaults', schedulerDefaults),
     ]);
 
@@ -416,10 +395,12 @@ export default function AISettingsPanel() {
           org_id: resolvedOrgId,
           bot_id: botId,
           bot_name: BOT_SERVICES.find(bot => bot.id === botId)?.name || botId,
-          autonomy_level: botId === 'claude_bot' ? 'suggest' : 'act',
-          risk_threshold: botId === 'codex_bot' ? 'medium' : 'high',
+          autonomy_level: ['claude_bot', 'general_bot'].includes(botId) ? 'suggest' : 'act',
+          risk_threshold: botId === 'codex_bot' || botId === 'general_bot' ? 'medium' : 'high',
           allowed_actions: botId === 'codex_bot'
             ? ['refresh_data', 'check_health', 'restart_connections', 'flag_anomalies', 'auto_assign']
+            : botId === 'general_bot'
+              ? ['check_health', 'flag_anomalies', 'investigate_threat', 'alert_admin']
             : ['flag_anomalies', 'alert_admin', 'acknowledge_alert', 'investigate_threat'],
           payout_protection: true,
           kill_switch: !enabled,
@@ -462,6 +443,7 @@ export default function AISettingsPanel() {
       security_bot_enabled: enabled,
       codex_bot_enabled: form.codex_bot_enabled,
       claude_bot_enabled: form.claude_bot_enabled,
+      general_bot_enabled: form.general_bot_enabled,
       all_bots_paused: !enabled,
     };
     setForm(newForm);
@@ -492,9 +474,10 @@ export default function AISettingsPanel() {
     !form.all_bots_paused && form.security_bot_enabled,
     !form.all_bots_paused && form.codex_bot_enabled,
     !form.all_bots_paused && form.claude_bot_enabled,
+    !form.all_bots_paused && form.general_bot_enabled,
   ].filter(Boolean).length;
 
-  const totalServices = 9;
+  const totalServices = 10;
   const aiProviderReady = form.provider !== 'disabled' && !!form.api_key && (form.provider !== 'self_hosted' || !!(form.base_url || '').trim());
 
   function updateBotProviderConfig(botId, patch) {
@@ -792,13 +775,14 @@ export default function AISettingsPanel() {
           <div className="px-4 py-3" style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
             <p className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bot Worker Providers</p>
             <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.3)' }}>
-              Frank uses hosted OpenAI by default and can switch to your own self-hosted OpenAI-compatible endpoint later. Darius uses Anthropic by default and can also move to your own OpenAI-compatible reviewer endpoint when you are ready.
+              Frank uses hosted OpenAI by default and can switch to your own self-hosted OpenAI-compatible endpoint later. Darius uses Anthropic by default for second-opinion review. General uses hosted OpenAI by default to audit the work of the other bots and can also move to your own self-hosted OpenAI-compatible endpoint later.
             </p>
           </div>
           <div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             {[
               { id: 'codex_bot', title: 'Frank', defaultDesc: 'Codex-powered implementer bot', hostedProvider: 'openai', keyLabel: 'Provider API Key', models: { openai: OPENAI_MODELS, self_hosted: SELF_HOSTED_MODELS } },
               { id: 'claude_bot', title: 'Darius', defaultDesc: 'Claude-powered reviewer bot', hostedProvider: 'anthropic', keyLabel: 'Provider API Key', models: { anthropic: ANTHROPIC_MODELS, self_hosted: SELF_HOSTED_MODELS } },
+              { id: 'general_bot', title: 'General', defaultDesc: 'Audit and oversight reviewer bot', hostedProvider: 'openai', keyLabel: 'Provider API Key', models: { openai: OPENAI_MODELS, self_hosted: SELF_HOSTED_MODELS } },
             ].map(worker => (
               <div key={worker.id} className="p-4 space-y-3" style={{ background: 'rgba(255,255,255,0.01)' }}>
                 <div>
@@ -806,6 +790,8 @@ export default function AISettingsPanel() {
                   <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
                     {worker.id === 'codex_bot'
                       ? 'Default hosted provider: OpenAI. Optional later path: your own self-hosted OpenAI-compatible endpoint.'
+                      : worker.id === 'general_bot'
+                        ? 'Default hosted provider: OpenAI. General audits the work of the other bots and can later move to your own self-hosted OpenAI-compatible endpoint.'
                       : 'Default hosted provider: Anthropic. Optional later path: your own self-hosted OpenAI-compatible endpoint.'}
                   </p>
                 </div>

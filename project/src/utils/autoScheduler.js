@@ -66,6 +66,8 @@ function buildDriverResult(driver, scheduleResult, config) {
     trips: scheduleResult.schedule.map((trip, index) => ({
       ...trip.raw,
       scheduled_order: index + 1,
+      scheduled_pickup_time: trip.raw?.scheduled_pickup_time || trip.raw?.pu_time || trip.puTime || null,
+      scheduled_dropoff_time: trip.raw?.scheduled_dropoff_time || trip.raw?.do_time || trip.doTime || trip.scheduledDropoffTime || null,
       _meta: {
         driveTimeFromPrev: trip.driveTimeFromPrev,
         bufferMins: trip.bufferMins,
@@ -139,6 +141,9 @@ export async function runAutoScheduler({ drivers, trips, assignments, config, or
           pu_address: trip.pu_address,
           do_address: trip.do_address,
           pu_time: trip.pu_time,
+          do_time: trip.do_time || trip.scheduled_dropoff_time || '',
+          scheduled_pickup_time: trip.scheduled_pickup_time || trip.pu_time || null,
+          scheduled_dropoff_time: trip.scheduled_dropoff_time || trip.do_time || null,
           delivery_price: parseFloat(trip.delivery_price) || 0,
           mileage: parseFloat(trip.mileage) || 0,
           notes: schedulerMeta.sharedRideBonus > 0 ? 'AUTO_SCHEDULER_SHARED_CANDIDATE' : '',

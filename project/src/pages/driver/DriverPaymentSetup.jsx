@@ -168,9 +168,9 @@ export default function DriverPaymentSetup({ driverId, driverName, driverEmail, 
   const pendingPay = payouts.filter(p => p.status === 'pending' || p.status === 'processing').reduce((s, p) => s + parseFloat(p.net_amount || 0), 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
-      <div className="w-full max-w-lg rounded-t-3xl overflow-hidden flex flex-col" style={{ background: '#0d1117', maxHeight: '90vh', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.7)', paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }}>
+      <div className="w-full max-w-lg rounded-t-3xl overflow-hidden flex flex-col" style={{ background: '#0d1117', maxHeight: 'min(90vh, calc(100vh - var(--safe-top) - var(--safe-bottom) - 8px))', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', paddingTop: 'calc(var(--safe-top) + 12px)' }}>
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.15)', border: '1px solid rgba(201,168,76,0.25)' }}>
               <DollarSign className="w-4 h-4" style={{ color: '#c9a84c' }} />

@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 :root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   --bg: #07090d;
   --s1: #0d1117;
   --s2: #141b24;
@@ -69,6 +73,18 @@ html, body, #root {
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   transition: background 0.2s ease, color 0.2s ease;
+}
+
+body {
+  overflow: hidden;
+}
+
+.mobile-safe-top {
+  padding-top: var(--safe-top);
+}
+
+.mobile-safe-bottom {
+  padding-bottom: var(--safe-bottom);
 }
 
 [data-theme="light"] input,

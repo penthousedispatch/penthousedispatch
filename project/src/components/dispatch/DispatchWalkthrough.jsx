@@ -86,7 +86,7 @@ const STEPS = [
     id: 'chat',
     title: 'Test Chat System',
     icon: MessageSquare,
-    description: 'The chat panel lets dispatchers communicate with drivers in real time.',
+    description: 'The chat panel lets your dispatch team communicate with drivers in real time.',
     instructions: [
       'Look for the chat bubble icon in the bottom-right corner of the screen',
       'Click it to open the Chat Panel',

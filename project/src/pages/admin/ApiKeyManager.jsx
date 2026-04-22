@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Key, Plus, Copy, Trash2, RefreshCw, Eye, EyeOff,
-  CheckCircle, XCircle, AlertTriangle, Shield, Clock, X
+  Key, Plus, Copy, Trash2, RefreshCw,
+  CheckCircle, Shield, X
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
+import { resolveOrgIdForAdmin } from '../../lib/resolveOrgId';
 
 const SCOPES = [
   { key: 'trips:read', label: 'Read Trips', desc: 'List and view trip data' },
@@ -36,19 +37,21 @@ function NewKeyModal({ orgId, onCreated, onClose }) {
   const [ipList, setIpList] = useState('');
   const [saving, setSaving] = useState(false);
   const [newKeyPlain, setNewKeyPlain] = useState(null);
+  const [error, setError] = useState('');
 
   function toggleScope(key) {
     setScopes(prev => prev.includes(key) ? prev.filter(s => s !== key) : [...prev, key]);
   }
 
   async function handleCreate() {
-    if (!name.trim()) return;
+    if (!name.trim() || !orgId) return;
     setSaving(true);
+    setError('');
     const plain = generateKey();
     const hash = await hashKey(plain);
     const prefix = plain.slice(0, 12);
     const ips = ipList.split('\n').map(s => s.trim()).filter(Boolean);
-    await supabase.from('api_keys').insert({
+    const { error: createError } = await supabase.from('api_keys').insert({
       org_id: orgId,
       name: name.trim(),
       key_prefix: prefix,
@@ -59,6 +62,11 @@ function NewKeyModal({ orgId, onCreated, onClose }) {
       expires_at: expiry || null,
       is_active: true,
     });
+    if (createError) {
+      setError(createError.message || 'Failed to create API key.');
+      setSaving(false);
+      return;
+    }
     setNewKeyPlain(plain);
     setSaving(false);
     onCreated();
@@ -105,6 +113,11 @@ function NewKeyModal({ orgId, onCreated, onClose }) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {error && (
+            <div className="rounded-xl px-3 py-2 text-xs" style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff4757' }}>
+              {error}
+            </div>
+          )}
           <div>
             <label className="block text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.5)' }}>Key Name</label>
             <input
@@ -213,22 +226,64 @@ function NewKeyModal({ orgId, onCreated, onClose }) {
 }
 
 export default function ApiKeyManager() {
-  const { org } = useApp();
+  const { org, user, isPlatformOwner, role } = useApp();
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [resolvedOrgId, setResolvedOrgId] = useState(org?.id || null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+    async function resolveOrg() {
+      const nextOrgId = await resolveOrgIdForAdmin({
+        orgId: org?.id || null,
+        user,
+        isPlatformOwner,
+        role,
+      });
+      if (mounted) setResolvedOrgId(nextOrgId);
+    }
+    resolveOrg();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, user?.id, isPlatformOwner, role]);
 
   const load = useCallback(async () => {
-    if (!org?.id) return;
-    const { data } = await supabase.from('api_keys').select('*').eq('org_id', org.id).order('created_at', { ascending: false });
+    if (!resolvedOrgId) {
+      setKeys([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    const { data, error: loadError } = await supabase
+      .from('api_keys')
+      .select('*')
+      .eq('org_id', resolvedOrgId)
+      .order('created_at', { ascending: false });
+    if (loadError) {
+      setError(loadError.message || 'Failed to load API keys.');
+      setKeys([]);
+      setLoading(false);
+      return;
+    }
     setKeys(data || []);
     setLoading(false);
-  }, [org?.id]);
+  }, [resolvedOrgId]);
 
   useEffect(() => { load(); }, [load]);
 
   async function revokeKey(id) {
-    await supabase.from('api_keys').update({ is_active: false, revoked_at: new Date().toISOString() }).eq('id', id);
+    const { error: revokeError } = await supabase
+      .from('api_keys')
+      .update({ is_active: false, revoked_at: new Date().toISOString() })
+      .eq('id', id);
+    if (revokeError) {
+      setError(revokeError.message || 'Failed to revoke key.');
+      return;
+    }
     load();
   }
 
@@ -246,19 +301,31 @@ export default function ApiKeyManager() {
         </div>
         <button
           onClick={() => setShowModal(true)}
+          disabled={!resolvedOrgId}
           className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-xl font-600"
-          style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600 }}
+          style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600, opacity: resolvedOrgId ? 1 : 0.45 }}
         >
           <Plus className="w-4 h-4" /> New Key
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
+        {!resolvedOrgId ? (
+          <div className="flex flex-col items-center justify-center py-16 rounded-2xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <p className="text-sm mb-1" style={{ color: '#ff4757' }}>Org context is not ready.</p>
+            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>Open Ops Center and refresh once, then retry API key management.</p>
+          </div>
+        ) : null}
+        {error && (
+          <div className="mb-3 rounded-xl px-3 py-2 text-xs" style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff4757' }}>
+            {error}
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <RefreshCw className="w-5 h-5 animate-spin" style={{ color: 'rgba(255,255,255,0.3)' }} />
           </div>
-        ) : keys.length === 0 ? (
+        ) : !resolvedOrgId ? null : keys.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 rounded-2xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.06)' }}>
             <Key className="w-10 h-10 mb-3" style={{ color: 'rgba(255,255,255,0.1)' }} />
             <p className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>No API keys yet</p>
@@ -344,7 +411,7 @@ export default function ApiKeyManager() {
 
       {showModal && (
         <NewKeyModal
-          orgId={org?.id}
+          orgId={resolvedOrgId}
           onCreated={load}
           onClose={() => setShowModal(false)}
         />

@@ -1,13 +1,15 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { MapPin, Clock, User, CheckCircle, Navigation, Volume2, Pause, Square, Share2, Copy, Maximize2, Minimize2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { MapPin, Clock, User, CheckCircle, Navigation, Volume2, Pause, Square, Share2, Copy, Maximize2, Minimize2, X } from 'lucide-react';
 import { fbGet, fbListen } from '../../lib/firebase';
 import { getPCarSVG, calcBearing } from '../../components/map/PCarMarker';
 import AnimatedCar from '../../components/ui/AnimatedCar';
 import { loadCompanyBranding, DEFAULT_BRANDING } from '../../lib/companyBranding';
 import { getGuideAudioSrc, useGuideAudioPlayback } from '../../lib/guideAudio';
 import { useDriverVoiceGuide } from '../../lib/driverVoiceGuide';
+import { getPublicAppUrl } from '../../lib/mobileRuntime';
 
+const RECENT_TRIPS_STORAGE_KEY = 'pd_rider_recent_tracking';
 const GMAPS_KEY = 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4';
 const DARK_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#0d1117' }] },
@@ -48,18 +50,23 @@ function loadMaps() {
 }
 
 export default function RiderTracking() {
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const riderKey = params.get('trip');
+  const source = params.get('source');
   const [tracking, setTracking] = useState(null);
   const [driverCoords, setDriverCoords] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [mapsLoaded, setMapsLoaded] = useState(mapsReady);
+  const [mapError, setMapError] = useState('');
   const [branding, setBranding] = useState(DEFAULT_BRANDING);
   const [compactMap, setCompactMap] = useState(false);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const driverMarkerRef = useRef(null);
+  const pickupRouteRef = useRef(null);
+  const dropoffRouteRef = useRef(null);
   const animationFrameRef = useRef(null);
   const previousDriverCoordsRef = useRef(null);
   const riderGuideNarration = useMemo(() => {
@@ -152,26 +159,57 @@ export default function RiderTracking() {
   }, [riderKey]);
 
   useEffect(() => {
+    if (!riderKey || !tracking) return;
+
+    const nextEntry = {
+      riderKey,
+      driverName: tracking.driverName || '',
+      pickup: tracking.puAddress || tracking.pu_address || '',
+      dropoff: tracking.doAddress || tracking.do_address || '',
+      trackingUrl: getPublicAppUrl(`/rider?trip=${encodeURIComponent(riderKey)}`),
+      updatedAt: Date.now(),
+    };
+
+    try {
+      const existing = JSON.parse(localStorage.getItem(RECENT_TRIPS_STORAGE_KEY) || '[]');
+      const merged = [
+        nextEntry,
+        ...(Array.isArray(existing) ? existing : []).filter(entry => entry?.riderKey !== riderKey),
+      ].slice(0, 10);
+      localStorage.setItem(RECENT_TRIPS_STORAGE_KEY, JSON.stringify(merged));
+    } catch {}
+  }, [riderKey, tracking]);
+
+  useEffect(() => {
     loadCompanyBranding(tracking?.company_id || tracking?.companyId || null).then(setBranding);
   }, [tracking?.company_id, tracking?.companyId]);
 
   useEffect(() => {
     if (loading || !mapRef.current) return;
-    loadMaps().then(() => {
-      setMapsLoaded(true);
-      if (mapInstanceRef.current) return;
-      mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
-        zoom: 14,
-        center: driverCoords || { lat: 40.7128, lng: -74.006 },
-        styles: DARK_STYLE,
-        disableDefaultUI: true,
-        gestureHandling: 'greedy',
+    loadMaps()
+      .then(() => {
+        setMapsLoaded(true);
+        setMapError('');
+        if (mapInstanceRef.current) return;
+        mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
+          zoom: 14,
+          center: driverCoords || { lat: 40.7128, lng: -74.006 },
+          styles: DARK_STYLE,
+          disableDefaultUI: true,
+          gestureHandling: 'greedy',
+        });
+      })
+      .catch(error => {
+        console.warn('RiderTracking: failed to load Google Maps', error);
+        setMapsLoaded(false);
+        setMapError('Live map is temporarily unavailable, but trip updates are still working.');
       });
-    });
   }, [loading, driverCoords]);
 
   useEffect(() => () => {
     cancelDriverAnimation();
+    if (pickupRouteRef.current) pickupRouteRef.current.setMap(null);
+    if (dropoffRouteRef.current) dropoffRouteRef.current.setMap(null);
     if (driverMarkerRef.current) {
       driverMarkerRef.current.setMap(null);
       driverMarkerRef.current = null;
@@ -203,6 +241,63 @@ export default function RiderTracking() {
     mapInstanceRef.current.panTo(driverCoords);
   }, [driverCoords, mapsLoaded]);
 
+  useEffect(() => {
+    if (!mapsLoaded || !mapInstanceRef.current || !window.google || !tracking || !driverCoords) return;
+
+    if (pickupRouteRef.current) { pickupRouteRef.current.setMap(null); pickupRouteRef.current = null; }
+    if (dropoffRouteRef.current) { dropoffRouteRef.current.setMap(null); dropoffRouteRef.current = null; }
+
+    const pickupAddress = tracking.puAddress || tracking.pu_address;
+    const dropoffAddress = tracking.doAddress || tracking.do_address;
+    const status = tracking.status || 'assigned';
+    const ds = new window.google.maps.DirectionsService();
+
+    if (pickupAddress && !['picked_up', 'completed'].includes(status)) {
+      const pickupRenderer = new window.google.maps.DirectionsRenderer({
+        map: mapInstanceRef.current,
+        suppressMarkers: true,
+        preserveViewport: true,
+        polylineOptions: { strokeColor: '#00e5a0', strokeWeight: 5, strokeOpacity: 0.92 },
+      });
+      ds.route({
+        origin: driverCoords,
+        destination: pickupAddress,
+        travelMode: window.google.maps.TravelMode.DRIVING,
+      }, (result, routeStatus) => {
+        if (routeStatus === 'OK') {
+          pickupRenderer.setDirections(result);
+          pickupRouteRef.current = pickupRenderer;
+        }
+      });
+    }
+
+    if (dropoffAddress) {
+      const dropoffRenderer = new window.google.maps.DirectionsRenderer({
+        map: mapInstanceRef.current,
+        suppressMarkers: true,
+        preserveViewport: true,
+        polylineOptions: {
+          strokeColor: ['picked_up', 'completed'].includes(status) ? '#0ea5e9' : '#c9a84c',
+          strokeWeight: 4,
+          strokeOpacity: ['picked_up', 'completed'].includes(status) ? 0.9 : 0.65,
+          icons: ['picked_up', 'completed'].includes(status)
+            ? []
+            : [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '12px' }],
+        },
+      });
+      ds.route({
+        origin: ['picked_up', 'completed'].includes(status) ? driverCoords : (pickupAddress || driverCoords),
+        destination: dropoffAddress,
+        travelMode: window.google.maps.TravelMode.DRIVING,
+      }, (result, routeStatus) => {
+        if (routeStatus === 'OK') {
+          dropoffRenderer.setDirections(result);
+          dropoffRouteRef.current = dropoffRenderer;
+        }
+      });
+    }
+  }, [mapsLoaded, tracking, driverCoords]);
+
   if (loading) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center" style={{ background: '#07090d' }}>
@@ -232,7 +327,7 @@ export default function RiderTracking() {
   const status = tracking?.status || 'assigned';
   const statusColor = STATUS_COLORS[status] || '#c9a84c';
   const initials = tracking?.driverName?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'D';
-  const trackingUrl = tracking?.trackingUrl || (riderKey ? `${window.location.origin}/rider?trip=${encodeURIComponent(riderKey)}` : '');
+  const trackingUrl = tracking?.trackingUrl || (riderKey ? getPublicAppUrl(`/rider?trip=${encodeURIComponent(riderKey)}`) : '');
 
   async function handleShareTracking() {
     if (!trackingUrl) return;
@@ -249,8 +344,22 @@ export default function RiderTracking() {
     navigator.clipboard?.writeText(trackingUrl).catch(() => {});
   }
 
+  function handleExitRiderView() {
+    if (source === 'admin') {
+      navigate('/admin/platform', { replace: true });
+      return;
+    }
+
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+
+    navigate('/auth', { replace: true });
+  }
+
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden" style={{ background: '#07090d' }}>
+    <div className="fixed inset-0 flex flex-col overflow-hidden mobile-safe-top mobile-safe-bottom" style={{ background: '#07090d' }}>
       <div
         ref={mapRef}
         className="flex-shrink-0 transition-all duration-300"
@@ -258,7 +367,19 @@ export default function RiderTracking() {
           height: compactMap ? '28vh' : '42vh',
           minHeight: compactMap ? 190 : 280,
         }}
-      />
+      >
+        {mapError && (
+          <div
+            className="w-full h-full flex items-center justify-center px-6 text-center"
+            style={{ background: '#0d1117', color: 'rgba(255,255,255,0.72)' }}
+          >
+            <div>
+              <p className="text-sm font-700 mb-2" style={{ color: '#c9a84c', fontWeight: 700 }}>Map Unavailable</p>
+              <p className="text-xs" style={{ lineHeight: 1.7 }}>{mapError}</p>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div
         className="rounded-t-3xl p-5 space-y-4 flex-1 overflow-y-auto"
@@ -270,6 +391,18 @@ export default function RiderTracking() {
           boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
         }}
       >
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={handleExitRiderView}
+            className="px-3 py-2 rounded-xl text-xs flex items-center gap-1.5"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+          >
+            <X className="w-3.5 h-3.5" />
+            Exit Rider View
+          </button>
+        </div>
+
         <div className="flex items-center gap-2">
           <div
             className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl"

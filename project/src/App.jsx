@@ -6,6 +6,7 @@ import { supabase } from './lib/supabase';
 import AuthPage from './pages/AuthPage';
 import DriverApp from './pages/driver/DriverApp';
 import RiderTracking from './pages/rider/RiderTracking';
+import RiderHome from './pages/rider/RiderHome';
 import PublicInfoPage from './pages/PublicInfoPage';
 import LoadingScreen from './components/ui/LoadingScreen';
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -13,13 +14,14 @@ import CompanyDashboard from './pages/company/CompanyDashboard';
 import CompanyOnboarding from './pages/company/CompanyOnboarding';
 import ToastContainer from './components/ui/ToastContainer';
 import ChangeMyPassword from './pages/ChangeMyPassword'; 
+import ProviderProgramPlatformPreview from './features/provider-program-platform/ProviderProgramPlatformPreview';
 import { LogOut, RefreshCw } from 'lucide-react';
 import { normalizeAppRole } from './lib/roles';
 import { isNativeApp, parseIncomingAppUrl } from './lib/mobileRuntime';
+import { APP_VARIANT, APP_VARIANT_META, getVariantDefaultPath, isDriverVariant, isRoleAllowedInVariant, isRiderVariant } from './lib/appVariant';
 
 function defaultPathForRole(role) {
-  if (role === 'admin') return '/admin/ops';
-  return '/';
+  return getVariantDefaultPath(role);
 }
 
 function companySetupIncomplete(company) {
@@ -153,6 +155,39 @@ function UnsupportedRoleScreen({ rawRole }) {
   );
 }
 
+function VariantRoleMismatchScreen({ rawRole }) {
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+  }
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center px-4" style={{ background: '#07090d' }}>
+      <div
+        className="w-full max-w-md rounded-2xl p-6 text-center"
+        style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+      >
+        <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.25)' }}>
+          <RefreshCw className="w-6 h-6" style={{ color: '#ff4757' }} />
+        </div>
+        <p className="text-lg font-semibold mb-2" style={{ color: '#ff4757' }}>Wrong App For This Account</p>
+        <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+          {APP_VARIANT_META[APP_VARIANT].label} only supports its matching account type.
+        </p>
+        <p className="text-xs mb-5" style={{ color: 'rgba(255,255,255,0.38)' }}>
+          Current saved role: {rawRole || 'unknown'}
+        </p>
+        <button
+          onClick={handleSignOut}
+          className="btn-gold w-full py-3 flex items-center justify-center gap-2"
+        >
+          <LogOut className="w-4 h-4" />
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 class AppErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -249,6 +284,8 @@ function AppRoutes() {
   const searchParams = React.useMemo(() => new URLSearchParams(location.search), [location.search]);
   const nextPath = searchParams.get('next');
   const safeNextPath = nextPath && nextPath.startsWith('/') ? nextPath : '/';
+  const [nativeLaunchResolved, setNativeLaunchResolved] = React.useState(!isNativeApp());
+  const isPublicInfoRoute = ['/privacy', '/terms', '/support', '/preview/daycare-platform'].includes(location.pathname);
 
   React.useEffect(() => {
     const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
@@ -282,6 +319,19 @@ function AppRoutes() {
 
     async function attachListener() {
       const { App: CapacitorApp } = await import('@capacitor/app');
+      const launch = await CapacitorApp.getLaunchUrl();
+
+      if (mounted) {
+        const initialPath = parseIncomingAppUrl(launch?.url);
+        if (initialPath && initialPath !== `${location.pathname}${location.search}${location.hash}`) {
+          if (initialPath.startsWith('/change-password')) {
+            sessionStorage.setItem('pd_password_recovery', 'true');
+          }
+          navigate(initialPath, { replace: true });
+        }
+        setNativeLaunchResolved(true);
+      }
+
       listener = await CapacitorApp.addListener('appUrlOpen', ({ url }) => {
         if (!mounted) return;
         const nextPath = parseIncomingAppUrl(url);
@@ -299,7 +349,20 @@ function AppRoutes() {
       mounted = false;
       listener?.remove?.();
     };
-  }, [navigate]);
+  }, [location.hash, location.pathname, location.search, navigate]);
+
+  if (isPublicInfoRoute) {
+    return (
+      <Routes>
+        <Route path="/privacy" element={<PublicInfoPage variant="privacy" />} />
+        <Route path="/terms" element={<PublicInfoPage variant="terms" />} />
+        <Route path="/support" element={<PublicInfoPage variant="support" />} />
+        <Route path="/preview/daycare-platform" element={<ProviderProgramPlatformPreview />} />
+      </Routes>
+    );
+  }
+
+  if (!nativeLaunchResolved) return <LoadingScreen />;
 
   if (loading) return <LoadingScreen />;
 
@@ -313,13 +376,24 @@ function AppRoutes() {
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/driver" element={<DriverApp />} />
         <Route path="/rider" element={<RiderTracking />} />
+        <Route path="/rider/home" element={<RiderHome />} />
         <Route path="/change-password" element={<ChangeMyPassword />} />
         <Route path="/privacy" element={<PublicInfoPage variant="privacy" />} />
         <Route path="/terms" element={<PublicInfoPage variant="terms" />} />
         <Route path="/support" element={<PublicInfoPage variant="support" />} />
+        <Route path="/preview/daycare-platform" element={<ProviderProgramPlatformPreview />} />
         <Route
           path="/*"
-          element={<Navigate to={`/auth?next=${encodeURIComponent(requestedPath)}`} replace />}
+          element={
+            <Navigate
+              to={
+                isDriverVariant()
+                  ? '/driver'
+                  : `/auth?next=${encodeURIComponent(requestedPath)}`
+              }
+              replace
+            />
+          }
         />
       </Routes>
     );
@@ -337,19 +411,55 @@ function AppRoutes() {
     return <UnsupportedRoleScreen rawRole={profile?.role} />;
   }
 
+  if (!isRoleAllowedInVariant(role)) {
+    return <VariantRoleMismatchScreen rawRole={profile?.role} />;
+  }
+
   if (needsPasswordChange && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />;
+  }
+
+  if (isDriverVariant()) {
+    return (
+      <Routes>
+        <Route path="/driver" element={<DriverApp />} />
+        <Route path="/change-password" element={<ChangeMyPassword />} />
+        <Route path="/privacy" element={<PublicInfoPage variant="privacy" />} />
+        <Route path="/terms" element={<PublicInfoPage variant="terms" />} />
+        <Route path="/support" element={<PublicInfoPage variant="support" />} />
+        <Route path="/preview/daycare-platform" element={<ProviderProgramPlatformPreview />} />
+        <Route path="*" element={<Navigate to="/driver" replace />} />
+      </Routes>
+    );
+  }
+
+  if (isRiderVariant()) {
+    return (
+      <Routes>
+        <Route path="/rider" element={<RiderTracking />} />
+        <Route path="/rider/home" element={<RiderHome />} />
+        <Route path="/change-password" element={<ChangeMyPassword />} />
+        <Route path="/privacy" element={<PublicInfoPage variant="privacy" />} />
+        <Route path="/terms" element={<PublicInfoPage variant="terms" />} />
+        <Route path="/support" element={<PublicInfoPage variant="support" />} />
+        <Route path="/preview/daycare-platform" element={<ProviderProgramPlatformPreview />} />
+        <Route path="/auth" element={<Navigate to="/rider/home" replace />} />
+        <Route path="*" element={<Navigate to="/rider/home" replace />} />
+      </Routes>
+    );
   }
 
   return (
     <Routes>
       <Route path="/driver" element={<DriverApp />} />
       <Route path="/rider" element={<RiderTracking />} />
+      <Route path="/rider/home" element={<RiderHome />} />
       <Route path="/company/onboarding" element={<CompanyOnboarding />} />
       <Route path="/change-password" element={<ChangeMyPassword />} />
       <Route path="/privacy" element={<PublicInfoPage variant="privacy" />} />
       <Route path="/terms" element={<PublicInfoPage variant="terms" />} />
       <Route path="/support" element={<PublicInfoPage variant="support" />} />
+      <Route path="/preview/daycare-platform" element={<ProviderProgramPlatformPreview />} />
       <Route path="/auth" element={<Navigate to={safeNextPath === '/' ? defaultRolePath : safeNextPath} replace />} />
 
       {needsOnboarding && (

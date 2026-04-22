@@ -7,6 +7,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { PROVIDER_REGISTRY, PROVIDER_CATEGORIES, PLAN_TIERS } from './integrations/providerRegistry';
+import { resolveOrgIdForAdmin } from '../../lib/resolveOrgId';
 
 const CATEGORY_ICONS = {
   cloud: Cloud,
@@ -256,7 +257,7 @@ function ConfigDrawer({ provider, integration, onSave, onDisconnect, onClose, sa
 }
 
 export default function IntegrationHub() {
-  const { org } = useApp();
+  const { org, user, isPlatformOwner, role } = useApp();
   const [integrations, setIntegrations] = useState([]);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -265,6 +266,7 @@ export default function IntegrationHub() {
   const [testingKey, setTestingKey] = useState(null);
   const [loading, setLoading] = useState(true);
   const [banner, setBanner] = useState(null);
+  const [resolvedOrgId, setResolvedOrgId] = useState(org?.id || null);
 
   function showBanner(type, text) {
     setBanner({ type, text });
@@ -329,22 +331,40 @@ export default function IntegrationHub() {
     return errors;
   }
 
+  useEffect(() => {
+    let mounted = true;
+    async function resolveOrg() {
+      const nextOrgId = await resolveOrgIdForAdmin({
+        orgId: org?.id || null,
+        user,
+        isPlatformOwner,
+        role,
+      });
+      if (mounted) setResolvedOrgId(nextOrgId);
+    }
+    resolveOrg();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, user?.id, isPlatformOwner, role]);
+
   const load = useCallback(async () => {
-    if (!org?.id) {
+    if (!resolvedOrgId) {
       setIntegrations([]);
       setLoading(false);
+      showBanner('error', 'No org context found yet. Open Ops Center and retry.');
       return;
     }
     const { data, error } = await supabase
       .from('saas_integrations')
       .select('*')
-      .eq('org_id', org.id);
+      .eq('org_id', resolvedOrgId);
     if (error) {
       showBanner('error', `Failed to load integrations: ${error.message}`);
     }
     setIntegrations(data || []);
     setLoading(false);
-  }, [org?.id]);
+  }, [resolvedOrgId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -361,8 +381,13 @@ export default function IntegrationHub() {
 
     setSaving(true);
     const existing = getIntegration(provider.key);
+    if (!resolvedOrgId) {
+      showBanner('error', 'Cannot save integration before org context is resolved.');
+      setSaving(false);
+      return;
+    }
     const payload = {
-      org_id: org?.id || null,
+      org_id: resolvedOrgId,
       provider_key: provider.key,
       provider_name: provider.name,
       category: provider.category,

@@ -160,8 +160,8 @@ export default function DriverGuide({ onClose }) {
     : SECTIONS;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: '#07090d' }}>
-      <div className="flex items-center justify-between px-4 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: '#07090d', paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }}>
+      <div className="flex items-center justify-between px-4 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingTop: 'calc(var(--safe-top) + 12px)' }}>
         <div>
           <p className="font-700 text-base" style={{ color: '#e5e7eb', fontWeight: 700 }}>Driver Guide</p>
           <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>How to use the Penthouse app</p>

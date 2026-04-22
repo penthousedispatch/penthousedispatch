@@ -1,10 +1,42 @@
 import React from 'react';
-import { MapPin, Clock, DollarSign, Navigation, Loader, CheckCircle } from 'lucide-react';
+import { Navigation, Loader, CheckCircle, AlertTriangle, ClipboardList } from 'lucide-react';
 
-export default function TripCard({ trip, selected, onClick, onAssign, assigning, assigned }) {
+function getSyncMeta(syncStatus) {
+  if (!syncStatus) return null;
+  if (syncStatus.status === 'failed') {
+    return {
+      label: 'Sync Failed',
+      color: '#ff4757',
+      background: 'rgba(255,71,87,0.1)',
+      border: 'rgba(255,71,87,0.22)',
+      icon: <AlertTriangle className="w-2.5 h-2.5" />,
+    };
+  }
+
+  return {
+    label: 'Sync OK',
+    color: '#00e5a0',
+    background: 'rgba(0,229,160,0.1)',
+    border: 'rgba(0,229,160,0.22)',
+    icon: <CheckCircle className="w-2.5 h-2.5" />,
+  };
+}
+
+export default function TripCard({
+  trip,
+  selected,
+  onClick,
+  onAssign,
+  assigning,
+  assigned,
+  isTestTrip = false,
+  testingNote = '',
+  syncStatus = null,
+}) {
   const price = parseFloat(trip.delivery_price) || 0;
   const miles = parseFloat(trip.mileage) || 0;
   const ratePerMile = miles > 0 ? (price / miles).toFixed(2) : '—';
+  const syncMeta = getSyncMeta(syncStatus);
 
   return (
     <div
@@ -16,13 +48,35 @@ export default function TripCard({ trip, selected, onClick, onAssign, assigning,
       }}
     >
       <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>
             {(trip.sentry_trip_id || '').slice(-8)}
           </span>
+          {isTestTrip && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1"
+              style={{ background: 'rgba(14,165,233,0.12)', color: '#38bdf8', fontSize: 10 }}
+            >
+              <ClipboardList className="w-2.5 h-2.5" /> Test Mode
+            </span>
+          )}
           {assigned && (
             <span className="text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(0,229,160,0.1)', color: '#00e5a0', fontSize: 10 }}>
               <CheckCircle className="w-2.5 h-2.5" /> Assigned
+            </span>
+          )}
+          {syncMeta && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1"
+              style={{
+                background: syncMeta.background,
+                color: syncMeta.color,
+                border: `1px solid ${syncMeta.border}`,
+                fontSize: 10,
+              }}
+            >
+              {syncMeta.icon}
+              {syncMeta.label}
             </span>
           )}
         </div>
@@ -49,6 +103,29 @@ export default function TripCard({ trip, selected, onClick, onAssign, assigning,
           <p className="text-xs leading-tight truncate flex-1" style={{ color: 'rgba(255,255,255,0.7)' }}>{trip.do_address || 'Unknown dropoff'}</p>
         </div>
       </div>
+
+      {testingNote && (
+        <div
+          className="mt-2 rounded-lg px-2.5 py-2"
+          style={{
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.06)',
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'rgba(255,255,255,0.35)', fontWeight: 700 }}>
+            Testing Note
+          </p>
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.72)' }}>
+            {testingNote}
+          </p>
+        </div>
+      )}
+
+      {syncStatus?.syncType && (
+        <p className="mt-2 text-[10px]" style={{ color: 'rgba(255,255,255,0.32)' }}>
+          Last sync: {syncStatus.syncType.replaceAll('_', ' ')}
+        </p>
+      )}
 
       <div className="flex items-center justify-between mt-2.5 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
         <div className="flex items-center gap-3 text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>

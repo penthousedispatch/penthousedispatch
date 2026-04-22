@@ -104,7 +104,7 @@ export default function ThreatDetail({ threat, onClose }) {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {[
               { label: 'Detected By', value: threat.detected_by },
               { label: 'MITRE Tactic', value: threat.mitre_tactic },

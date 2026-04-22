@@ -155,7 +155,7 @@ export default function PayRatesSection({ companyIdOverride = null }) {
 
       <div className="p-4 rounded-xl" style={{ background: 'rgba(201,168,76,0.04)', border: '1px solid rgba(201,168,76,0.15)' }}>
         <p className="text-xs font-700 uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Bulk Set All Drivers</p>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex gap-1 p-1 rounded-lg flex-shrink-0" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
             {['hourly', 'per_trip'].map(t => (
               <button
@@ -184,7 +184,7 @@ export default function PayRatesSection({ companyIdOverride = null }) {
           <button
             onClick={applyBulk}
             disabled={!bulkRate || bulkSaving}
-            className="btn-gold px-4 py-2 text-sm flex-shrink-0 flex items-center gap-1.5"
+            className="btn-gold w-full sm:w-auto px-4 py-2 text-sm flex-shrink-0 flex items-center justify-center gap-1.5"
           >
             <Save className="w-3.5 h-3.5" />
             {bulkSaving ? 'Applying...' : 'Apply to All'}
@@ -203,7 +203,83 @@ export default function PayRatesSection({ companyIdOverride = null }) {
       ) : scopedDrivers.length === 0 ? (
         <p className="text-sm py-8 text-center" style={{ color: 'rgba(255,255,255,0.3)' }}>No drivers found</p>
       ) : (
-        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
+        <>
+        <div className="md:hidden space-y-3">
+          {scopedDrivers.map(driver => {
+            const r = rates[driver.id] || { pay_rate: 18, pay_rate_type: 'hourly' };
+            return (
+              <div
+                key={driver.id}
+                className="rounded-xl p-4 space-y-3"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
+                <div className="flex items-center gap-3">
+                  {driver.photo_data ? (
+                    <img src={driver.photo_data} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-700 flex-shrink-0" style={{ background: 'rgba(201,168,76,0.12)', color: '#c9a84c', fontWeight: 700 }}>
+                      {driver.full_name?.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm truncate" style={{ color: '#e5e7eb' }}>{driver.full_name}</p>
+                    <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)', textTransform: 'capitalize' }}>{driver.status}</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-1 p-1 rounded-lg w-full" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  {['hourly', 'per_trip'].map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setRate(driver.id, 'pay_rate_type', t)}
+                      className="flex-1 px-2.5 py-2 rounded-md text-xs transition-all"
+                      style={{
+                        background: r.pay_rate_type === t ? 'rgba(201,168,76,0.15)' : 'transparent',
+                        color: r.pay_rate_type === t ? '#c9a84c' : 'rgba(255,255,255,0.4)',
+                        border: 'none',
+                      }}
+                    >
+                      {t === 'hourly' ? '$/hr' : '$/trip'}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={r.pay_rate}
+                    onChange={e => setRate(driver.id, 'pay_rate', e.target.value)}
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <button
+                    onClick={() => saveDriver(driver.id)}
+                    disabled={saving[driver.id]}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-xs transition-all"
+                    style={{
+                      background: saved[driver.id] ? 'rgba(0,229,160,0.1)' : 'rgba(201,168,76,0.1)',
+                      border: `1px solid ${saved[driver.id] ? 'rgba(0,229,160,0.2)' : 'rgba(201,168,76,0.2)'}`,
+                      color: saved[driver.id] ? '#00e5a0' : '#c9a84c',
+                    }}
+                  >
+                    {saved[driver.id] ? <Check className="w-3 h-3" /> : <Save className="w-3 h-3" />}
+                    {saved[driver.id] ? 'Saved' : saving[driver.id] ? 'Saving...' : 'Save Rate'}
+                  </button>
+                  {errors[driver.id] && (
+                    <p className="text-xs" style={{ color: '#ff4757' }}>{errors[driver.id]}</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="hidden md:block rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
@@ -289,6 +365,7 @@ export default function PayRatesSection({ companyIdOverride = null }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

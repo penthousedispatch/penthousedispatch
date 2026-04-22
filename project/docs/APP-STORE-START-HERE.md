@@ -2,6 +2,10 @@
 
 This is the simple checklist to finish App Store and Google Play submission without losing progress.
 
+If you are submitting all three mobile apps, start here first:
+
+- [/Users/penthouse/Documents/New project/project/docs/mobile-store-submission-suite.md](/Users/penthouse/Documents/New%20project/project/docs/mobile-store-submission-suite.md)
+
 ## What is already done
 
 - Mobile wrapper added with Capacitor

@@ -111,7 +111,12 @@ function MobileDrawer({ open, onClose }) {
       <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} />
       <div
         className="absolute left-0 top-0 bottom-0 w-72 flex flex-col"
-        style={{ background: 'var(--s1)', borderRight: '1px solid var(--border)' }}
+        style={{
+          background: 'var(--s1)',
+          borderRight: '1px solid var(--border)',
+          paddingTop: 'var(--safe-top)',
+          paddingBottom: 'var(--safe-bottom)',
+        }}
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -130,6 +135,22 @@ function MobileDrawer({ open, onClose }) {
         </div>
         <div className="flex-1 overflow-y-auto py-2">
           <p className="text-xs px-4 py-2 font-700 uppercase tracking-wider" style={{ color: 'var(--text-faint)', fontWeight: 700 }}>Navigation</p>
+          <Link
+            to="/"
+            onClick={onClose}
+            className="flex items-center gap-3 mx-2 px-3 py-2.5 rounded-xl text-sm transition-all"
+            style={{
+              color: '#c9a84c',
+              background: 'rgba(201,168,76,0.1)',
+              fontWeight: 600,
+              textDecoration: 'none',
+              border: '1px solid rgba(201,168,76,0.2)',
+              marginBottom: 6,
+            }}
+          >
+            <Radio className="w-4 h-4 flex-shrink-0" />
+            Home
+          </Link>
           {ALL_TABS.map(({ path, label, icon: Icon, exact }) => {
             const isActive = exact ? location.pathname === path : location.pathname.startsWith(path);
             return (
@@ -204,17 +225,18 @@ export default function DispatcherDashboard() {
   const textMuted = theme === 'dark' ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.5)';
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden" style={{ background: bg }}>
+    <div className="flex flex-col h-screen overflow-hidden mobile-safe-top" style={{ background: bg }}>
       <header
-        className="flex items-center justify-between px-4 h-14 flex-shrink-0"
+        className="flex items-center justify-between px-4 min-h-14 flex-shrink-0"
         style={{ borderBottom: `1px solid ${borderColor}`, background: bg }}
       >
         <div className="flex items-center gap-3">
           <button
-            className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg btn-ghost"
+            className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-lg btn-ghost text-xs font-semibold"
             onClick={() => setMobileOpen(true)}
           >
             <Menu className="w-4 h-4" />
+            Menu
           </button>
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(201,168,76,0.2), rgba(201,168,76,0.05))', border: '1px solid rgba(201,168,76,0.3)' }}>
             <span style={{ color: '#c9a84c', fontSize: 16, fontWeight: 800 }}>P</span>
@@ -295,10 +317,11 @@ export default function DispatcherDashboard() {
 
           <button
             onClick={() => supabase.auth.signOut()}
-            className="w-8 h-8 flex items-center justify-center rounded-lg btn-ghost"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg btn-ghost text-xs font-semibold"
             title="Sign out"
           >
             <LogOut className="w-4 h-4" />
+            Logout
           </button>
         </div>
       </header>

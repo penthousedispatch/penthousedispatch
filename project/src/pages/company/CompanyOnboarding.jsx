@@ -7,6 +7,9 @@ import {
   CheckCircle, ChevronRight, ChevronLeft, Building2, User, Zap,
   FileText, AlertTriangle, RefreshCw, Download
 } from 'lucide-react';
+import { COMPANY_SEGMENTS, DEFAULT_COMPANY_SEGMENT, getCompanySegment, normalizeCompanySegment, upsertCompanySegmentNote } from '../../lib/companyType';
+
+const LIVE_COMPANY_ONBOARDING_SEGMENTS = ['transport_company'];
 
 const AGREEMENT_TEXT = `SOFTWARE LICENSE AGREEMENT — PENTHOUSE DISPATCH
 
@@ -69,6 +72,7 @@ export default function CompanyOnboarding() {
     tax_id: '',
     billing_contact_name: '',
     billing_contact_email: '',
+    company_segment: DEFAULT_COMPANY_SEGMENT,
     import_source: 'sentry',
     asm_notes: '',
     sentry_base_url: 'https://dsp-integration.test.sentryms.com',
@@ -90,6 +94,7 @@ export default function CompanyOnboarding() {
           company_name: prev.company_name || seed.company_name || '',
           billing_contact_name: prev.billing_contact_name || seed.billing_contact_name || '',
           billing_contact_email: prev.billing_contact_email || seed.billing_contact_email || '',
+          company_segment: normalizeCompanySegment(seed.company_segment || prev.company_segment),
           import_source: seed.import_source || prev.import_source,
         }));
       }
@@ -97,6 +102,14 @@ export default function CompanyOnboarding() {
       // ignore malformed local storage seed
     }
   }, []);
+
+  React.useEffect(() => {
+    if (!company?.id) return;
+    setForm(prev => ({
+      ...prev,
+      company_segment: normalizeCompanySegment(company.company_segment || getCompanySegment(company)),
+    }));
+  }, [company]);
 
   function handleScroll() {
     const el = agreementRef.current;
@@ -266,6 +279,7 @@ export default function CompanyOnboarding() {
       }
     }
 
+    const nextSegment = normalizeCompanySegment(form.company_segment);
     const companyPayload = {
       owner_user_id: user.id,
       company_name: form.company_name,
@@ -279,12 +293,13 @@ export default function CompanyOnboarding() {
       sentry_username: form.sentry_username,
       sentry_password: form.sentry_password,
       sentry_api_key: form.sentry_api_key,
+      company_segment: nextSegment,
       onboarding_status: 'approved',
       is_approved: true,
-      notes: [
+      notes: upsertCompanySegmentNote([
         `IMPORT_SOURCE:${form.import_source.toUpperCase()}`,
         form.asm_notes ? `ASM_NOTES:${form.asm_notes}` : '',
-      ].filter(Boolean).join('\n'),
+      ].filter(Boolean).join('\n'), nextSegment),
     };
 
     const companyQuery = existingCompany?.id
@@ -376,6 +391,33 @@ export default function CompanyOnboarding() {
                       ? 'You can skip imports and enter everything manually if your business is starting fresh.'
                       : 'Enter your SentryMS credentials to auto-import your company info. Skip this step if you do not use SentryMS.'}
                 </p>
+                <div className="mb-4">
+                  <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>Account type</label>
+                  <div className="grid grid-cols-1 gap-2">
+                    {LIVE_COMPANY_ONBOARDING_SEGMENTS.map(segmentId => {
+                      const segment = COMPANY_SEGMENTS[segmentId];
+                      const active = form.company_segment === segment.id;
+                      return (
+                        <button
+                          key={segment.id}
+                          type="button"
+                          onClick={() => setField('company_segment', segment.id)}
+                          className="text-left rounded-xl px-3 py-3 transition-all"
+                          style={{
+                            background: active ? `${segment.accent}18` : 'rgba(255,255,255,0.03)',
+                            border: `1px solid ${active ? `${segment.accent}50` : 'rgba(255,255,255,0.08)'}`,
+                            color: active ? segment.accent : 'rgba(255,255,255,0.62)',
+                          }}
+                        >
+                          <p className="text-sm font-600 mb-1" style={{ fontWeight: 600 }}>{segment.label}</p>
+                          <p className="text-xs leading-5" style={{ color: active ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.42)' }}>
+                            {segment.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <div className="grid grid-cols-3 gap-2 mb-4">
                   {[
                     { value: 'sentry', label: 'Sentry' },
@@ -482,7 +524,7 @@ export default function CompanyOnboarding() {
                           onChange={e => setField('asm_notes', e.target.value)}
                           rows={4}
                           className="w-full"
-                          placeholder="Example: 42 drivers, 3 dispatchers, weekly CSV export available, last billing period closed in ASM..."
+                          placeholder="Example: 42 drivers, 3 dispatch team users, weekly CSV export available, last billing period closed in ASM..."
                         />
                       </div>
                     </div>

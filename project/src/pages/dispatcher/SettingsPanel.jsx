@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Save, TestTube, Copy, Eye, EyeOff, CheckCircle, AlertCircle, RefreshCw, Download, ChevronRight, Zap, Wifi, WifiOff, Clock, ArrowRight, Sun, Moon } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
+import { getEdgeFunctionHeaders } from '../../lib/edgeHeaders';
 import { useApp } from '../../context/AppContext';
 import { useTheme } from '../../context/ThemeContext';
 import PayRatesSection from './PayRatesSection';
-import { handleSupabaseError, toastSuccess } from '../../utils/errorHandler';
+import { handleSupabaseError, toastError, toastSuccess } from '../../utils/errorHandler';
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const EDGE_BASE = `${SUPABASE_URL}/functions/v1`;
 const CLOUD_PROVIDERS = [
   { id: 'aws', name: 'Amazon Web Services', icon: '☁️', desc: 'EC2, S3, Lambda, RDS', color: '#FF9900' },
   { id: 'gcp', name: 'Google Cloud Platform', icon: '🌐', desc: 'Compute, BigQuery, Maps', color: '#4285F4' },
@@ -74,108 +77,123 @@ export default function SettingsPanel() {
 
   async function saveSentry() {
     setSaving(true);
-    const payload = { ...sentryForm, updated_at: new Date().toISOString() };
-    const { error: upsertErr } = await supabase
-      .from('sentry_config')
-      .upsert(payload, { onConflict: 'id', ignoreDuplicates: false })
-      .select();
-
-    if (upsertErr) {
-      const { data: existing } = await supabase
+    try {
+      const payload = { ...sentryForm, updated_at: new Date().toISOString() };
+      const { error: upsertErr } = await supabase
         .from('sentry_config')
-        .select('id')
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      let saveError;
-      if (existing) {
-        const { error } = await supabase.from('sentry_config').update(payload).eq('id', existing.id);
-        saveError = error;
-      } else {
-        const { error } = await supabase.from('sentry_config').insert(sentryForm);
-        saveError = error;
-      }
-      if (saveError) { handleSupabaseError(saveError, 'SettingsPanel:saveSentry', { fallback: 'Failed to save settings.' }); setSaving(false); return; }
-    }
+        .upsert(payload, { onConflict: 'id', ignoreDuplicates: false })
+        .select();
 
-    sentryApi.configure({
-      baseUrl: sentryForm.base_url,
-      username: sentryForm.username,
-      password: sentryForm.password_enc,
-      apiKey: sentryForm.api_key,
-      authType: sentryForm.auth_type,
-      enabled: sentryForm.enabled,
-    });
-    toastSuccess('Settings saved.');
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    setSaving(false);
+      if (upsertErr) {
+        const { data: existing } = await supabase
+          .from('sentry_config')
+          .select('id')
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        let saveError;
+        if (existing) {
+          const { error } = await supabase.from('sentry_config').update(payload).eq('id', existing.id);
+          saveError = error;
+        } else {
+          const { error } = await supabase.from('sentry_config').insert(sentryForm);
+          saveError = error;
+        }
+        if (saveError) {
+          handleSupabaseError(saveError, 'SettingsPanel:saveSentry', { fallback: 'Failed to save settings.' });
+          return;
+        }
+      }
+
+      sentryApi.configure({
+        baseUrl: sentryForm.base_url,
+        username: sentryForm.username,
+        password: sentryForm.password_enc,
+        apiKey: sentryForm.api_key,
+        authType: sentryForm.auth_type,
+        enabled: sentryForm.enabled,
+      });
+      toastSuccess('Settings saved.');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      handleSupabaseError(error, 'SettingsPanel:saveSentry:unexpected', { fallback: 'Failed to save settings.' });
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function testConnection() {
     setTesting(true);
     setTestDetail(null);
-
-    sentryApi.configure({
-      baseUrl: sentryForm.base_url,
-      username: sentryForm.username,
-      password: sentryForm.password_enc,
-      apiKey: sentryForm.api_key,
-      authType: sentryForm.auth_type,
-      enabled: true,
-    });
-
-    const url = `${sentryForm.base_url}/rest/transportation_provider_facade/v4.0/trips.json`;
-    let detail = { url, status: null, latency: null, ok: false, error: null, hint: null };
-
     try {
-      const t0 = Date.now();
-      const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-      if (sentryForm.auth_type === 'basic' && sentryForm.username) {
-        headers['Authorization'] = 'Basic ' + btoa(`${sentryForm.username}:${sentryForm.password_enc}`);
-      } else if (sentryForm.api_key) {
-        headers['Authorization'] = `Bearer ${sentryForm.api_key}`;
-      }
-      const res = await fetch(url, { method: 'GET', headers });
-      detail.latency = Date.now() - t0;
-      detail.status = res.status;
+      sentryApi.configure({
+        baseUrl: sentryForm.base_url,
+        username: sentryForm.username,
+        password: sentryForm.password_enc,
+        apiKey: sentryForm.api_key,
+        authType: sentryForm.auth_type,
+        enabled: true,
+      });
 
-      if (res.status === 200 || res.status === 206) {
-        detail.ok = true;
-        detail.hint = 'You are connected! SentryMS accepted your credentials.';
-      } else if (res.status === 400) {
-        detail.hint = 'Bad Request (400) — the URL is missing required date parameters. This is normal and means your credentials ARE working correctly.';
-        detail.ok = true;
-      } else if (res.status === 401) {
-        detail.hint = 'Unauthorized (401) — your username or password is wrong. Double-check the credentials SentryMS sent you.';
-      } else if (res.status === 403) {
-        detail.hint = 'Forbidden (403) — your account does not have permission for this endpoint. Contact SentryMS support.';
-      } else if (res.status === 404) {
-        detail.hint = 'Not Found (404) — the Base URL might be wrong. Make sure it is: https://dsp-integration.test.sentryms.com';
-      } else {
-        detail.hint = `Unexpected response (${res.status}) — contact SentryMS support if this persists.`;
-      }
-    } catch (e) {
-      detail.error = e.message;
-      if (e.message.includes('fetch') || e.message.includes('network') || e.message.includes('Failed')) {
-        detail.hint = 'Network error — could not reach SentryMS. Check your internet connection. This may also be a CORS issue in the browser.';
-      } else {
-        detail.hint = `Connection error: ${e.message}`;
-      }
+      const url = `${sentryForm.base_url}/rest/transportation_provider_facade/v4.0/trips.json`;
+      let detail = { url, status: null, latency: null, ok: false, error: null, hint: null };
+
+      const res = await fetch(`${EDGE_BASE}/sentry-diagnostics/health-check`, {
+        method: 'POST',
+        headers: await getEdgeFunctionHeaders(),
+        body: JSON.stringify({
+          base_url: sentryForm.base_url,
+          auth_type: sentryForm.auth_type,
+          username: sentryForm.username,
+          password_enc: sentryForm.password_enc,
+          api_key: sentryForm.api_key,
+        }),
+      });
+
+      const result = await res.json().catch(() => ({
+        authenticated: false,
+        error: 'Invalid diagnostics response',
+      }));
+
+      detail = {
+        url,
+        status: result.status ?? res.status ?? null,
+        latency: result.latencyMs ?? null,
+        ok: Boolean(result.authenticated),
+        error: result.error || null,
+        hint: result.hint || null,
+      };
+      setTestDetail(detail);
+      await checkSentryHealth();
+    } catch (error) {
+      const message = error?.message || 'Connection test failed.';
+      setTestDetail({
+        url: `${sentryForm.base_url}/rest/transportation_provider_facade/v4.0/trips.json`,
+        status: null,
+        latency: null,
+        ok: false,
+        error: message,
+        hint: `Connection error: ${message}`,
+      });
+      toastError(message);
+    } finally {
+      setTesting(false);
     }
-
-    setTestDetail(detail);
-    await checkSentryHealth();
-    setTesting(false);
   }
 
   async function handleSyncDrivers() {
     setSyncing(true);
     setSyncResult(null);
-    const result = await syncDriversFromSentry();
-    setSyncResult(result);
-    await loadSyncLogs();
-    setSyncing(false);
+    try {
+      const result = await syncDriversFromSentry();
+      setSyncResult(result);
+      await loadSyncLogs();
+    } catch (error) {
+      handleSupabaseError(error, 'SettingsPanel:handleSyncDrivers', { fallback: 'Failed to sync drivers.' });
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function saveGeneralSettings() {
@@ -217,10 +235,10 @@ export default function SettingsPanel() {
   ];
 
   return (
-    <div className="flex h-full overflow-hidden" style={{ background: '#07090d' }}>
-      <aside className="w-52 flex-shrink-0 border-r p-3" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+    <div className="flex flex-col md:flex-row h-full overflow-hidden" style={{ background: '#07090d' }}>
+      <aside className="w-full md:w-56 flex-shrink-0 border-b md:border-b-0 md:border-r p-3 overflow-x-auto" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
         <p className="text-xs font-700 uppercase tracking-wider mb-3 px-1" style={{ color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Settings</p>
-        <div className="space-y-1">
+        <div className="flex md:flex-col gap-2 md:space-y-1 min-w-max md:min-w-0">
           {sections.map(s => (
             <button
               key={s.id}
@@ -241,7 +259,8 @@ export default function SettingsPanel() {
         </div>
       </aside>
 
-      <div className="flex-1 overflow-y-auto p-6 max-w-2xl">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        <div className="max-w-5xl">
         {activeSection === 'sentry' && (
           <div className="space-y-5">
             <div>
@@ -707,6 +726,7 @@ export default function SettingsPanel() {
             ))}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

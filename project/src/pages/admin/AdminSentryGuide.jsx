@@ -112,11 +112,12 @@ const STEPS = [
     substeps: [
       'In the Driver App, have a driver accept and start a trip',
       'When the driver confirms pickup, status_id updates are sent to SentryMS',
-      'When the driver completes the trip, POST /trips/{id}/update_status is called with status_id: 7',
+      'When the driver completes the trip, POST /trips/{id}/update_status is called with status_id: 6 and a drop_off_timestamp',
+      'If the rider becomes a no-show after arrival, the driver app sends a cancel/no-show status with a cancel_reason_id',
       'All status updates are logged in the Sentry Sync Log',
       'You can also test rejection: POST /trips/{id}/reject with status_id=1',
     ],
-    note: 'status_id=7 = completed. status_id=0 = processed (stored, not yet decided).',
+    note: 'status_id=6 = dropped off/completed. status_id=0 = processed (stored, not yet decided).',
     noteType: 'info',
   },
   {

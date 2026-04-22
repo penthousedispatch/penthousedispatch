@@ -3,7 +3,9 @@ const PREFS_MARKER = 'AI_ROUTING_PREFS:';
 export const DEFAULT_COMPANY_SCHEDULER_PREFS = {
   price_weight: 8,
   proximity_weight: 7,
+  traffic_weight: 8,
   zone_weight: 10,
+  traffic_buffer_pct: 20,
   shared_rides_enabled: true,
   preschedule_from_work_shifts: false,
 };

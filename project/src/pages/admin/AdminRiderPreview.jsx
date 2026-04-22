@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Copy, ExternalLink, RefreshCw, Route } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Copy, ExternalLink, RefreshCw, Route, ArrowLeft } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fbSet } from '../../lib/firebase';
+import { getPublicAppUrl, isNativeApp } from '../../lib/mobileRuntime';
 
 const DEFAULT_PICKUP = '1200 Atlantic Ave, Brooklyn, NY';
 const DEFAULT_DROPOFF = '450 Clarkson Ave, Brooklyn, NY';
@@ -22,8 +24,13 @@ export default function AdminRiderPreview() {
   const [preview, setPreview] = useState(null);
 
   const trackingUrl = useMemo(() => {
-    if (!preview?.riderKey || typeof window === 'undefined') return '';
-    return `${window.location.origin}/rider?trip=${encodeURIComponent(preview.riderKey)}`;
+    if (!preview?.riderKey) return '';
+    return getPublicAppUrl(`/rider?trip=${encodeURIComponent(preview.riderKey)}`);
+  }, [preview?.riderKey]);
+
+  const inAppTrackingPath = useMemo(() => {
+    if (!preview?.riderKey) return '';
+    return `/rider?trip=${encodeURIComponent(preview.riderKey)}&source=admin`;
   }, [preview?.riderKey]);
 
   async function createPreview() {
@@ -99,7 +106,7 @@ export default function AdminRiderPreview() {
       doAddress: DEFAULT_DROPOFF,
       puTime: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       acceptedAt,
-      trackingUrl: `${window.location.origin}/rider?trip=${encodeURIComponent(riderKey)}`,
+      trackingUrl: getPublicAppUrl(`/rider?trip=${encodeURIComponent(riderKey)}`),
     };
 
     await fbSet(`rider_tracking/${riderKey}`, payload);
@@ -134,6 +141,17 @@ export default function AdminRiderPreview() {
           <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
             Open a simulated rider trip tied to the Penthouse sandbox company and a live test driver.
           </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            to="/admin/platform"
+            className="px-4 py-2 rounded-xl text-sm flex items-center gap-2"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: '#e5e7eb', textDecoration: 'none' }}
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Admin
+          </Link>
         </div>
 
         <div
@@ -174,6 +192,22 @@ export default function AdminRiderPreview() {
               <Copy className="w-4 h-4" />
               Copy Link
             </button>
+            {isNativeApp() ? (
+              <Link
+                to={inAppTrackingPath || '#'}
+                className="px-4 py-2 rounded-xl text-sm flex items-center gap-2"
+                style={{
+                  background: inAppTrackingPath ? 'rgba(0,229,160,0.08)' : 'rgba(255,255,255,0.04)',
+                  border: inAppTrackingPath ? '1px solid rgba(0,229,160,0.18)' : '1px solid rgba(255,255,255,0.08)',
+                  color: inAppTrackingPath ? '#00e5a0' : 'rgba(255,255,255,0.35)',
+                  pointerEvents: inAppTrackingPath ? 'auto' : 'none',
+                  textDecoration: 'none',
+                }}
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open Rider App
+              </Link>
+            ) : (
             <a
               href={trackingUrl || '#'}
               target="_blank"
@@ -190,6 +224,7 @@ export default function AdminRiderPreview() {
               <ExternalLink className="w-4 h-4" />
               Open Rider App
             </a>
+            )}
           </div>
         </div>
 
@@ -202,11 +237,32 @@ export default function AdminRiderPreview() {
         <div className="rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
           <div className="px-4 py-3 border-b flex items-center gap-2" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
             <Route className="w-4 h-4" style={{ color: '#c9a84c' }} />
-            <span className="text-sm font-600" style={{ fontWeight: 600 }}>Embedded Rider Preview</span>
+            <span className="text-sm font-600" style={{ fontWeight: 600 }}>
+              {isNativeApp() ? 'Rider Preview Summary' : 'Embedded Rider Preview'}
+            </span>
           </div>
           {loading && !error ? (
             <div className="h-[720px] flex items-center justify-center" style={{ color: 'rgba(255,255,255,0.45)' }}>
               Preparing rider preview…
+            </div>
+          ) : isNativeApp() ? (
+            <div className="p-5 space-y-4">
+              <div className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <p className="text-xs uppercase tracking-wide mb-2" style={{ color: 'rgba(255,255,255,0.35)' }}>Native App Note</p>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.68)', lineHeight: 1.7 }}>
+                  The native app no longer embeds the rider screen inside an iframe here. That iframe behavior can cause reload loops inside a wrapped mobile app.
+                  Use the <strong style={{ color: '#e5e7eb' }}>Open Rider App</strong> button above to launch the actual rider screen directly.
+                </p>
+              </div>
+              <div className="rounded-xl p-4" style={{ background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.16)' }}>
+                <p className="text-xs uppercase tracking-wide mb-2" style={{ color: '#7dd3fc' }}>Preview Trip</p>
+                <div className="space-y-2 text-sm">
+                  <p style={{ color: 'rgba(255,255,255,0.72)' }}><strong style={{ color: '#e5e7eb' }}>Company:</strong> {preview?.companyName || 'Sandbox company'}</p>
+                  <p style={{ color: 'rgba(255,255,255,0.72)' }}><strong style={{ color: '#e5e7eb' }}>Driver:</strong> {preview?.driverName || 'Sandbox driver'}</p>
+                  <p style={{ color: 'rgba(255,255,255,0.72)' }}><strong style={{ color: '#e5e7eb' }}>Pickup:</strong> {DEFAULT_PICKUP}</p>
+                  <p style={{ color: 'rgba(255,255,255,0.72)' }}><strong style={{ color: '#e5e7eb' }}>Dropoff:</strong> {DEFAULT_DROPOFF}</p>
+                </div>
+              </div>
             </div>
           ) : trackingUrl ? (
             <iframe

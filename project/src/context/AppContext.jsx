@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { sentryApi } from '../lib/sentryApi';
+import { getEdgeFunctionHeaders } from '../lib/edgeHeaders';
 import { handleSupabaseError, logFailure, toastError } from '../utils/errorHandler';
 import { runAutoScheduler } from '../utils/autoScheduler';
 import { DEFAULT_BILLING_RATE_PER_MILE, syncCompletedTripBilling } from '../utils/billingAutomation';
@@ -9,10 +10,35 @@ import { readCompanySchedulerPrefs } from '../lib/companySchedulerPrefs';
 import { ensurePlatformAdminOrg } from '../lib/platformAdminOrg';
 
 const AppContext = createContext(null);
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const EDGE_BASE = `${SUPABASE_URL}/functions/v1`;
 const PLATFORM_OWNER_EMAILS = new Set([
   'frankny84@gmail.com',
   'thepenthousebrandcorp@gmail.com',
 ]);
+
+function isApprovedCompanyRecord(company) {
+  return Boolean(
+    company?.is_approved ||
+    String(company?.onboarding_status || '').toLowerCase() === 'approved'
+  );
+}
+
+function pickBestCompanyRecord(rows = []) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const sorted = [...rows].sort((a, b) => {
+    const aApproved = isApprovedCompanyRecord(a) ? 1 : 0;
+    const bApproved = isApprovedCompanyRecord(b) ? 1 : 0;
+    if (aApproved !== bApproved) return bApproved - aApproved;
+
+    const aUpdated = new Date(a?.updated_at || a?.created_at || 0).getTime();
+    const bUpdated = new Date(b?.updated_at || b?.created_at || 0).getTime();
+    return bUpdated - aUpdated;
+  });
+
+  return sorted[0] || null;
+}
 
 export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -124,27 +150,25 @@ export function AppProvider({ children }) {
 
     const ownerCompanyResult = await supabase
       .from('companies')
-      .select('id, company_name')
+      .select('id, company_name, is_approved, onboarding_status, updated_at, created_at')
       .eq('owner_user_id', u.id)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(10);
 
-    if (ownerCompanyResult.data?.id) {
-      return { role: 'company', companyId: ownerCompanyResult.data.id };
+    const ownerCompany = pickBestCompanyRecord(ownerCompanyResult.data || []);
+    if (ownerCompany?.id) {
+      return { role: 'company', companyId: ownerCompany.id };
     }
 
     if (email) {
       const billingCompanyResult = await supabase
         .from('companies')
-        .select('id, company_name')
+        .select('id, company_name, is_approved, onboarding_status, updated_at, created_at')
         .ilike('billing_contact_email', email)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(10);
 
-      if (billingCompanyResult.data?.id) {
-        return { role: 'company', companyId: billingCompanyResult.data.id };
+      const billingCompany = pickBestCompanyRecord(billingCompanyResult.data || []);
+      if (billingCompany?.id) {
+        return { role: 'company', companyId: billingCompany.id };
       }
 
       const driverResult = await supabase
@@ -204,6 +228,58 @@ export function AppProvider({ children }) {
 
     if (error) throw error;
     return data || null;
+  }
+
+  function buildSentryFeatureConfig(cfg = {}) {
+    return {
+      assignedTrips: cfg.feat_assigned_trips !== false,
+      marketplaceTrips: cfg.feat_marketplace_trips !== false,
+      tripAcceptReject: cfg.feat_trip_accept_reject !== false,
+      tripStatusUpdate: cfg.feat_trip_status_update !== false,
+      drivers: cfg.feat_drivers !== false,
+      vehicles: cfg.feat_vehicles !== false,
+      vehicleLocations: cfg.feat_vehicle_locations !== false,
+      vehicleWaypointEtas: cfg.feat_waypoint_etas !== false,
+      driverWorkShifts: cfg.feat_driver_work_shifts !== false,
+      retrieveTrips: cfg.feat_retrieve_trips !== false,
+    };
+  }
+
+  function applySentryConfig(cfg) {
+    if (!cfg) {
+      setSentryConfig(null);
+      setSentryStatus({ ok: false, checked: false });
+      sentryApi.configure({
+        baseUrl: '',
+        username: '',
+        password: '',
+        apiKey: '',
+        authType: 'basic',
+        enabled: false,
+        features: buildSentryFeatureConfig({}),
+      });
+      return;
+    }
+
+    setSentryConfig(cfg);
+    sentryApi.configure({
+      baseUrl: cfg.base_url,
+      username: cfg.username,
+      password: cfg.password_enc,
+      apiKey: cfg.api_key,
+      authType: cfg.auth_type,
+      enabled: cfg.enabled,
+      features: buildSentryFeatureConfig(cfg),
+    });
+  }
+
+  async function loadSavedSentryConfig() {
+    const cfg = await fetchLatestSentryConfig().catch((cfgErr) => {
+      logFailure('loadUserData:sentry_config', cfgErr);
+      return null;
+    });
+    applySentryConfig(cfg);
+    return cfg;
   }
 
   useEffect(() => {
@@ -346,8 +422,11 @@ export function AppProvider({ children }) {
         setDrivers([]);
         setTrips([]);
         setAssignments([]);
+        applySentryConfig(null);
         return;
       }
+
+      await loadSavedSentryConfig();
 
       if (normalizedProfRole === 'admin') {
         setOrg(null);
@@ -363,37 +442,56 @@ export function AppProvider({ children }) {
         let compErr = null;
         const normalizedUserEmail = (u?.email || '').trim().toLowerCase();
 
-        if (prof.company_id) {
-          const result = await supabase.from('companies').select('*').eq('id', prof.company_id).maybeSingle();
-          comp = result.data;
-          compErr = result.error;
-        }
+      if (prof.company_id) {
+        const result = await supabase.from('companies').select('*').eq('id', prof.company_id).maybeSingle();
+        comp = result.data;
+        compErr = result.error;
+      }
 
-        if (!comp && !compErr) {
+        if ((!comp || !isApprovedCompanyRecord(comp)) && !compErr) {
           const result = await supabase
             .from('companies')
             .select('*')
             .eq('owner_user_id', u.id)
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          comp = result.data;
+            .limit(10);
+          comp = pickBestCompanyRecord(result.data || []);
           compErr = result.error;
         }
 
-        if (!comp && !compErr && normalizedUserEmail) {
+        if ((!comp || !isApprovedCompanyRecord(comp)) && !compErr && normalizedUserEmail) {
           const result = await supabase
             .from('companies')
             .select('*')
             .ilike('billing_contact_email', normalizedUserEmail)
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          comp = result.data;
+            .limit(10);
+          comp = pickBestCompanyRecord(result.data || []);
           compErr = result.error;
         }
 
         if (compErr) logFailure('loadUserData:companies', compErr);
+
+        if (comp?.id) {
+          const normalizedCompanyBillingEmail = (comp.billing_contact_email || '').trim().toLowerCase();
+
+          if (!comp.owner_user_id && normalizedUserEmail && normalizedCompanyBillingEmail === normalizedUserEmail) {
+            supabase
+              .from('companies')
+              .update({ owner_user_id: u.id, updated_at: new Date().toISOString() })
+              .eq('id', comp.id)
+              .is('owner_user_id', null)
+              .then(({ error }) => {
+                if (error) {
+                  logFailure('loadUserData:syncOwnerUserId', error);
+                  return;
+                }
+
+                setCompany(prev => (prev?.id === comp.id ? { ...prev, owner_user_id: u.id } : prev));
+              });
+
+            comp = { ...comp, owner_user_id: u.id };
+          }
+        }
+
         setCompany(comp);
         if (comp?.id && prof.company_id !== comp.id) {
           supabase
@@ -463,33 +561,6 @@ export function AppProvider({ children }) {
           setAssignments([]);
         }
 
-        const cfg = await fetchLatestSentryConfig().catch((cfgErr) => {
-          logFailure('loadUserData:sentry_config', cfgErr);
-          return null;
-        });
-        if (cfg) {
-          setSentryConfig(cfg);
-          sentryApi.configure({
-            baseUrl: cfg.base_url,
-            username: cfg.username,
-            password: cfg.password_enc,
-            apiKey: cfg.api_key,
-            authType: cfg.auth_type,
-            enabled: cfg.enabled,
-            features: {
-              assignedTrips:      cfg.feat_assigned_trips !== false,
-              marketplaceTrips:   cfg.feat_marketplace_trips !== false,
-              tripAcceptReject:   cfg.feat_trip_accept_reject !== false,
-              tripStatusUpdate:   cfg.feat_trip_status_update !== false,
-              drivers:            cfg.feat_drivers !== false,
-              vehicles:           cfg.feat_vehicles !== false,
-              vehicleLocations:   cfg.feat_vehicle_locations !== false,
-              vehicleWaypointEtas: cfg.feat_waypoint_etas !== false,
-              driverWorkShifts:   cfg.feat_driver_work_shifts !== false,
-              retrieveTrips:      cfg.feat_retrieve_trips !== false,
-            },
-          });
-        }
         setLoading(false);
       }
       if (!autoPullRef.current) {
@@ -503,24 +574,44 @@ export function AppProvider({ children }) {
                 : null;
 
           function mapTrip(t) {
+            const pickup = t.pick_up_location || {};
+            const dropoff = t.drop_off_location || {};
+            const prices = t.prices || {};
             return {
               sentry_trip_id: String(t.trip_id || t.id || Math.random()),
               sentry_last_modified_at: String(t.last_modified_at || ''),
               date_val: t.date || t.schedule_date || '',
-              los: t.level_of_service || t.los || '',
-              passengers: String(t.passenger_count || t.passengers || '1'),
+              los: t.service_level_code || t.level_of_service || t.los || '',
+              passengers: String(
+                t.passenger_count ||
+                t.passengers ||
+                t.client_count ||
+                (t.client ? 1 : '') ||
+                '1'
+              ),
               mileage: String(t.mileage || t.estimated_miles || ''),
-              pu_address: t.pickup_address || t.pu_address || '',
-              pu_city: t.pickup_city || t.pu_city || '',
-              pu_zip: t.pickup_zip || t.pu_zip || '',
-              pu_time: t.scheduled_pickup_time || t.pu_time || '',
-              do_address: t.dropoff_address || t.do_address || '',
-              do_city: t.dropoff_city || t.do_city || '',
-              do_zip: t.dropoff_zip || t.do_zip || '',
-              do_time: t.scheduled_dropoff_time || t.do_time || '',
-              delivery_price: String(t.total_amount || t.delivery_price || ''),
+              pu_address: t.pickup_address || t.pu_address || pickup.address || '',
+              pu_city: t.pickup_city || t.pu_city || pickup.city || '',
+              pu_zip: String(t.pickup_zip || t.pu_zip || pickup.zip_code || ''),
+              pu_time: t.scheduled_pickup_time || t.scheduled_pick_up_timestamp || t.pu_time || '',
+              do_address: t.dropoff_address || t.do_address || dropoff.address || '',
+              do_city: t.dropoff_city || t.do_city || dropoff.city || '',
+              do_zip: String(t.dropoff_zip || t.do_zip || dropoff.zip_code || ''),
+              do_time: t.scheduled_dropoff_time || t.scheduled_drop_off_timestamp || t.do_time || '',
+              delivery_price: String(
+                t.total_amount ||
+                t.delivery_price ||
+                prices.delivery_cost ||
+                prices.actual_cost ||
+                ''
+              ),
               status: 'available',
               company_id: scopedCompanyId,
+              pu_lat: pickup.lat ?? null,
+              pu_lng: pickup.lng ?? null,
+              do_lat: dropoff.lat ?? null,
+              do_lng: dropoff.lng ?? null,
+              raw_payload: t,
               loaded_at: new Date().toISOString(),
             };
           }
@@ -726,24 +817,44 @@ export function AppProvider({ children }) {
   }
 
   function mapSentryTrip(t, scopedCompanyId = null) {
+    const pickup = t.pick_up_location || {};
+    const dropoff = t.drop_off_location || {};
+    const prices = t.prices || {};
     return {
       sentry_trip_id: String(t.trip_id || t.id || Math.random()),
       sentry_last_modified_at: String(t.last_modified_at || ''),
       date_val: t.date || t.schedule_date || '',
-      los: t.level_of_service || t.los || '',
-      passengers: String(t.passenger_count || t.passengers || '1'),
+      los: t.service_level_code || t.level_of_service || t.los || '',
+      passengers: String(
+        t.passenger_count ||
+        t.passengers ||
+        t.client_count ||
+        (t.client ? 1 : '') ||
+        '1'
+      ),
       mileage: String(t.mileage || t.estimated_miles || ''),
-      pu_address: t.pickup_address || t.pu_address || '',
-      pu_city: t.pickup_city || t.pu_city || '',
-      pu_zip: t.pickup_zip || t.pu_zip || '',
-      pu_time: t.scheduled_pickup_time || t.pu_time || '',
-      do_address: t.dropoff_address || t.do_address || '',
-      do_city: t.dropoff_city || t.do_city || '',
-      do_zip: t.dropoff_zip || t.do_zip || '',
-      do_time: t.scheduled_dropoff_time || t.do_time || '',
-      delivery_price: String(t.total_amount || t.delivery_price || ''),
+      pu_address: t.pickup_address || t.pu_address || pickup.address || '',
+      pu_city: t.pickup_city || t.pu_city || pickup.city || '',
+      pu_zip: String(t.pickup_zip || t.pu_zip || pickup.zip_code || ''),
+      pu_time: t.scheduled_pickup_time || t.scheduled_pick_up_timestamp || t.pu_time || '',
+      do_address: t.dropoff_address || t.do_address || dropoff.address || '',
+      do_city: t.dropoff_city || t.do_city || dropoff.city || '',
+      do_zip: String(t.dropoff_zip || t.do_zip || dropoff.zip_code || ''),
+      do_time: t.scheduled_dropoff_time || t.scheduled_drop_off_timestamp || t.do_time || '',
+      delivery_price: String(
+        t.total_amount ||
+        t.delivery_price ||
+        prices.delivery_cost ||
+        prices.actual_cost ||
+        ''
+      ),
       status: 'available',
       company_id: scopedCompanyId,
+      pu_lat: pickup.lat ?? null,
+      pu_lng: pickup.lng ?? null,
+      do_lat: dropoff.lat ?? null,
+      do_lng: dropoff.lng ?? null,
+      raw_payload: t,
       loaded_at: new Date().toISOString(),
     };
   }
@@ -794,9 +905,53 @@ export function AppProvider({ children }) {
   }
 
   async function checkSentryHealth() {
-    const result = await sentryApi.healthCheck();
-    setSentryStatus({ ok: result.authenticated, checked: true, latency: result.latencyMs, error: result.error });
-    return result;
+    if (!sentryConfig?.base_url || sentryConfig.enabled === false) {
+      const disabledStatus = {
+        authenticated: false,
+        latencyMs: null,
+        status: null,
+        error: sentryConfig?.enabled === false ? 'Sentry disabled' : 'No saved Sentry config',
+        hint: null,
+      };
+      setSentryStatus({ ok: false, checked: true, latency: null, error: disabledStatus.error });
+      return disabledStatus;
+    }
+
+    try {
+      const res = await fetch(`${EDGE_BASE}/sentry-diagnostics/health-check`, {
+        method: 'POST',
+        headers: await getEdgeFunctionHeaders(),
+        body: JSON.stringify({
+          base_url: sentryConfig.base_url,
+          auth_type: sentryConfig.auth_type || 'basic',
+          username: sentryConfig.username || '',
+          password_enc: sentryConfig.password_enc || '',
+          api_key: sentryConfig.api_key || '',
+        }),
+      });
+
+      const result = await res.json().catch(() => ({
+        authenticated: false,
+        error: 'Invalid diagnostics response',
+      }));
+
+      setSentryStatus({
+        ok: Boolean(result.authenticated),
+        checked: true,
+        latency: result.latencyMs ?? null,
+        error: result.error || null,
+      });
+      return result;
+    } catch (error) {
+      const fallbackResult = await sentryApi.healthCheck();
+      setSentryStatus({
+        ok: fallbackResult.authenticated,
+        checked: true,
+        latency: fallbackResult.latencyMs ?? null,
+        error: fallbackResult.error || (error instanceof Error ? error.message : 'Connection check failed'),
+      });
+      return fallbackResult;
+    }
   }
 
   async function syncDriversFromSentry() {
@@ -1003,7 +1158,7 @@ export function AppProvider({ children }) {
           logFailure('realtime:sentry_config', error);
           return null;
         });
-        if (cfg) setSentryConfig(cfg);
+        applySentryConfig(cfg);
       })
       .subscribe();
 
@@ -1018,6 +1173,22 @@ export function AppProvider({ children }) {
       liveRefreshTimersRef.current = {};
     };
   }, [user?.id, normalizedRole, activeCompany?.id, adminPreviewCompany?.id]);
+
+  useEffect(() => {
+    if (!sentryConfig?.base_url) {
+      setSentryStatus({ ok: false, checked: false });
+      return;
+    }
+
+    if (sentryConfig.enabled === false) {
+      setSentryStatus({ ok: false, checked: true, error: 'Sentry disabled' });
+      return;
+    }
+
+    checkSentryHealth().catch(error => {
+      logFailure('useEffect:checkSentryHealth', error);
+    });
+  }, [sentryConfig?.id, sentryConfig?.updated_at, sentryConfig?.base_url, sentryConfig?.enabled]);
 
   const value = {
     user, profile, org, company: activeCompany, platformCompany: company, adminPreviewCompany, drivers, trips, assignments, schedules,

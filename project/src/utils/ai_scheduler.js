@@ -14,6 +14,7 @@ const AI_SCHED = {
   HOURLY_RATE_DRIVER: 18,
   MIN_REVENUE_PER_HOUR: 60,
   DEFAULT_TRAFFIC_BUFFER_PCT: 20,
+  DEFAULT_TRAFFIC_WEIGHT: 8,
   DEFAULT_SHORT_TRIP_MAX_MILES: 4,
   DEFAULT_SHORT_TRIP_BONUS_WEIGHT: 9,
   DEFAULT_CHAINING_WEIGHT: 8,
@@ -52,6 +53,7 @@ const AI_SCHED = {
 
   buildFullDaySchedule(driver, allTrips, shiftStr, alreadyTakenIds, options = {}) {
     const trafficBuf = options.trafficBufferPct ?? this.DEFAULT_TRAFFIC_BUFFER_PCT;
+    const trafficWeight = Number(options.trafficWeight ?? this.DEFAULT_TRAFFIC_WEIGHT);
     const sharedRidesEnabled = options.sharedRidesEnabled !== false;
     const shortTripMaxMiles = Number(options.shortTripMaxMiles ?? this.DEFAULT_SHORT_TRIP_MAX_MILES);
     const shortTripBonusWeight = Number(options.shortTripBonusWeight ?? this.DEFAULT_SHORT_TRIP_BONUS_WEIGHT);
@@ -117,7 +119,8 @@ const AI_SCHED = {
           + zonePreferenceBonus
           + (nearbyFutureTrips * chainingWeight)
           + sharedRideBonus
-          - (dist * Math.max(0.1, proximityWeight / 4));
+          - (dist * Math.max(0.1, proximityWeight / 4))
+          - (driveTime * Math.max(0.2, trafficWeight / 5));
         return {
           ...t,
           dist,
@@ -158,11 +161,16 @@ const AI_SCHED = {
 
       const tripDuration = this.estimateTripDuration(trip.mileage, trafficBuf);
       const bufferMins = trip.startMin - earliestStart;
+      const scheduledDropoffMin = trip.doTime
+        ? parseTimeStr(trip.doTime)
+        : trip.startMin + tripDuration;
 
       schedule.push({
         ...trip,
         scheduledStart: trip.startMin,
         estimatedEnd: trip.startMin + tripDuration,
+        scheduledDropoffMin,
+        scheduledDropoffTime: minToTime(scheduledDropoffMin),
         driveTimeFromPrev: driveFromLast,
         bufferMins,
         tightBuffer: bufferMins < 5,
@@ -287,7 +295,13 @@ const AI_SCHED = {
           ? haversine(refCoords.lat, refCoords.lng, t.coords.lat, t.coords.lng)
           : 999;
         const price = parseFloat(t.deliveryPrice) || 0;
-        return { ...t, dist, score: price * 2 + Math.max(0, 10 - dist) * 3 };
+        const drive = this.estimateDriveTime(dist, trafficBufferPct);
+        return {
+          ...t,
+          dist,
+          drive,
+          score: (price * 2) + (Math.max(0, 10 - dist) * 3) - (drive * 1.15),
+        };
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
@@ -335,6 +349,7 @@ const AI_SCHED = {
           sharedRidesEnabled,
           priceWeight: config.price_weight,
           proximityWeight: config.proximity_weight,
+          trafficWeight: config.traffic_weight,
           zoneWeight: config.zone_weight,
           shortTripMaxMiles: config.short_trip_max_miles,
           shortTripBonusWeight: config.short_trip_bonus_weight,
@@ -353,7 +368,15 @@ const AI_SCHED = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function parseTimeStr(s) {
   if (!s) return 0;
-  s = s.trim().toLowerCase();
+  const raw = String(s).trim();
+  if (!raw) return 0;
+
+  const isoDate = new Date(raw);
+  if (!Number.isNaN(isoDate.getTime()) && (raw.includes('T') || raw.includes('-'))) {
+    return isoDate.getHours() * 60 + isoDate.getMinutes();
+  }
+
+  s = raw.toLowerCase();
   const ampm = s.includes('pm') ? 'pm' : 'am';
   s = s.replace(/[apm]/g, '');
   const parts = s.split(':');
@@ -362,6 +385,15 @@ function parseTimeStr(s) {
   if (ampm === 'pm' && h !== 12) h += 12;
   if (ampm === 'am' && h === 12) h = 0;
   return h * 60 + m;
+}
+
+function minToTime(min) {
+  const safeMin = Math.max(0, Number(min) || 0);
+  const h = Math.floor(safeMin / 60);
+  const m = safeMin % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const displayH = h > 12 ? h - 12 : h === 0 ? 12 : h;
+  return `${displayH}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
 function haversine(lat1, lon1, lat2, lon2) {

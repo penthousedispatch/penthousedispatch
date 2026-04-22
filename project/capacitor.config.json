@@ -1,5 +1,12 @@
 {
   "appId": "com.penthousedispatch.app",
   "appName": "Penthouse Dispatch",
-  "webDir": "dist"
+  "webDir": "dist",
+  "ios": {
+    "path": "ios",
+    "scheme": "penthousedispatch"
+  },
+  "android": {
+    "path": "android"
+  }
 }

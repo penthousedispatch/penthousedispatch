@@ -11,6 +11,10 @@ function minToTime(min) {
 }
 
 function TripRow({ trip, index, onAcceptShared, isShared }) {
+  const timingLabel = trip.doTime
+    ? `${trip.puTime || (trip.scheduledStart ? minToTime(trip.scheduledStart) : '--')} - ${trip.doTime}`
+    : (trip.puTime || (trip.scheduledStart ? minToTime(trip.scheduledStart) : '--'));
+
   return (
     <div
       className="relative"
@@ -47,7 +51,7 @@ function TripRow({ trip, index, onAcceptShared, isShared }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1.5">
             <span className="text-xs font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>
-              {trip.puTime || (trip.scheduledStart ? minToTime(trip.scheduledStart) : '--')}
+              {timingLabel}
             </span>
             {trip.tightBuffer && !isShared && (
               <span
@@ -137,6 +141,9 @@ export default function DriverScheduleView({ driverId, onClose }) {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ totalRevenue: 0, revenuePerHour: 0, tripCount: 0 });
   const [dismissedShared, setDismissedShared] = useState(new Set());
+  const [shiftHours, setShiftHours] = useState('7am-5pm');
+  const [savingShift, setSavingShift] = useState(false);
+  const [shiftSaved, setShiftSaved] = useState('');
 
   useEffect(() => {
     loadSchedule();
@@ -157,6 +164,16 @@ export default function DriverScheduleView({ driverId, onClose }) {
   async function loadSchedule() {
     if (!driverId) return;
     setLoading(true);
+
+    const { data: driverRow } = await supabase
+      .from('drivers')
+      .select('shift_hours')
+      .eq('id', driverId)
+      .maybeSingle();
+
+    if (driverRow?.shift_hours) {
+      setShiftHours(driverRow.shift_hours);
+    }
 
     const { data: assignments } = await supabase
       .from('trip_assignments')
@@ -179,6 +196,7 @@ export default function DriverScheduleView({ driverId, onClose }) {
         deliveryPrice: String(a.delivery_price || ''),
         mileage: String(a.mileage || ''),
         driveTimeFromPrev: a.travel_time_mins || 0,
+        doTime: a.do_time || null,
         scheduledStart: null,
         tightBuffer: a.travel_time_mins != null && a.travel_time_mins < 10,
         isSharedRide: a.is_shared_ride || false,
@@ -210,8 +228,9 @@ export default function DriverScheduleView({ driverId, onClose }) {
           tripId: t.sentry_trip_id,
           puAddress: t.pu_address,
           doAddress: t.do_address,
-          puTime: t.pu_time,
-          deliveryPrice: String(t.delivery_price || ''),
+        puTime: t.pu_time,
+        doTime: t.do_time || null,
+        deliveryPrice: String(t.delivery_price || ''),
           mileage: String(t.mileage || ''),
           driveTimeFromPrev: 0,
           tightBuffer: false,
@@ -221,6 +240,27 @@ export default function DriverScheduleView({ driverId, onClose }) {
     }
 
     setLoading(false);
+  }
+
+  async function handleSaveShift() {
+    if (!driverId) return;
+    const nextShift = String(shiftHours || '').trim() || '7am-5pm';
+    setSavingShift(true);
+    setShiftSaved('');
+
+    const { error } = await supabase
+      .from('drivers')
+      .update({
+        shift_hours: nextShift,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', driverId);
+
+    if (!error) {
+      setShiftSaved('Saved');
+    }
+
+    setSavingShift(false);
   }
 
   async function handleAcceptShared(trip) {
@@ -233,6 +273,7 @@ export default function DriverScheduleView({ driverId, onClose }) {
       pu_address: trip.puAddress,
       do_address: trip.doAddress,
       pu_time: trip.puTime,
+      do_time: trip.doTime || '',
       delivery_price: parseFloat(trip.deliveryPrice) || 0,
       mileage: parseFloat(trip.mileage) || 0,
       scheduled_order: nextOrder,
@@ -252,11 +293,11 @@ export default function DriverScheduleView({ driverId, onClose }) {
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col"
-      style={{ background: '#07090d', fontFamily: 'Inter,sans-serif' }}
+      style={{ background: '#07090d', fontFamily: 'Inter,sans-serif', paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }}
     >
       <div
         className="flex items-center justify-between px-4 py-4"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingTop: 'calc(var(--safe-top) + 12px)' }}
       >
         <div>
           <h2 className="font-700 text-base" style={{ color: '#e5e7eb', fontWeight: 700 }}>
@@ -296,6 +337,54 @@ export default function DriverScheduleView({ driverId, onClose }) {
           <p className="font-700 text-base" style={{ color: '#0ea5e9', fontWeight: 700 }}>
             ${stats.revenuePerHour.toFixed(0)}
           </p>
+        </div>
+      </div>
+
+      <div
+        className="px-4 py-3"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <div className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>My Work Shift</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)', lineHeight: 1.5 }}>
+                Set your normal hours so company dispatch and AI can build the day around your shift.
+              </p>
+            </div>
+            {shiftSaved && (
+              <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: 'rgba(0,229,160,0.12)', color: '#00e5a0' }}>
+                {shiftSaved}
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2 mt-3">
+            <input
+              type="text"
+              value={shiftHours}
+              onChange={e => {
+                setShiftHours(e.target.value);
+                if (shiftSaved) setShiftSaved('');
+              }}
+              placeholder="7am-5pm"
+              className="flex-1"
+              style={{ minWidth: 0 }}
+            />
+            <button
+              type="button"
+              onClick={handleSaveShift}
+              disabled={savingShift}
+              className="px-4 py-2 rounded-xl text-xs font-700"
+              style={{
+                background: 'rgba(201,168,76,0.12)',
+                border: '1px solid rgba(201,168,76,0.24)',
+                color: '#c9a84c',
+                fontWeight: 700,
+              }}
+            >
+              {savingShift ? 'Saving...' : 'Save Shift'}
+            </button>
+          </div>
         </div>
       </div>
 

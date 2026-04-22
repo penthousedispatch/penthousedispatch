@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { sentryApi } from '../../lib/sentryApi';
+import { getEdgeFunctionHeaders } from '../../lib/edgeHeaders';
 import { useApp } from '../../context/AppContext';
 import {
   Settings, RefreshCw, CheckCircle, XCircle, Zap, Database,
@@ -26,6 +27,10 @@ const FEATURE_DEFS = [
 ];
 
 const DEFAULT_FEATURES = Object.fromEntries(FEATURE_DEFS.map(f => [f.key, true]));
+
+function cleanAuthValue(value) {
+  return String(value ?? '').replace(/\u00a0/g, ' ').trim();
+}
 
 function CopyButton({ text, onCopy }) {
   const [copied, setCopied] = useState(false);
@@ -184,19 +189,29 @@ export default function AdminSentryConfig() {
     setSaved(false);
     setTestResult(null);
 
+    const normalized = {
+      ...form,
+      base_url: cleanAuthValue(form.base_url),
+      username: cleanAuthValue(form.username),
+      password_enc: cleanAuthValue(form.password_enc),
+      api_key: cleanAuthValue(form.api_key),
+      driver_sandbox_username: cleanAuthValue(form.driver_sandbox_username),
+      driver_sandbox_password: cleanAuthValue(form.driver_sandbox_password),
+      webhook_secret: cleanAuthValue(form.webhook_secret),
+    };
+
     sentryApi.configure({
-      baseUrl: form.base_url,
-      username: form.username,
-      password: form.password_enc,
-      apiKey: form.api_key,
+      baseUrl: normalized.base_url,
+      username: normalized.username,
+      password: normalized.password_enc,
+      apiKey: normalized.api_key,
       authType: form.auth_type,
       enabled: form.enabled,
       features: buildFeaturesForClient(),
     });
 
     const payload = {
-      ...form,
-      webhook_secret: (form.webhook_secret || '').trim(),
+      ...normalized,
       updated_at: new Date().toISOString(),
     };
 
@@ -266,17 +281,36 @@ export default function AdminSentryConfig() {
   async function handleTest() {
     setTesting(true);
     setTestResult(null);
-    sentryApi.configure({
-      baseUrl: form.base_url,
-      username: form.username,
-      password: form.password_enc,
-      apiKey: form.api_key,
-      authType: form.auth_type,
-      enabled: true,
-      features: buildFeaturesForClient(),
-    });
-    const result = await sentryApi.healthCheck();
-    setTestResult(result);
+    const normalized = {
+      base_url: cleanAuthValue(form.base_url),
+      username: cleanAuthValue(form.username),
+      password_enc: cleanAuthValue(form.password_enc),
+      api_key: cleanAuthValue(form.api_key),
+    };
+    try {
+      const res = await fetch(`${EDGE_BASE}/sentry-diagnostics/health-check`, {
+        method: 'POST',
+        headers: await getEdgeFunctionHeaders(),
+        body: JSON.stringify({
+          base_url: normalized.base_url,
+          auth_type: form.auth_type,
+          username: normalized.username,
+          password_enc: normalized.password_enc,
+          api_key: normalized.api_key,
+        }),
+      });
+
+      const result = await res.json().catch(() => ({
+        authenticated: false,
+        error: 'Invalid diagnostics response',
+      }));
+      setTestResult(result);
+    } catch (error) {
+      setTestResult({
+        authenticated: false,
+        error: error instanceof Error ? error.message : 'Connection test failed',
+      });
+    }
     setTesting(false);
   }
 
@@ -309,7 +343,7 @@ export default function AdminSentryConfig() {
 
   const providerEndpoints = [
     { label: 'Fleet Vehicle Locations', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_locations.json${secretUrl}` },
-    { label: 'Vehicle Location', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_location.json?vehicle_id=ID${form.webhook_auth_mode === 'query' && form.webhook_secret ? `&secret=${encodeURIComponent(form.webhook_secret)}` : ''}` },
+    { label: 'Vehicle Location', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_location.json?license_plate_number=LICENSE_PLATE${form.webhook_auth_mode === 'query' && form.webhook_secret ? `&secret=${encodeURIComponent(form.webhook_secret)}` : ''}` },
     { label: 'Vehicle Waypoint ETAs', url: `${EDGE_BASE}/sentry-provider/rest/gc/vehicle_waypoint_etas.json${secretUrl}` },
     { label: 'Retrieve TP Trips', url: `${EDGE_BASE}/sentry-provider/rest/gc/retrieve_trips.json${secretUrl}` },
     { label: 'Driver Work Shifts', url: `${EDGE_BASE}/sentry-provider/rest/transportation_provider_facade/v4.0/driver_work_shifts.json${secretUrl}` },

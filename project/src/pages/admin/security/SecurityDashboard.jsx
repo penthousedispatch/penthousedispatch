@@ -73,7 +73,7 @@ export default function SecurityDashboard({ onViewThreat }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {[
           { label: 'Critical', value: stats.critical, color: '#ff4757', bg: 'rgba(255,71,87,0.08)' },
           { label: 'High', value: stats.high, color: '#f59e0b', bg: 'rgba(245,158,11,0.08)' },
@@ -87,7 +87,7 @@ export default function SecurityDashboard({ onViewThreat }) {
         ))}
       </div>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr' }}>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="px-4 py-3 flex items-center justify-between border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
             <div className="flex items-center gap-2">

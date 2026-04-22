@@ -7,6 +7,8 @@ import {
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { runAutoScheduler } from '../../utils/autoScheduler';
+import { resolveOrgIdForAdmin } from '../../lib/resolveOrgId';
+import { handleSupabaseError, toastError, toastSuccess } from '../../utils/errorHandler';
 
 const DEFAULT_CONFIG = {
   enabled: false,
@@ -15,6 +17,7 @@ const DEFAULT_CONFIG = {
   billing_rate_per_mile: 0.13,
   max_trip_distance_miles: 25,
   proximity_weight: 7,
+  traffic_weight: 8,
   mileage_weight: 5,
   price_weight: 8,
   short_trip_max_miles: 4,
@@ -58,7 +61,7 @@ function WeightSlider({ label, hint, value, onChange }) {
 }
 
 export default function AutoSchedulerPanel() {
-  const { org, drivers, trips, assignments, loadAssignments, loadTrips } = useApp();
+  const { org, user, isPlatformOwner, role, drivers, trips, assignments, loadAssignments, loadTrips } = useApp();
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -69,90 +72,158 @@ export default function AutoSchedulerPanel() {
   const [expandedRun, setExpandedRun] = useState(null);
   const [previewResult, setPreviewResult] = useState(null);
   const [previewing, setPreviewing] = useState(false);
+  const [resolvedOrgId, setResolvedOrgId] = useState(org?.id || null);
+  const [orgError, setOrgError] = useState('');
 
   useEffect(() => {
-    if (org?.id) {
+    let mounted = true;
+    async function resolveOrg() {
+      setOrgError('');
+      const nextOrgId = await resolveOrgIdForAdmin({
+        orgId: org?.id || null,
+        user,
+        isPlatformOwner,
+        role,
+      });
+      if (!mounted) return;
+      setResolvedOrgId(nextOrgId);
+      if (!nextOrgId) {
+        setOrgError('Unable to resolve organization workspace. Scheduler settings cannot be persisted yet.');
+      }
+    }
+    resolveOrg();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, user?.id, isPlatformOwner, role]);
+
+  useEffect(() => {
+    if (resolvedOrgId) {
       loadConfig();
       loadRecentRuns();
+    } else {
+      setRecentRuns([]);
     }
-  }, [org?.id]);
+  }, [resolvedOrgId]);
 
   async function loadConfig() {
-    const { data } = await supabase
+    if (!resolvedOrgId) return;
+    const { data, error } = await supabase
       .from('auto_scheduler_config')
       .select('*')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .maybeSingle();
+    if (error) {
+      handleSupabaseError(error, 'AutoSchedulerPanel:loadConfig', { silent: true });
+      return;
+    }
     if (data) setConfig(data);
   }
 
   async function loadRecentRuns() {
+    if (!resolvedOrgId) {
+      setRecentRuns([]);
+      setLoadingRuns(false);
+      return;
+    }
     setLoadingRuns(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('auto_scheduler_runs')
       .select('*')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .order('run_at', { ascending: false })
       .limit(10);
+    if (error) {
+      handleSupabaseError(error, 'AutoSchedulerPanel:loadRecentRuns', { silent: true });
+      setRecentRuns([]);
+      setLoadingRuns(false);
+      return;
+    }
     setRecentRuns(data || []);
     setLoadingRuns(false);
   }
 
   async function handleSave() {
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     setSaving(true);
-    const { data: existing } = await supabase
-      .from('auto_scheduler_config')
-      .select('id')
-      .eq('org_id', org.id)
-      .maybeSingle();
+    try {
+      const { data: existing, error: existingError } = await supabase
+        .from('auto_scheduler_config')
+        .select('id')
+        .eq('org_id', resolvedOrgId)
+        .maybeSingle();
+      if (existingError) {
+        handleSupabaseError(existingError, 'AutoSchedulerPanel:handleSave:lookup', { fallback: 'Failed to check scheduler settings.' });
+        return;
+      }
 
-    const payload = { ...config, org_id: org.id, updated_at: new Date().toISOString() };
+      const payload = { ...config, org_id: resolvedOrgId, updated_at: new Date().toISOString() };
 
-    if (existing) {
-      await supabase.from('auto_scheduler_config').update(payload).eq('org_id', org.id);
-    } else {
-      await supabase.from('auto_scheduler_config').insert(payload);
+      if (existing) {
+        const { error } = await supabase.from('auto_scheduler_config').update(payload).eq('org_id', resolvedOrgId);
+        if (error) {
+          handleSupabaseError(error, 'AutoSchedulerPanel:handleSave:update', { fallback: 'Failed to save scheduler settings.' });
+          return;
+        }
+      } else {
+        const { error } = await supabase.from('auto_scheduler_config').insert(payload);
+        if (error) {
+          handleSupabaseError(error, 'AutoSchedulerPanel:handleSave:insert', { fallback: 'Failed to save scheduler settings.' });
+          return;
+        }
+      }
+
+      setSaved(true);
+      toastSuccess('Scheduler settings saved.');
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setSaving(false);
     }
-
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-    setSaving(false);
   }
 
   async function handlePreview() {
     setPreviewing(true);
     setPreviewResult(null);
-    const result = await runAutoScheduler({
-      drivers,
-      trips,
-      assignments,
-      config,
-      orgId: org?.id,
-      dryRun: true,
-    });
-    setPreviewResult(result);
-    setPreviewing(false);
+    try {
+      const result = await runAutoScheduler({
+        drivers,
+        trips,
+        assignments,
+        config,
+        orgId: resolvedOrgId,
+        dryRun: true,
+      });
+      setPreviewResult(result);
+    } catch (error) {
+      toastError(error?.message || 'Failed to generate scheduler preview.');
+    } finally {
+      setPreviewing(false);
+    }
   }
 
   async function handleRun() {
     setRunning(true);
     setLastResult(null);
-    const result = await runAutoScheduler({
-      drivers,
-      trips,
-      assignments,
-      config,
-      orgId: org?.id,
-      dryRun: false,
-    });
-    setLastResult(result);
-    if (config.auto_assign) {
-      await loadAssignments();
-      await loadTrips();
+    try {
+      const result = await runAutoScheduler({
+        drivers,
+        trips,
+        assignments,
+        config,
+        orgId: resolvedOrgId,
+        dryRun: false,
+      });
+      setLastResult(result);
+      if (config.auto_assign) {
+        await loadAssignments();
+        await loadTrips();
+      }
+      await loadRecentRuns();
+    } catch (error) {
+      toastError(error?.message || 'Scheduler run failed.');
+    } finally {
+      setRunning(false);
     }
-    await loadRecentRuns();
-    setRunning(false);
   }
 
   const onlineDrivers = drivers.filter(d => d.status === 'online' || d.status === 'on_trip');
@@ -183,6 +254,11 @@ export default function AutoSchedulerPanel() {
     <div className="flex h-full overflow-hidden" style={{ background: '#07090d' }}>
       <div className="flex-1 overflow-y-auto p-5">
         <div className="max-w-2xl">
+          {orgError && (
+            <div className="mb-4 rounded-xl px-3 py-2 text-xs" style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff4757' }}>
+              {orgError}
+            </div>
+          )}
           <div className="mb-5">
             <div className="flex items-center justify-between">
               <div>
@@ -359,6 +435,12 @@ export default function AutoSchedulerPanel() {
                 onChange={v => setConfig(c => ({ ...c, proximity_weight: v }))}
               />
               <WeightSlider
+                label="Traffic Awareness"
+                hint="Higher = avoid assignments that burn too much drive time getting to pickup"
+                value={config.traffic_weight}
+                onChange={v => setConfig(c => ({ ...c, traffic_weight: v }))}
+              />
+              <WeightSlider
                 label="Mileage Efficiency"
                 hint="Higher = favor high pay-per-mile trips"
                 value={config.mileage_weight}
@@ -439,27 +521,27 @@ export default function AutoSchedulerPanel() {
           <div className="flex gap-2 mb-5">
             <button
               onClick={handlePreview}
-              disabled={previewing || running}
+              disabled={previewing || running || !resolvedOrgId}
               className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-600 transition-all"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', fontWeight: 600, opacity: resolvedOrgId ? 1 : 0.45 }}
             >
               <RefreshCw className={`w-4 h-4 ${previewing ? 'animate-spin' : ''}`} />
               {previewing ? 'Previewing...' : 'Preview Results'}
             </button>
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || !resolvedOrgId}
               className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-600 transition-all"
-              style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600 }}
+              style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600, opacity: resolvedOrgId ? 1 : 0.45 }}
             >
               {saved ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
               {saved ? 'Saved!' : saving ? 'Saving...' : 'Save'}
             </button>
             <button
               onClick={handleRun}
-              disabled={running || previewing}
+              disabled={running || previewing || !resolvedOrgId}
               className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-600 transition-all"
-              style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.25)', color: '#00e5a0', fontWeight: 600 }}
+              style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.25)', color: '#00e5a0', fontWeight: 600, opacity: resolvedOrgId ? 1 : 0.45 }}
             >
               <Zap className={`w-4 h-4 ${running ? 'animate-pulse' : ''}`} />
               {running ? 'Running...' : config.auto_assign ? 'Run & Assign' : 'Run Now'}

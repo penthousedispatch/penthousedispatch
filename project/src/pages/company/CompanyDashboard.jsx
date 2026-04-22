@@ -28,6 +28,8 @@ function CompanyDrivers({ company }) {
   const [deletingDriver, setDeletingDriver] = useState(null);
   const [onboardingDriver, setOnboardingDriver] = useState(null);
   const [savingDriver, setSavingDriver] = useState(false);
+  const [savingShiftDriverId, setSavingShiftDriverId] = useState(null);
+  const [shiftDrafts, setShiftDrafts] = useState({});
   const [driverTaxInfo, setDriverTaxInfo] = useState({});
   const cljFleetSeededRef = useRef(false);
   const driverAppUrl = `${window.location.origin}/driver`;
@@ -229,6 +231,14 @@ function CompanyDrivers({ company }) {
     loadCompanyDrivers();
   }, [company?.id, profile?.company_id, user?.id, user?.email]);
 
+  useEffect(() => {
+    setShiftDrafts(
+      Object.fromEntries(
+        (drivers || []).map(driver => [driver.id, driver.shift_hours || '7am-5pm'])
+      )
+    );
+  }, [drivers]);
+
   const statusColor = { online: '#00e5a0', offline: 'rgba(255,255,255,0.3)', on_trip: '#c9a84c', break: '#f59e0b' };
   const filteredDrivers = drivers.filter(driver => {
     if (!search) return true;
@@ -405,8 +415,34 @@ function CompanyDrivers({ company }) {
     await loadCompanyDrivers();
   }
 
+  async function handleSaveDriverShift(driver) {
+    if (!driver?.id) return;
+    const nextShift = String(shiftDrafts[driver.id] || '7am-5pm').trim() || '7am-5pm';
+    setSavingShiftDriverId(driver.id);
+
+    const { error } = await supabase
+      .from('drivers')
+      .update({
+        shift_hours: nextShift,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', driver.id);
+
+    if (error) {
+      handleSupabaseError(error, 'CompanyDrivers:saveShiftHours', { fallback: 'Failed to save driver shift.' });
+      setSavingShiftDriverId(null);
+      return;
+    }
+
+    setDrivers(prev =>
+      prev.map(row => (row.id === driver.id ? { ...row, shift_hours: nextShift } : row))
+    );
+    toastSuccess(`${driver.full_name || 'Driver'} shift saved.`);
+    setSavingShiftDriverId(null);
+  }
+
   return (
-    <div className="p-6 pb-48 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 pb-48 max-w-5xl mx-auto">
       <div className="mb-4">
         <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Drivers</h2>
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
@@ -434,6 +470,68 @@ function CompanyDrivers({ company }) {
             <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.35)' }}>{card.hint}</p>
           </div>
         ))}
+      </div>
+
+      <div className="rounded-2xl p-4 mb-4" style={{ background: '#161819', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+          <div>
+            <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Driver Work Shifts</p>
+            <p className="text-xs mt-1.5" style={{ color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+              Set each driver&apos;s saved work hours here. Penthouse AI uses these hours when <strong>Pre-Schedule From Driver Work Shifts</strong> is enabled in AI Settings.
+            </p>
+          </div>
+        </div>
+        <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+          {filteredDrivers.length === 0 ? (
+            <div className="rounded-xl px-4 py-5 text-sm" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.4)' }}>
+              Add or import drivers first, then set their work shifts here.
+            </div>
+          ) : (
+            filteredDrivers.map(driver => (
+              <div
+                key={`shift-${driver.id}`}
+                className="grid grid-cols-1 md:grid-cols-[minmax(0,1.25fr)_minmax(170px,240px)_auto] gap-3 rounded-xl px-4 py-3 items-start md:items-center"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>
+                    {driver.full_name || 'Unnamed Driver'}
+                  </p>
+                  <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                    {driver.tlc_number || driver.driver_number || 'No TLC / driver #'}
+                  </p>
+                </div>
+                <input
+                  type="text"
+                  value={shiftDrafts[driver.id] || ''}
+                  onChange={e => setShiftDrafts(prev => ({ ...prev, [driver.id]: e.target.value }))}
+                  placeholder="7am-5pm"
+                  className="w-full min-w-0"
+                />
+                <div className="flex justify-stretch md:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleSaveDriverShift(driver)}
+                    disabled={savingShiftDriverId === driver.id}
+                    className="px-4 py-2 rounded-xl text-xs font-700 w-full md:w-auto"
+                    style={{
+                      background: '#c9a84c',
+                      border: '1px solid rgba(201,168,76,0.45)',
+                      color: '#07090d',
+                      fontWeight: 700,
+                      boxShadow: '0 10px 24px rgba(201,168,76,0.18)',
+                    }}
+                  >
+                    {savingShiftDriverId === driver.id ? 'Saving...' : 'Save Shift'}
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl p-4" style={{ background: '#161819', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -483,53 +581,149 @@ function CompanyDrivers({ company }) {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
-          <div className="grid grid-cols-[72px_minmax(220px,1.4fr)_1fr_120px_120px_160px_180px] gap-3 px-4 py-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.42)' }}>
+          <div className="hidden md:grid grid-cols-[72px_minmax(220px,1.4fr)_1fr_120px_130px_120px_160px_180px] gap-3 px-4 py-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.42)' }}>
             <span>#</span>
             <span>Name</span>
             <span>Phone</span>
             <span>TLC</span>
+            <span>Work Shift</span>
             <span>Status</span>
             <span>Onboarding</span>
             <span>Actions</span>
           </div>
           <div style={{ background: '#0d1117' }}>
             {filteredDrivers.map((driver, index) => (
-              <div
-                key={driver.id}
-                className="grid grid-cols-[72px_minmax(220px,1.4fr)_1fr_120px_120px_160px_180px] gap-3 px-4 py-3 items-center"
-                style={{ borderTop: index === 0 ? 'none' : '1px solid rgba(255,255,255,0.06)' }}
-              >
-                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>{String(index + 1).padStart(3, '0')}</span>
-                <div className="flex items-center gap-3 min-w-0">
-                  {driver.photo_data ? (
-                    <img src={driver.photo_data} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-700 flex-shrink-0" style={{ background: 'rgba(190,215,255,0.14)', color: '#cfe1ff', fontWeight: 700 }}>
-                      {(driver.full_name || '?').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}
+              <React.Fragment key={driver.id}>
+                <div
+                  className="hidden md:grid grid-cols-[72px_minmax(220px,1.4fr)_1fr_120px_130px_120px_160px_180px] gap-3 px-4 py-3 items-center"
+                  style={{ borderTop: index === 0 ? 'none' : '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  <span className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>{String(index + 1).padStart(3, '0')}</span>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {driver.photo_data ? (
+                      <img src={driver.photo_data} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-700 flex-shrink-0" style={{ background: 'rgba(190,215,255,0.14)', color: '#cfe1ff', fontWeight: 700 }}>
+                        {(driver.full_name || '?').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{driver.full_name || 'Unnamed Driver'}</p>
+                      <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.38)' }}>{driver.driver_number || 'No driver #'}</p>
                     </div>
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{driver.full_name || 'Unnamed Driver'}</p>
-                    <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.38)' }}>{driver.driver_number || 'No driver #'}</p>
+                  </div>
+                  <span className="text-sm" style={{ color: '#d4d4d4' }}>{driver.phone || 'Missing'}</span>
+                  <span className="text-sm" style={{ color: '#d4d4d4' }}>{driver.tlc_number || 'Missing'}</span>
+                  <span className="text-sm" style={{ color: '#d4d4d4' }}>{driver.shift_hours || '7am-5pm'}</span>
+                  <div>
+                    <span
+                      className="inline-flex items-center px-3 py-1 rounded-full text-xs"
+                      style={{
+                        background: driver.status === 'offline' ? 'rgba(255,255,255,0.12)' : `${statusColor[driver.status] || '#c9a84c'}18`,
+                        color: driver.status === 'offline' ? '#f3f4f6' : (statusColor[driver.status] || '#c9a84c'),
+                      }}
+                    >
+                      {driver.status || 'offline'}
+                    </span>
+                  </div>
+                  <div>
+                    <button
+                      onClick={() => setOnboardingDriver(driver)}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
+                      style={{
+                        background: Number(driver.layer1_pct || 0) >= 100 && String(driver.layer2_status || '').toLowerCase() === 'approved_internal'
+                          ? 'rgba(0,229,160,0.1)'
+                          : 'rgba(201,168,76,0.1)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        color: Number(driver.layer1_pct || 0) >= 100 && String(driver.layer2_status || '').toLowerCase() === 'approved_internal'
+                          ? '#00e5a0'
+                          : '#c9a84c',
+                      }}
+                    >
+                      <ClipboardList className="w-3.5 h-3.5" />
+                      Onboarding
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => sendDriverApp(driver)}
+                      className="h-9 px-3 rounded-lg flex items-center justify-center gap-2"
+                      style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.18)', color: '#c9a84c', fontSize: 12, fontWeight: 600 }}
+                      title="Send driver app"
+                    >
+                      <Send className="w-4 h-4" />
+                      <span className="hidden xl:inline">Send App</span>
+                    </button>
+                    <button
+                      onClick={() => setEditingDriver({
+                        ...driver,
+                        legal_name: driverTaxInfo[driver.id]?.legal_name || driver.full_name || '',
+                        tax_id_last4: driverTaxInfo[driver.id]?.tax_id_last4 || '',
+                        tax_classification: driverTaxInfo[driver.id]?.tax_classification || '1099',
+                        w9_completed_at: driverTaxInfo[driver.id]?.w9_completed_at || null,
+                      })}
+                      className="w-9 h-9 rounded-lg flex items-center justify-center"
+                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                      title="Edit driver"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setDeletingDriver(driver)}
+                      className="w-9 h-9 rounded-lg flex items-center justify-center"
+                      style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff7a7a' }}
+                      title="Delete driver"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-                <span className="text-sm" style={{ color: '#d4d4d4' }}>{driver.phone || 'Missing'}</span>
-                <span className="text-sm" style={{ color: '#d4d4d4' }}>{driver.tlc_number || 'Missing'}</span>
-                <div>
-                  <span
-                    className="inline-flex items-center px-3 py-1 rounded-full text-xs"
-                    style={{
-                      background: driver.status === 'offline' ? 'rgba(255,255,255,0.12)' : `${statusColor[driver.status] || '#c9a84c'}18`,
-                      color: driver.status === 'offline' ? '#f3f4f6' : (statusColor[driver.status] || '#c9a84c'),
-                    }}
-                  >
-                    {driver.status || 'offline'}
-                  </span>
-                </div>
-                <div>
+
+                <div
+                  className="md:hidden px-4 py-4 space-y-3"
+                  style={{ borderTop: index === 0 ? 'none' : '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    {driver.photo_data ? (
+                      <img src={driver.photo_data} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-[11px] font-700 flex-shrink-0" style={{ background: 'rgba(190,215,255,0.14)', color: '#cfe1ff', fontWeight: 700 }}>
+                        {(driver.full_name || '?').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{driver.full_name || 'Unnamed Driver'}</p>
+                      <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.38)' }}>{driver.driver_number || 'No driver #'}</p>
+                    </div>
+                    <span
+                      className="inline-flex items-center px-3 py-1 rounded-full text-xs"
+                      style={{
+                        background: driver.status === 'offline' ? 'rgba(255,255,255,0.12)' : `${statusColor[driver.status] || '#c9a84c'}18`,
+                        color: driver.status === 'offline' ? '#f3f4f6' : (statusColor[driver.status] || '#c9a84c'),
+                      }}
+                    >
+                      {driver.status || 'offline'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <p style={{ color: 'rgba(255,255,255,0.35)' }}>Phone</p>
+                      <p style={{ color: '#d4d4d4' }}>{driver.phone || 'Missing'}</p>
+                    </div>
+                    <div>
+                      <p style={{ color: 'rgba(255,255,255,0.35)' }}>TLC</p>
+                      <p style={{ color: '#d4d4d4' }}>{driver.tlc_number || 'Missing'}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p style={{ color: 'rgba(255,255,255,0.35)' }}>Work Shift</p>
+                      <p style={{ color: '#d4d4d4' }}>{driver.shift_hours || '7am-5pm'}</p>
+                    </div>
+                  </div>
+
                   <button
                     onClick={() => setOnboardingDriver(driver)}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs"
                     style={{
                       background: Number(driver.layer1_pct || 0) >= 100 && String(driver.layer2_status || '').toLowerCase() === 'approved_internal'
                         ? 'rgba(0,229,160,0.1)'
@@ -543,41 +737,44 @@ function CompanyDrivers({ company }) {
                     <ClipboardList className="w-3.5 h-3.5" />
                     Onboarding
                   </button>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => sendDriverApp(driver)}
+                      className="h-10 px-3 rounded-lg flex items-center justify-center gap-2"
+                      style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.18)', color: '#c9a84c', fontSize: 12, fontWeight: 600 }}
+                      title="Send driver app"
+                    >
+                      <Send className="w-4 h-4" />
+                      Send
+                    </button>
+                    <button
+                      onClick={() => setEditingDriver({
+                        ...driver,
+                        legal_name: driverTaxInfo[driver.id]?.legal_name || driver.full_name || '',
+                        tax_id_last4: driverTaxInfo[driver.id]?.tax_id_last4 || '',
+                        tax_classification: driverTaxInfo[driver.id]?.tax_classification || '1099',
+                        w9_completed_at: driverTaxInfo[driver.id]?.w9_completed_at || null,
+                      })}
+                      className="h-10 px-3 rounded-lg flex items-center justify-center gap-2"
+                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb', fontSize: 12, fontWeight: 600 }}
+                      title="Edit driver"
+                    >
+                      <Pencil className="w-4 h-4" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => setDeletingDriver(driver)}
+                      className="h-10 px-3 rounded-lg flex items-center justify-center gap-2"
+                      style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff7a7a', fontSize: 12, fontWeight: 600 }}
+                      title="Delete driver"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => sendDriverApp(driver)}
-                    className="h-9 px-3 rounded-lg flex items-center justify-center gap-2"
-                    style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.18)', color: '#c9a84c', fontSize: 12, fontWeight: 600 }}
-                    title="Send driver app"
-                  >
-                    <Send className="w-4 h-4" />
-                    <span className="hidden xl:inline">Send App</span>
-                  </button>
-                  <button
-                    onClick={() => setEditingDriver({
-                      ...driver,
-                      legal_name: driverTaxInfo[driver.id]?.legal_name || driver.full_name || '',
-                      tax_id_last4: driverTaxInfo[driver.id]?.tax_id_last4 || '',
-                      tax_classification: driverTaxInfo[driver.id]?.tax_classification || '1099',
-                      w9_completed_at: driverTaxInfo[driver.id]?.w9_completed_at || null,
-                    })}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
-                    title="Edit driver"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setDeletingDriver(driver)}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center"
-                    style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff7a7a' }}
-                    title="Delete driver"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
+              </React.Fragment>
             ))}
           </div>
         </div>
@@ -633,7 +830,7 @@ function CompanyDrivers({ company }) {
                   ['Email', 'email'],
                   ['TLC Number', 'tlc_number'],
                   ['Driver Number', 'driver_number'],
-                  ['Shift Hours', 'shift_hours'],
+                  ['Work Shift Hours', 'shift_hours'],
                 ].map(([label, key]) => (
                   <div key={key}>
                     <label className="text-xs mb-1.5 block" style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</label>
@@ -1057,7 +1254,19 @@ function CompanyMarketplace({ company }) {
       ) : filteredTrips.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 rounded-xl gap-3" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
           <Layers className="w-8 h-8" style={{ color: 'rgba(255,255,255,0.22)' }} />
-          <p style={{ color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>No marketplace trips available right now.</p>
+          <p style={{ color: 'rgba(255,255,255,0.42)', fontSize: 13 }}>
+            {search.trim() ? 'No trips match your search filter.' : 'No marketplace trips available right now.'}
+          </p>
+          {search.trim() && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="px-3 py-2 rounded-lg text-xs"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+            >
+              Clear Search
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -1083,6 +1292,7 @@ function CompanyMarketplace({ company }) {
                 <p className="text-xs mt-1 truncate" style={{ color: 'rgba(255,255,255,0.42)' }}>{trip.do_address || 'Unknown dropoff'}</p>
                 <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
                   <span>Pickup: {trip.pu_time || 'TBD'}</span>
+                  <span>Dropoff: {trip.do_time || 'TBD'}</span>
                   <span>Mileage: {trip.mileage || '0'}</span>
                   <span>Fare: ${parseFloat(trip.delivery_price || 0).toFixed(2)}</span>
                   <span>Source: {trip.loaded_at ? 'Imported' : 'Manual'}</span>
@@ -1092,6 +1302,977 @@ function CompanyMarketplace({ company }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const PROGRAM_TYPE_OPTIONS = [
+  { value: 'daycare', label: 'Daycare' },
+  { value: 'school', label: 'School' },
+  { value: 'after_school', label: 'After-School' },
+  { value: 'special_program', label: 'Special Program' },
+  { value: 'medical', label: 'Medical Program' },
+];
+
+const PROGRAM_DAY_OPTIONS = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+];
+
+function createEmptyProgramForm() {
+  return {
+    program_name: '',
+    program_type: 'daycare',
+    status: 'active',
+    contact_name: '',
+    contact_email: '',
+    contact_phone: '',
+    address: '',
+    service_days: [],
+    pickup_window: '',
+    requires_guardian_release: false,
+    wheelchair_support: false,
+    monitor_required: false,
+    notes: '',
+  };
+}
+
+function createEmptyChildForm(programId = '') {
+  return {
+    program_id: programId,
+    child_name: '',
+    status: 'active',
+    guardian_name: '',
+    guardian_phone: '',
+    pickup_address: '',
+    dropoff_address: '',
+    pickup_days: [],
+    mobility_notes: '',
+    notes: '',
+  };
+}
+
+function CompanyPrograms({ company }) {
+  const [programs, setPrograms] = useState([]);
+  const [children, setChildren] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [selectedProgramId, setSelectedProgramId] = useState('');
+  const [editingProgramId, setEditingProgramId] = useState(null);
+  const [editingChildId, setEditingChildId] = useState(null);
+  const [savingProgram, setSavingProgram] = useState(false);
+  const [savingChild, setSavingChild] = useState(false);
+  const [deletingProgramId, setDeletingProgramId] = useState(null);
+  const [deletingChildId, setDeletingChildId] = useState(null);
+  const [programForm, setProgramForm] = useState(createEmptyProgramForm);
+  const [childForm, setChildForm] = useState(createEmptyChildForm());
+
+  async function loadProgramsAndChildren() {
+    if (!company?.id) {
+      setPrograms([]);
+      setChildren([]);
+      setSelectedProgramId('');
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+
+    const [programsResult, childrenResult] = await Promise.all([
+      supabase
+        .from('company_programs')
+        .select('*')
+        .eq('company_id', company.id)
+        .order('program_name'),
+      supabase
+        .from('program_children')
+        .select('*')
+        .eq('company_id', company.id)
+        .order('child_name'),
+    ]);
+
+    if (programsResult.error) {
+      handleSupabaseError(programsResult.error, 'CompanyPrograms:loadPrograms', { silent: true, fallback: 'Failed to load programs.' });
+    }
+
+    if (childrenResult.error) {
+      handleSupabaseError(childrenResult.error, 'CompanyPrograms:loadChildren', { silent: true, fallback: 'Failed to load program roster.' });
+    }
+
+    const nextPrograms = programsResult.data || [];
+    const nextChildren = childrenResult.data || [];
+    setPrograms(nextPrograms);
+    setChildren(nextChildren);
+
+    setSelectedProgramId(currentId => {
+      if (currentId && nextPrograms.some(program => program.id === currentId)) {
+        return currentId;
+      }
+      return nextPrograms[0]?.id || '';
+    });
+
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadProgramsAndChildren();
+  }, [company?.id]);
+
+  const filteredPrograms = programs.filter(program => {
+    if (!search) return true;
+    const query = search.toLowerCase();
+    return [
+      program.program_name,
+      program.program_type,
+      program.contact_name,
+      program.contact_email,
+      program.address,
+      program.notes,
+    ]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(query));
+  });
+
+  const selectedProgram =
+    filteredPrograms.find(program => program.id === selectedProgramId) ||
+    programs.find(program => program.id === selectedProgramId) ||
+    filteredPrograms[0] ||
+    programs[0] ||
+    null;
+
+  const childCountsByProgram = children.reduce((acc, child) => {
+    acc[child.program_id] = (acc[child.program_id] || 0) + 1;
+    return acc;
+  }, {});
+
+  const childrenForSelectedProgram = selectedProgram
+    ? children.filter(child => child.program_id === selectedProgram.id)
+    : [];
+
+  const activePrograms = programs.filter(program => program.status === 'active').length;
+  const activeChildren = children.filter(child => child.status === 'active').length;
+
+  useEffect(() => {
+    if (!selectedProgramId && programs[0]?.id) {
+      setSelectedProgramId(programs[0].id);
+    }
+  }, [selectedProgramId, programs]);
+
+  useEffect(() => {
+    if (!editingChildId) {
+      setChildForm(current => ({
+        ...current,
+        program_id: selectedProgram?.id || '',
+      }));
+    }
+  }, [selectedProgram?.id, editingChildId]);
+
+  function toggleArrayValue(values, nextValue) {
+    const set = new Set(values || []);
+    if (set.has(nextValue)) {
+      set.delete(nextValue);
+    } else {
+      set.add(nextValue);
+    }
+    return Array.from(set);
+  }
+
+  function resetProgramForm(nextProgramId = null) {
+    setEditingProgramId(null);
+    setProgramForm(createEmptyProgramForm());
+    if (nextProgramId) {
+      setSelectedProgramId(nextProgramId);
+    }
+  }
+
+  function resetChildForm(programId = selectedProgram?.id || '') {
+    setEditingChildId(null);
+    setChildForm(createEmptyChildForm(programId));
+  }
+
+  async function handleProgramSubmit(event) {
+    event.preventDefault();
+    if (!company?.id || !String(programForm.program_name || '').trim()) return;
+
+    setSavingProgram(true);
+    const payload = {
+      company_id: company.id,
+      program_name: String(programForm.program_name || '').trim(),
+      program_type: programForm.program_type || 'daycare',
+      status: programForm.status || 'active',
+      contact_name: String(programForm.contact_name || '').trim(),
+      contact_email: String(programForm.contact_email || '').trim(),
+      contact_phone: String(programForm.contact_phone || '').trim(),
+      address: String(programForm.address || '').trim(),
+      service_days: programForm.service_days || [],
+      pickup_window: String(programForm.pickup_window || '').trim(),
+      requires_guardian_release: Boolean(programForm.requires_guardian_release),
+      wheelchair_support: Boolean(programForm.wheelchair_support),
+      monitor_required: Boolean(programForm.monitor_required),
+      notes: String(programForm.notes || '').trim(),
+      updated_at: new Date().toISOString(),
+    };
+
+    let result;
+    if (editingProgramId) {
+      result = await supabase
+        .from('company_programs')
+        .update(payload)
+        .eq('id', editingProgramId)
+        .select('*')
+        .single();
+    } else {
+      result = await supabase
+        .from('company_programs')
+        .insert(payload)
+        .select('*')
+        .single();
+    }
+
+    setSavingProgram(false);
+
+    if (handleSupabaseError(result.error, 'CompanyPrograms:saveProgram', { fallback: 'Failed to save program.' })) {
+      return;
+    }
+
+    toastSuccess(editingProgramId ? 'Program updated.' : 'Program created.');
+    await loadProgramsAndChildren();
+    resetProgramForm(result.data?.id || null);
+  }
+
+  async function handleDeleteProgram(program) {
+    if (!program?.id) return;
+    const confirmed = window.confirm(`Delete ${program.program_name}? This also removes its child roster.`);
+    if (!confirmed) return;
+
+    setDeletingProgramId(program.id);
+    const { error } = await supabase
+      .from('company_programs')
+      .delete()
+      .eq('id', program.id);
+    setDeletingProgramId(null);
+
+    if (handleSupabaseError(error, 'CompanyPrograms:deleteProgram', { fallback: 'Failed to delete program.' })) {
+      return;
+    }
+
+    toastSuccess('Program deleted.');
+    await loadProgramsAndChildren();
+    resetProgramForm();
+    resetChildForm();
+  }
+
+  async function handleChildSubmit(event) {
+    event.preventDefault();
+    const targetProgramId = childForm.program_id || selectedProgram?.id || '';
+    if (!company?.id || !targetProgramId || !String(childForm.child_name || '').trim()) return;
+
+    setSavingChild(true);
+    const payload = {
+      company_id: company.id,
+      program_id: targetProgramId,
+      child_name: String(childForm.child_name || '').trim(),
+      status: childForm.status || 'active',
+      guardian_name: String(childForm.guardian_name || '').trim(),
+      guardian_phone: String(childForm.guardian_phone || '').trim(),
+      pickup_address: String(childForm.pickup_address || '').trim(),
+      dropoff_address: String(childForm.dropoff_address || '').trim(),
+      pickup_days: childForm.pickup_days || [],
+      mobility_notes: String(childForm.mobility_notes || '').trim(),
+      notes: String(childForm.notes || '').trim(),
+      updated_at: new Date().toISOString(),
+    };
+
+    let result;
+    if (editingChildId) {
+      result = await supabase
+        .from('program_children')
+        .update(payload)
+        .eq('id', editingChildId)
+        .select('*')
+        .single();
+    } else {
+      result = await supabase
+        .from('program_children')
+        .insert(payload)
+        .select('*')
+        .single();
+    }
+
+    setSavingChild(false);
+
+    if (handleSupabaseError(result.error, 'CompanyPrograms:saveChild', { fallback: 'Failed to save child roster entry.' })) {
+      return;
+    }
+
+    toastSuccess(editingChildId ? 'Roster entry updated.' : 'Child added to roster.');
+    await loadProgramsAndChildren();
+    setSelectedProgramId(targetProgramId);
+    resetChildForm(targetProgramId);
+  }
+
+  async function handleDeleteChild(child) {
+    if (!child?.id) return;
+    const confirmed = window.confirm(`Remove ${child.child_name} from this roster?`);
+    if (!confirmed) return;
+
+    setDeletingChildId(child.id);
+    const { error } = await supabase
+      .from('program_children')
+      .delete()
+      .eq('id', child.id);
+    setDeletingChildId(null);
+
+    if (handleSupabaseError(error, 'CompanyPrograms:deleteChild', { fallback: 'Failed to remove roster entry.' })) {
+      return;
+    }
+
+    toastSuccess('Roster entry removed.');
+    await loadProgramsAndChildren();
+    resetChildForm(selectedProgram?.id || '');
+  }
+
+  function startProgramEdit(program) {
+    setEditingProgramId(program.id);
+    setSelectedProgramId(program.id);
+    setProgramForm({
+      program_name: program.program_name || '',
+      program_type: program.program_type || 'daycare',
+      status: program.status || 'active',
+      contact_name: program.contact_name || '',
+      contact_email: program.contact_email || '',
+      contact_phone: program.contact_phone || '',
+      address: program.address || '',
+      service_days: program.service_days || [],
+      pickup_window: program.pickup_window || '',
+      requires_guardian_release: Boolean(program.requires_guardian_release),
+      wheelchair_support: Boolean(program.wheelchair_support),
+      monitor_required: Boolean(program.monitor_required),
+      notes: program.notes || '',
+    });
+  }
+
+  function startChildEdit(child) {
+    setEditingChildId(child.id);
+    setSelectedProgramId(child.program_id);
+    setChildForm({
+      program_id: child.program_id || '',
+      child_name: child.child_name || '',
+      status: child.status || 'active',
+      guardian_name: child.guardian_name || '',
+      guardian_phone: child.guardian_phone || '',
+      pickup_address: child.pickup_address || '',
+      dropoff_address: child.dropoff_address || '',
+      pickup_days: child.pickup_days || [],
+      mobility_notes: child.mobility_notes || '',
+      notes: child.notes || '',
+    });
+  }
+
+  if (!company?.id) {
+    return (
+      <div className="p-6">
+        <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.48)' }}>
+            Programs will appear here once this account is connected to a company profile.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 pb-48 max-w-7xl mx-auto space-y-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Programs</h2>
+          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            Track daycare, school, and program partners plus the children your dispatch team moves for them.
+          </p>
+        </div>
+        <button
+          onClick={loadProgramsAndChildren}
+          className="px-4 py-2 rounded-xl text-sm font-600 flex items-center gap-2"
+          style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', fontWeight: 600 }}
+        >
+          <RefreshCw className="w-4 h-4" />
+          Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {[
+          { label: 'Programs', value: programs.length, hint: `${activePrograms} active`, color: '#c9a84c' },
+          { label: 'Children On Roster', value: children.length, hint: `${activeChildren} active`, color: '#00e5a0' },
+          { label: 'Selected Program', value: selectedProgram ? childCountsByProgram[selectedProgram.id] || 0 : 0, hint: selectedProgram ? 'children assigned' : 'choose a program', color: '#0ea5e9' },
+        ].map(card => (
+          <div key={card.label} className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <p className="text-xs uppercase tracking-wide mb-2" style={{ color: 'rgba(255,255,255,0.42)' }}>{card.label}</p>
+            <p className="text-2xl font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>{card.value}</p>
+            <p className="text-xs mt-2" style={{ color: card.color }}>{card.hint}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-5 items-start">
+        <div className="space-y-5">
+          <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+              <div>
+                <p className="text-sm font-600" style={{ fontWeight: 600 }}>Program Directory</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                  Keep one record per daycare, school, or program you dispatch for.
+                </p>
+              </div>
+              <input
+                type="text"
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="Search programs"
+                className="w-full sm:w-72"
+              />
+            </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center h-40">
+                <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: '#c9a84c', borderTopColor: 'transparent' }} />
+              </div>
+            ) : filteredPrograms.length === 0 ? (
+              <div className="rounded-xl p-6 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
+                <ClipboardList className="w-8 h-8 mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.22)' }} />
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  {search.trim()
+                    ? 'No programs match your current search.'
+                    : 'No programs yet. Create your first daycare or program account on the right.'}
+                </p>
+                {search.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    className="mt-3 px-3 py-2 rounded-lg text-xs"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                  >
+                    Clear Search
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredPrograms.map(program => {
+                  const isSelected = selectedProgram?.id === program.id;
+                  return (
+                    <div
+                      key={program.id}
+                      onClick={() => setSelectedProgramId(program.id)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedProgramId(program.id);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      className="w-full rounded-xl p-4 text-left transition-all"
+                      style={{
+                        background: isSelected ? 'rgba(201,168,76,0.08)' : 'rgba(255,255,255,0.02)',
+                        border: `1px solid ${isSelected ? 'rgba(201,168,76,0.22)' : 'rgba(255,255,255,0.07)'}`,
+                      }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-600 truncate" style={{ fontWeight: 600 }}>{program.program_name}</p>
+                            <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(14,165,233,0.12)', color: '#7dd3fc' }}>
+                              {String(program.program_type || 'daycare').replace('_', ' ')}
+                            </span>
+                            <span
+                              className="text-[11px] px-2 py-0.5 rounded-full"
+                              style={{
+                                background: `${program.status === 'active' ? '#00e5a0' : '#f59e0b'}15`,
+                                color: program.status === 'active' ? '#00e5a0' : '#f59e0b',
+                              }}
+                            >
+                              {program.status || 'active'}
+                            </span>
+                          </div>
+                          <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                            {program.contact_name || 'No contact'}{program.contact_phone ? ` • ${program.contact_phone}` : ''}{program.contact_email ? ` • ${program.contact_email}` : ''}
+                          </p>
+                          <p className="text-xs mt-1 truncate" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                            {program.address || 'No pickup location saved'}
+                          </p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>{childCountsByProgram[program.id] || 0}</p>
+                          <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.38)' }}>children</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 mt-4">
+                        <button
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            startProgramEdit(program);
+                          }}
+                          className="px-3 py-2 rounded-lg text-xs flex items-center gap-1.5"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingProgramId === program.id}
+                          onClick={event => {
+                            event.stopPropagation();
+                            handleDeleteProgram(program);
+                          }}
+                          className="px-3 py-2 rounded-lg text-xs flex items-center gap-1.5"
+                          style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.14)', color: '#ff6b7a', opacity: deletingProgramId === program.id ? 0.7 : 1 }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {deletingProgramId === program.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+              <div>
+                <p className="text-sm font-600" style={{ fontWeight: 600 }}>Child Roster</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                  {selectedProgram ? `Children assigned to ${selectedProgram.program_name}.` : 'Choose a program to manage its roster.'}
+                </p>
+              </div>
+              {selectedProgram && (
+                <span className="text-xs px-2.5 py-1 rounded-full" style={{ background: 'rgba(201,168,76,0.1)', color: '#c9a84c', border: '1px solid rgba(201,168,76,0.2)' }}>
+                  {childrenForSelectedProgram.length} on roster
+                </span>
+              )}
+            </div>
+
+            {!selectedProgram ? (
+              <div className="rounded-xl p-6 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
+                <Users className="w-8 h-8 mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.2)' }} />
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Select a program first, then build its child roster.</p>
+              </div>
+            ) : childrenForSelectedProgram.length === 0 ? (
+              <div className="rounded-xl p-6 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
+                <Users className="w-8 h-8 mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.2)' }} />
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>No children added yet for this program.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {childrenForSelectedProgram.map(child => (
+                  <div key={child.id} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-600" style={{ fontWeight: 600 }}>{child.child_name}</p>
+                          <span
+                            className="text-[11px] px-2 py-0.5 rounded-full"
+                            style={{
+                              background: `${child.status === 'active' ? '#00e5a0' : '#f59e0b'}15`,
+                              color: child.status === 'active' ? '#00e5a0' : '#f59e0b',
+                            }}
+                          >
+                            {child.status || 'active'}
+                          </span>
+                        </div>
+                        <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                          Guardian: {child.guardian_name || 'Not set'}{child.guardian_phone ? ` • ${child.guardian_phone}` : ''}
+                        </p>
+                        <p className="text-xs mt-1 truncate" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                          Pickup: {child.pickup_address || 'Not set'}
+                        </p>
+                        <p className="text-xs mt-1 truncate" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                          Dropoff: {child.dropoff_address || 'Not set'}
+                        </p>
+                        {!!child.pickup_days?.length && (
+                          <p className="text-xs mt-2" style={{ color: '#7dd3fc' }}>
+                            {child.pickup_days.join(', ')}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => startChildEdit(child)}
+                          className="px-3 py-2 rounded-lg text-xs flex items-center gap-1.5"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingChildId === child.id}
+                          onClick={() => handleDeleteChild(child)}
+                          className="px-3 py-2 rounded-lg text-xs flex items-center gap-1.5"
+                          style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.14)', color: '#ff6b7a', opacity: deletingChildId === child.id ? 0.7 : 1 }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {deletingChildId === child.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <form onSubmit={handleProgramSubmit} className="rounded-xl p-4 space-y-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-600" style={{ fontWeight: 600 }}>{editingProgramId ? 'Edit Program' : 'Add Program'}</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                  Save operating rules your dispatchers need before they start scheduling.
+                </p>
+              </div>
+              {editingProgramId && (
+                <button
+                  type="button"
+                  onClick={() => resetProgramForm(selectedProgram?.id || null)}
+                  className="px-3 py-2 rounded-lg text-xs"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Program name</label>
+                <input
+                  type="text"
+                  value={programForm.program_name}
+                  onChange={event => setProgramForm(form => ({ ...form, program_name: event.target.value }))}
+                  placeholder="Bright Start Daycare"
+                  className="w-full"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Program type</label>
+                <select
+                  value={programForm.program_type}
+                  onChange={event => setProgramForm(form => ({ ...form, program_type: event.target.value }))}
+                  className="w-full"
+                >
+                  {PROGRAM_TYPE_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Status</label>
+                <select
+                  value={programForm.status}
+                  onChange={event => setProgramForm(form => ({ ...form, status: event.target.value }))}
+                  className="w-full"
+                >
+                  <option value="active">Active</option>
+                  <option value="paused">Paused</option>
+                  <option value="pending">Pending</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Contact name</label>
+                <input
+                  type="text"
+                  value={programForm.contact_name}
+                  onChange={event => setProgramForm(form => ({ ...form, contact_name: event.target.value }))}
+                  placeholder="Program coordinator"
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Contact phone</label>
+                <input
+                  type="text"
+                  value={programForm.contact_phone}
+                  onChange={event => setProgramForm(form => ({ ...form, contact_phone: event.target.value }))}
+                  placeholder="(555) 555-5555"
+                  className="w-full"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Contact email</label>
+                <input
+                  type="email"
+                  value={programForm.contact_email}
+                  onChange={event => setProgramForm(form => ({ ...form, contact_email: event.target.value }))}
+                  placeholder="dispatch@program.com"
+                  className="w-full"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Program address</label>
+                <input
+                  type="text"
+                  value={programForm.address}
+                  onChange={event => setProgramForm(form => ({ ...form, address: event.target.value }))}
+                  placeholder="Pickup or campus address"
+                  className="w-full"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Pickup window</label>
+                <input
+                  type="text"
+                  value={programForm.pickup_window}
+                  onChange={event => setProgramForm(form => ({ ...form, pickup_window: event.target.value }))}
+                  placeholder="Mon-Fri 2:30pm-4:30pm"
+                  className="w-full"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Service days</label>
+              <div className="flex flex-wrap gap-2">
+                {PROGRAM_DAY_OPTIONS.map(day => {
+                  const checked = programForm.service_days.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setProgramForm(form => ({ ...form, service_days: toggleArrayValue(form.service_days, day) }))}
+                      className="px-3 py-2 rounded-lg text-xs transition-all"
+                      style={{
+                        background: checked ? 'rgba(201,168,76,0.12)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${checked ? 'rgba(201,168,76,0.24)' : 'rgba(255,255,255,0.08)'}`,
+                        color: checked ? '#c9a84c' : 'rgba(255,255,255,0.62)',
+                      }}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {[
+                ['requires_guardian_release', 'Guardian release'],
+                ['wheelchair_support', 'Wheelchair support'],
+                ['monitor_required', 'Monitor required'],
+              ].map(([key, label]) => (
+                <label
+                  key={key}
+                  className="flex items-center gap-2 rounded-xl px-3 py-3"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(programForm[key])}
+                    onChange={event => setProgramForm(form => ({ ...form, [key]: event.target.checked }))}
+                  />
+                  <span className="text-xs" style={{ color: 'rgba(255,255,255,0.72)' }}>{label}</span>
+                </label>
+              ))}
+            </div>
+
+            <div>
+              <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Dispatcher notes</label>
+              <textarea
+                value={programForm.notes}
+                onChange={event => setProgramForm(form => ({ ...form, notes: event.target.value }))}
+                placeholder="Gate code, release rules, arrival routine, billing reminders..."
+                className="w-full min-h-[100px]"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={savingProgram}
+              className="w-full px-4 py-3 rounded-xl text-sm font-600 flex items-center justify-center gap-2"
+              style={{ background: '#c9a84c', color: '#07090d', fontWeight: 700, opacity: savingProgram ? 0.75 : 1 }}
+            >
+              <Plus className="w-4 h-4" />
+              {savingProgram ? 'Saving program...' : (editingProgramId ? 'Update Program' : 'Create Program')}
+            </button>
+          </form>
+
+          <form onSubmit={handleChildSubmit} className="rounded-xl p-4 space-y-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-600" style={{ fontWeight: 600 }}>{editingChildId ? 'Edit Child' : 'Add Child To Roster'}</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                  Store the rider details your dispatch team needs before trip intake.
+                </p>
+              </div>
+              {editingChildId && (
+                <button
+                  type="button"
+                  onClick={() => resetChildForm(selectedProgram?.id || '')}
+                  className="px-3 py-2 rounded-lg text-xs"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+
+            <div>
+              <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Program</label>
+              <select
+                value={childForm.program_id}
+                onChange={event => {
+                  setSelectedProgramId(event.target.value);
+                  setChildForm(form => ({ ...form, program_id: event.target.value }));
+                }}
+                className="w-full"
+                required
+              >
+                <option value="">Select program...</option>
+                {programs.map(program => (
+                  <option key={program.id} value={program.id}>{program.program_name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Child name</label>
+                <input
+                  type="text"
+                  value={childForm.child_name}
+                  onChange={event => setChildForm(form => ({ ...form, child_name: event.target.value }))}
+                  placeholder="Child full name"
+                  className="w-full"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Status</label>
+                <select
+                  value={childForm.status}
+                  onChange={event => setChildForm(form => ({ ...form, status: event.target.value }))}
+                  className="w-full"
+                >
+                  <option value="active">Active</option>
+                  <option value="paused">Paused</option>
+                  <option value="waitlist">Waitlist</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Guardian name</label>
+                <input
+                  type="text"
+                  value={childForm.guardian_name}
+                  onChange={event => setChildForm(form => ({ ...form, guardian_name: event.target.value }))}
+                  placeholder="Guardian or release contact"
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Guardian phone</label>
+                <input
+                  type="text"
+                  value={childForm.guardian_phone}
+                  onChange={event => setChildForm(form => ({ ...form, guardian_phone: event.target.value }))}
+                  placeholder="(555) 555-5555"
+                  className="w-full"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Pickup address</label>
+                <input
+                  type="text"
+                  value={childForm.pickup_address}
+                  onChange={event => setChildForm(form => ({ ...form, pickup_address: event.target.value }))}
+                  placeholder="Home or program pickup address"
+                  className="w-full"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Dropoff address</label>
+                <input
+                  type="text"
+                  value={childForm.dropoff_address}
+                  onChange={event => setChildForm(form => ({ ...form, dropoff_address: event.target.value }))}
+                  placeholder="Home or destination address"
+                  className="w-full"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Pickup days</label>
+              <div className="flex flex-wrap gap-2">
+                {PROGRAM_DAY_OPTIONS.map(day => {
+                  const checked = childForm.pickup_days.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setChildForm(form => ({ ...form, pickup_days: toggleArrayValue(form.pickup_days, day) }))}
+                      className="px-3 py-2 rounded-lg text-xs transition-all"
+                      style={{
+                        background: checked ? 'rgba(14,165,233,0.12)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${checked ? 'rgba(14,165,233,0.22)' : 'rgba(255,255,255,0.08)'}`,
+                        color: checked ? '#7dd3fc' : 'rgba(255,255,255,0.62)',
+                      }}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Mobility / ride notes</label>
+              <textarea
+                value={childForm.mobility_notes}
+                onChange={event => setChildForm(form => ({ ...form, mobility_notes: event.target.value }))}
+                placeholder="Booster, wheelchair, aide, behavioral notes, safe handoff instructions..."
+                className="w-full min-h-[88px]"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs mb-2 block" style={{ color: 'rgba(255,255,255,0.45)' }}>Internal notes</label>
+              <textarea
+                value={childForm.notes}
+                onChange={event => setChildForm(form => ({ ...form, notes: event.target.value }))}
+                placeholder="Anything dispatch needs to know before scheduling."
+                className="w-full min-h-[88px]"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={savingChild || !programs.length}
+              className="w-full px-4 py-3 rounded-xl text-sm font-600 flex items-center justify-center gap-2"
+              style={{ background: '#00e5a0', color: '#03120d', fontWeight: 700, opacity: savingChild || !programs.length ? 0.75 : 1 }}
+            >
+              <Plus className="w-4 h-4" />
+              {savingChild ? 'Saving roster...' : (editingChildId ? 'Update Child' : 'Add Child')}
+            </button>
+            {!programs.length && (
+              <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                Create a program first, then add children to the roster.
+              </p>
+            )}
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1396,7 +2577,11 @@ function CompanyAIControls({ company, setCompany }) {
         org_id: org.id,
         price_weight: schedulerPrefs.price_weight,
         proximity_weight: schedulerPrefs.proximity_weight,
+        traffic_weight: schedulerPrefs.traffic_weight,
+        zone_weight: schedulerPrefs.zone_weight,
+        traffic_buffer_pct: schedulerPrefs.traffic_buffer_pct,
         shared_rides_enabled: schedulerPrefs.shared_rides_enabled,
+        preschedule_from_work_shifts: schedulerPrefs.preschedule_from_work_shifts,
         auto_assign: form.ai_auto_assign_enabled,
         updated_at: new Date().toISOString(),
       };
@@ -1420,7 +2605,7 @@ function CompanyAIControls({ company, setCompany }) {
           chaining_weight: 8,
           shared_ride_bonus_weight: 6,
           buffer_mins: 15,
-          traffic_buffer_pct: 20,
+          traffic_buffer_pct: schedulerPrefs.traffic_buffer_pct,
           shift_hours: '7am-5pm',
           ...schedulerPayload,
         });
@@ -1464,6 +2649,11 @@ function CompanyAIControls({ company, setCompany }) {
       key: 'zone_weight',
       label: 'Preferred Zone Priority',
       description: 'Higher values give more weight to driver-selected work zones.',
+    },
+    {
+      key: 'traffic_weight',
+      label: 'Traffic Awareness Priority',
+      description: 'Higher values push the scheduler to avoid assignments that waste too much drive time in traffic.',
     },
   ];
 
@@ -1524,6 +2714,29 @@ function CompanyAIControls({ company, setCompany }) {
             />
           </div>
         ))}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <div>
+              <p className="text-xs font-600" style={{ fontWeight: 600 }}>Traffic Buffer</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                Add extra time to pickups and dropoffs so the AI fills the whole shift more safely.
+              </p>
+            </div>
+            <span className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>
+              {schedulerPrefs.traffic_buffer_pct}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={60}
+            step={5}
+            value={schedulerPrefs.traffic_buffer_pct}
+            onChange={e => setSchedulerPrefs(prev => ({ ...prev, traffic_buffer_pct: parseInt(e.target.value, 10) || 0 }))}
+            className="w-full"
+            style={{ accentColor: '#c9a84c' }}
+          />
+        </div>
         <div className="flex items-center justify-between rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div>
             <p className="text-sm font-600" style={{ fontWeight: 600 }}>Pre-Schedule From Driver Work Shifts</p>
@@ -1612,6 +2825,14 @@ function CompanyGuides() {
     {
       title: 'Marketplace Guide',
       copy: 'Marketplace shows imported provider trips for your company. Use the manual refresh button there to pull trips from Sentry, inspect incoming work, and move trips into dispatch. Rider tracking links are generated as soon as a driver accepts the trip, and riders can copy or share that live link.',
+    },
+    {
+      title: 'Parent Guide',
+      copy: 'Parents should enroll their child even before rides are needed so dispatch is ready later for appointments, programs, sports, and other one-off trips. They should also keep pickup details current, understand subscription billing, claim signup or referral incentives, and use the rider tracking link once a trip goes live. The full written guide lives in project/docs/parent-platform-guide.md.',
+    },
+    {
+      title: 'Daycare Provider Guide',
+      copy: 'Daycare and program providers should sign up as company admins on the platform first, then get all parents enrolled early so children stay dispatch-ready for current and future rides like appointments, programs, and sports. They also need to keep the roster accurate, explain subscriptions and incentive rules clearly, and send exact ride changes to dispatch early. The full written guide lives in project/docs/daycare-provider-guide.md.',
     },
     {
       title: 'Trip History Guide',
@@ -1843,6 +3064,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
   const tabs = [
     { path: previewMode ? `${basePath}` : (basePath || '/'), routePath: '/', label: previewMode ? 'Company Dashboard' : 'Dispatch', icon: LayoutGrid, exact: true },
     { path: `${basePath}/marketplace`, routePath: 'marketplace', label: 'Marketplace', icon: Layers },
+    { path: `${basePath}/programs`, routePath: 'programs', label: 'Programs', icon: ClipboardList },
     { path: `${basePath}/drivers`, routePath: 'drivers', label: 'Drivers', icon: Users },
     { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
     { path: `${basePath}/invoices`, routePath: 'invoices', label: 'Invoices', icon: FileText },
@@ -1863,7 +3085,12 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
       >
         <div
           className="flex flex-col w-72 h-full overflow-y-auto"
-          style={{ background: '#0d1117', borderRight: '1px solid rgba(255,255,255,0.08)' }}
+          style={{
+            background: '#0d1117',
+            borderRight: '1px solid rgba(255,255,255,0.08)',
+            paddingTop: 'calc(var(--safe-top) + 10px)',
+            paddingBottom: 'var(--safe-bottom)',
+          }}
           onClick={e => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-4 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
@@ -1947,9 +3174,9 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d', color: '#e5e7eb' }}>
+    <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d', color: '#e5e7eb', paddingTop: 'calc(var(--safe-top) + 6px)' }}>
       <div
-        className="flex flex-wrap items-center gap-2 px-4 py-2 flex-shrink-0"
+        className="grid grid-cols-1 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 px-4 py-2 flex-shrink-0"
         style={{
           background: 'linear-gradient(135deg, rgba(201,168,76,0.12), rgba(201,168,76,0.04))',
           borderBottom: '1px solid rgba(201,168,76,0.18)',
@@ -1961,19 +3188,19 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
         <StatusChip label={activeCompany?.ai_routing_enabled && !platformAiPaused ? 'AI routing on' : 'AI routing off'} color={activeCompany?.ai_routing_enabled && !platformAiPaused ? '#00e5a0' : '#ff4757'} />
       </div>
 
-      <header className="flex items-center justify-between px-4 h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
-        <div className="flex items-center gap-3">
+      <header className="flex items-center justify-between px-4 py-2 min-h-14 border-b flex-shrink-0 gap-3" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
+        <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(201,168,76,0.2), rgba(201,168,76,0.05))', border: '1px solid rgba(201,168,76,0.3)' }}>
             <span style={{ color: '#c9a84c', fontSize: 16, fontWeight: 800 }}>P</span>
           </div>
-          <div className="hidden sm:block">
-            <p style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700 }}>{companyDisplayName.toUpperCase()}</p>
+          <div className="min-w-0">
+            <p className="truncate" style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700 }}>{companyDisplayName.toUpperCase()}</p>
             <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>Company Admin Dashboard</p>
           </div>
           {previewMode && activeCompany?.id && (
             <Link
               to="/admin/companies"
-              className="hidden md:inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+              className="hidden lg:inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all"
               style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', color: '#c9a84c', textDecoration: 'none', fontWeight: 600 }}
             >
               Back To Companies
@@ -2002,12 +3229,14 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
           ))}
         </nav>
 
-        <div className="flex items-center gap-2">
-          <button onClick={() => supabase.auth.signOut()} className="w-8 h-8 flex items-center justify-center rounded-lg btn-ghost" title="Sign out">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => supabase.auth.signOut()} className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg btn-ghost text-xs font-semibold" title="Sign out">
             <LogOut className="w-4 h-4" />
+            Logout
           </button>
-          <button className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg btn-ghost" onClick={() => setMobileNav(true)} title="Open menu">
+          <button className="md:hidden flex items-center gap-1.5 px-3 py-2 rounded-lg btn-ghost text-xs font-semibold" onClick={() => setMobileNav(true)} title="Open menu">
             <Menu className="w-4 h-4" />
+            Menu
           </button>
         </div>
       </header>
@@ -2025,6 +3254,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
             }
           />
           <Route path="marketplace" element={renderCompanyModule('Marketplace', <CompanyMarketplace company={activeCompany} />)} />
+          <Route path="programs" element={renderCompanyModule('Programs', <CompanyPrograms company={activeCompany} />)} />
           <Route path="drivers" element={renderCompanyModule('Drivers', <CompanyDrivers company={activeCompany} />)} />
           <Route path="trips" element={renderCompanyModule('Trip History', <CompanyTrips company={activeCompany} />)} />
           <Route path="invoices" element={renderCompanyModule('Invoices', <CompanyInvoices company={activeCompany} />)} />
@@ -2049,7 +3279,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
 function StatusChip({ label, color }) {
   return (
     <span
-      className="text-[11px] px-2.5 py-1 rounded-full"
+      className="text-[11px] px-2.5 py-1 rounded-full leading-4 w-full sm:w-auto break-words"
       style={{
         background: `${color}15`,
         border: `1px solid ${color}33`,

@@ -26,7 +26,7 @@ export const STARTER_STACK = [
     name: 'PostHog',
     order: 2,
     category: 'analytics',
-    useFor: 'See where dispatchers, drivers, and companies drop off. Add session replay and feature flags later.',
+    useFor: 'See where admins, companies, and drivers drop off. Add session replay and feature flags later.',
     installFirst: true,
     installUrl: 'https://vercel.com/marketplace/posthog',
     waitOn: ['Feature flags for all features', 'Broad autocapture on every screen before your core UX is stable'],

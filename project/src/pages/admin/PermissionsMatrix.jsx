@@ -34,8 +34,40 @@ export default function PermissionsMatrix() {
           </p>
         </div>
 
-        <div className="rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <table className="w-full text-sm">
+        <div className="md:hidden space-y-3">
+          {RULES.map(([label, map]) => (
+            <div
+              key={label}
+              className="rounded-2xl p-4"
+              style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              <p className="text-sm font-600 mb-3" style={{ color: '#e5e7eb', fontWeight: 600 }}>{label}</p>
+              <div className="grid grid-cols-2 gap-2">
+                {ROLES.map(role => {
+                  const allowed = map[role];
+                  return (
+                    <div
+                      key={`${label}-${role}`}
+                      className="rounded-xl px-3 py-2 flex items-center justify-between gap-2"
+                      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+                    >
+                      <span style={{ color: 'rgba(255,255,255,0.55)', textTransform: 'capitalize', fontSize: 12 }}>{role}</span>
+                      {allowed ? (
+                        <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: '#00e5a0' }} />
+                      ) : (
+                        <XCircle className="w-4 h-4 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.18)' }} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden md:block rounded-2xl overflow-hidden" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
             <thead>
               <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
                 <th className="text-left px-4 py-3" style={{ color: 'rgba(255,255,255,0.45)' }}>Capability</th>
@@ -66,6 +98,7 @@ export default function PermissionsMatrix() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>

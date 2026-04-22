@@ -136,6 +136,26 @@ const BOT_DEFS = [
       { key: 'alert_admin', label: 'Escalate to admin for final review' },
     ],
   },
+  {
+    id: 'general_bot',
+    name: 'General',
+    role: 'Audit & Oversight Reviewer',
+    desc: 'Audits other bot activity, recommendations, and execution patterns to catch weak decisions, noisy automation, and unresolved risk.',
+    icon: Bot,
+    color: '#34d399',
+    defaultInterval: 30,
+    intervalUnit: 'minutes',
+    defaultAllowedActions: ['check_health', 'flag_anomalies', 'investigate_threat', 'alert_admin'],
+    defaultAutonomyLevel: 'suggest',
+    defaultRiskThreshold: 'medium',
+    defaultEnabled: false,
+    availableActions: [
+      { key: 'check_health', label: 'Audit workflow health' },
+      { key: 'flag_anomalies', label: 'Flag questionable bot behavior' },
+      { key: 'investigate_threat', label: 'Open deeper review on risky patterns' },
+      { key: 'alert_admin', label: 'Escalate audit findings to admin' },
+    ],
+  },
 ];
 
 const CORE_BOT_IDS = ['sentry_bot', 'scheduler_bot', 'health_bot', 'security_bot'];
@@ -560,6 +580,7 @@ export default function BotTeamPanel() {
     security_bot: false,
     codex_bot: false,
     claude_bot: false,
+    general_bot: false,
   });
   const [botIntervals, setBotIntervals] = useState({
     sentry_bot: 60,
@@ -568,6 +589,7 @@ export default function BotTeamPanel() {
     security_bot: 600,
     codex_bot: 900,
     claude_bot: 1200,
+    general_bot: 1800,
   });
   const [botConfigs, setBotConfigs] = useState({});
   const [schedulerConfig, setSchedulerConfig] = useState(null);
@@ -728,6 +750,7 @@ export default function BotTeamPanel() {
         security_bot: false,
         codex_bot: false,
         claude_bot: false,
+        general_bot: false,
       });
     } else {
       setBotEnabled({
@@ -737,6 +760,7 @@ export default function BotTeamPanel() {
         security_bot: data.security_bot_enabled ?? false,
         codex_bot: false,
         claude_bot: false,
+        general_bot: false,
       });
     }
   }
@@ -773,6 +797,7 @@ export default function BotTeamPanel() {
       ...prev,
       codex_bot: map.codex_bot ? !map.codex_bot.kill_switch : false,
       claude_bot: map.claude_bot ? !map.claude_bot.kill_switch : false,
+      general_bot: map.general_bot ? !map.general_bot.kill_switch : false,
     }));
   }
 
@@ -1097,6 +1122,7 @@ export default function BotTeamPanel() {
         security_bot: false,
         codex_bot: false,
         claude_bot: false,
+        general_bot: false,
       });
     }
     for (const def of BOT_DEFS) {
@@ -1501,12 +1527,104 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
     };
   }
 
+  async function runGeneralBot() {
+    const config = botConfigs['general_bot'] || getDefaultBotConfig(BOT_DEFS.find(b => b.id === 'general_bot'), resolvedOrgId);
+    if (globalKillSwitch || config?.kill_switch) return { summary: 'Kill switch active — bot halted' };
+
+    const aiSettings = await getAiSettings(resolvedOrgId);
+    const runtime = await getBotRuntimeSettings(resolvedOrgId, 'general_bot', 'openai', aiSettings);
+    if (!runtime?.api_key) {
+      return { summary: 'General is waiting for an API key before auditing can run.' };
+    }
+
+    const [{ data: recentActions }, { data: pendingRows }, { data: recentAiLogs }] = await Promise.all([
+      supabase
+        .from('bot_actions')
+        .select('bot_name, action_type, outcome, outcome_detail, risk_level, created_at')
+        .eq('org_id', resolvedOrgId)
+        .order('created_at', { ascending: false })
+        .limit(20),
+      supabase
+        .from('pending_bot_actions')
+        .select('id, bot_name, action_type, risk_level, trigger_reason, status')
+        .eq('org_id', resolvedOrgId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(12),
+      supabase
+        .from('ai_logs')
+        .select('context_type, model_used, created_at')
+        .eq('org_id', resolvedOrgId)
+        .order('created_at', { ascending: false })
+        .limit(12),
+    ]);
+
+    const snapshot = {
+      bot_actions: (recentActions || []).map(row => ({
+        bot_name: row.bot_name,
+        action_type: row.action_type,
+        outcome: row.outcome,
+        risk_level: row.risk_level,
+        detail: row.outcome_detail,
+      })),
+      pending_actions: (pendingRows || []).map(row => ({
+        bot_name: row.bot_name,
+        action_type: row.action_type,
+        risk_level: row.risk_level,
+        reason: row.trigger_reason,
+      })),
+      ai_reviews: (recentAiLogs || []).map(row => ({
+        context_type: row.context_type,
+        model_used: row.model_used,
+        created_at: row.created_at,
+      })),
+      live_snapshot: {
+        online_drivers: drivers.filter(driver => ['online', 'on_trip'].includes(driver.status)).length,
+        available_trips: trips.filter(trip => trip.status === 'available').length,
+        active_assignments: assignments.filter(assignment => !['completed', 'cancelled', 'rejected'].includes(assignment.status)).length,
+      },
+    };
+
+    const prompt = `Audit snapshot:\n${JSON.stringify(snapshot, null, 2)}\n\nReturn strict JSON with:
+{
+  "summary": "short audit result",
+  "audit_findings": ["..."],
+  "recommended_actions": [
+    {
+      "action_type": "check_health|flag_anomalies|investigate_threat|alert_admin",
+      "reason": "why",
+      "risk_level": "low|medium|high",
+      "payload": {}
+    }
+  ]
+}
+Focus on auditing the quality and safety of recent bot work. Prefer escalation over action if confidence is not high.`;
+
+    const result = await requestAIStructuredPlan(runtime, {
+      systemPrompt: 'You are GeneralBot, an audit and oversight reviewer. Audit the work of other bots, spot weak or noisy recommendations, and return strict JSON only.',
+      userPrompt: prompt,
+    });
+
+    if (!result?.json) {
+      return { summary: 'General received an unreadable model response', error: 'AI response was not valid JSON' };
+    }
+
+    await logAIReview('general_bot', 'GeneralBot', prompt, result.text, result.model, 'general_audit');
+    const handled = await processBotRecommendations('general_bot', 'GeneralBot', config, result.json.recommended_actions || []);
+
+    return {
+      summary: `${result.json.summary || 'General completed an audit'}${handled.executed.length ? ` · Executed: ${handled.executed.join(' | ')}` : ''}${handled.escalated.length ? ` · Escalated: ${handled.escalated.join(', ')}` : ''}`,
+      error: null,
+    };
+  }
+
   const sentryBotState = useBot('sentry_bot', botIntervals.sentry_bot, botEnabled.sentry_bot && !globalKillSwitch, runSentryBot);
   const schedulerBotState = useBot('scheduler_bot', botIntervals.scheduler_bot, botEnabled.scheduler_bot && !globalKillSwitch, runSchedulerBot);
   const healthBotState = useBot('health_bot', botIntervals.health_bot, botEnabled.health_bot && !globalKillSwitch, runHealthBot);
   const securityBotState = useBot('security_bot', botIntervals.security_bot, botEnabled.security_bot && !globalKillSwitch, runSecurityBot);
   const codexBotState = useBot('codex_bot', botIntervals.codex_bot, botEnabled.codex_bot && !globalKillSwitch, runCodexBot);
   const claudeBotState = useBot('claude_bot', botIntervals.claude_bot, botEnabled.claude_bot && !globalKillSwitch, runClaudeBot);
+  const generalBotState = useBot('general_bot', botIntervals.general_bot, botEnabled.general_bot && !globalKillSwitch, runGeneralBot);
 
   const botStates = {
     sentry_bot: sentryBotState,
@@ -1515,6 +1633,7 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
     security_bot: securityBotState,
     codex_bot: codexBotState,
     claude_bot: claudeBotState,
+    general_bot: generalBotState,
   };
 
   const activeBots = Object.values(botEnabled).filter(Boolean).length;
@@ -1529,6 +1648,7 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
       security_bot: on,
       codex_bot: false,
       claude_bot: false,
+      general_bot: false,
     });
     await persistAiSettings({
       sentry_bot_enabled: on,
@@ -1536,7 +1656,7 @@ Be conservative. Only recommend mitigation for low/medium threats that already h
       health_bot_enabled: on,
       security_bot_enabled: on,
     });
-    for (const botId of ['codex_bot', 'claude_bot']) {
+    for (const botId of ['codex_bot', 'claude_bot', 'general_bot']) {
       await saveConfig(botId, {
         ...(botConfigs[botId] || getDefaultBotConfig(BOT_DEFS.find(bot => bot.id === botId), resolvedOrgId)),
         kill_switch: true,

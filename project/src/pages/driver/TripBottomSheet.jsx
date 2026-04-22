@@ -4,21 +4,34 @@ import { Navigation, Users, ExternalLink, Zap, CheckCircle, AlertTriangle, MoreV
 export default function TripBottomSheet({
   state, trip, open, onToggle,
   onRequestRides, onAccept, onReject,
-  onArrive, onConfirmPickup, onNoShow, onComplete,
+  onStartRoute, onArrive, onConfirmPickup, onNoShow, onComplete,
   driverData, earnings, ridePreferences, onToggleShortTrips, onTogglePriority, onToggleSharedRide,
-  countdown, pickupArrived, waitRemaining, waitTargetMins,
+  countdown, pickupArrived, waitRemaining, waitTargetMins, sosButton,
 }) {
   const [confirmingComplete, setConfirmingComplete] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [showTripMenu, setShowTripMenu] = useState(false);
   const [showIssueForm, setShowIssueForm] = useState(false);
   const [issueNote, setIssueNote] = useState('');
+  const [collectedFare, setCollectedFare] = useState('');
+  const [markNextDay, setMarkNextDay] = useState(false);
 
   async function handleComplete() {
+    const trimmedFare = String(collectedFare || '').trim();
+    const fareValue = trimmedFare === '' ? null : Number(trimmedFare);
+
     setCompleting(true);
-    await onComplete();
+    await onComplete({
+      collectedFare:
+        trimmedFare === '' || Number.isNaN(fareValue)
+          ? null
+          : fareValue,
+      isNextDay: Boolean(markNextDay),
+    });
     setCompleting(false);
     setConfirmingComplete(false);
+    setCollectedFare('');
+    setMarkNextDay(false);
   }
 
   const destAddr = state === 'navigation' ? trip?.puAddress : trip?.doAddress;
@@ -52,6 +65,12 @@ export default function TripBottomSheet({
         </button>
 
         <div className="px-4 pb-8">
+          {sosButton ? (
+            <div className="flex justify-end mb-3">
+              {sosButton}
+            </div>
+          ) : null}
+
           {state === 'waiting' && (
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-center gap-3">
@@ -443,17 +462,34 @@ export default function TripBottomSheet({
                     </button>
                   </div>
                 ) : (
-                  <button
-                    onClick={onArrive}
-                    className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
-                    style={{
-                      background: 'linear-gradient(135deg, #00e5a0, #00c88c)',
-                      color: '#07090d',
-                      fontWeight: 700,
-                    }}
-                  >
-                    <CheckCircle className="w-5 h-5" /> Arrived At Pickup
-                  </button>
+                  <div className="space-y-3">
+                    {!trip?.enRouteAt && (
+                      <button
+                        onClick={onStartRoute}
+                        className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
+                        style={{
+                          background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                          color: '#ffffff',
+                          fontWeight: 700,
+                        }}
+                      >
+                        <Navigation className="w-5 h-5" /> Start Drive To Pickup
+                      </button>
+                    )}
+                    <button
+                      onClick={onArrive}
+                      disabled={!trip?.enRouteAt}
+                      className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
+                      style={{
+                        background: trip?.enRouteAt ? 'linear-gradient(135deg, #00e5a0, #00c88c)' : 'rgba(255,255,255,0.05)',
+                        color: trip?.enRouteAt ? '#07090d' : 'rgba(255,255,255,0.35)',
+                        border: trip?.enRouteAt ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                        fontWeight: 700,
+                      }}
+                    >
+                      <CheckCircle className="w-5 h-5" /> Arrived At Pickup
+                    </button>
+                  </div>
                 )
               )}
 
@@ -482,10 +518,63 @@ export default function TripBottomSheet({
                       Has the passenger been dropped off at:
                     </p>
                     <p className="text-sm font-600 mb-3" style={{ color: '#0ea5e9', fontWeight: 600 }}>{trip.doAddress || 'Dropoff location'}</p>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                          Collected Fare
+                        </label>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          value={collectedFare}
+                          onChange={(event) => setCollectedFare(event.target.value)}
+                          placeholder="0.00"
+                          className="w-full rounded-xl px-3 py-2.5 text-sm"
+                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#e5e7eb', outline: 'none' }}
+                        />
+                        <p className="mt-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                          Leave blank unless this trip requires fare collection for Sentry.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setMarkNextDay(value => !value)}
+                        className="w-full rounded-xl px-3 py-3 flex items-center justify-between text-left"
+                        style={{
+                          background: markNextDay ? 'rgba(201,168,76,0.12)' : 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${markNextDay ? 'rgba(201,168,76,0.3)' : 'rgba(255,255,255,0.08)'}`,
+                        }}
+                      >
+                        <div>
+                          <p className="text-sm font-700" style={{ color: markNextDay ? '#c9a84c' : '#e5e7eb', fontWeight: 700 }}>
+                            NEXT DAY
+                          </p>
+                          <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                            Mark this trip as using the next-day completion flow.
+                          </p>
+                        </div>
+                        <div
+                          className="w-11 h-6 rounded-full relative transition-all"
+                          style={{ background: markNextDay ? '#c9a84c' : 'rgba(255,255,255,0.14)' }}
+                        >
+                          <div
+                            className="absolute top-0.5 w-5 h-5 rounded-full transition-all"
+                            style={{ left: markNextDay ? 22 : 2, background: markNextDay ? '#07090d' : '#ffffff' }}
+                          />
+                        </div>
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
                     <button
-                      onClick={() => setConfirmingComplete(false)}
+                      onClick={() => {
+                        setConfirmingComplete(false);
+                        setCollectedFare('');
+                        setMarkNextDay(false);
+                      }}
                       disabled={completing}
                       className="py-3.5 text-sm font-600"
                       style={{

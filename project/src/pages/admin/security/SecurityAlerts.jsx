@@ -1,17 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Bell, CheckCircle, AlertTriangle, Filter, Plus } from 'lucide-react';
 import { useSecurity } from '../../../context/SecurityContext';
 
 const SEV_COLOR = { critical: '#ff4757', high: '#f59e0b', medium: '#0ea5e9', low: '#00e5a0' };
 
-export default function SecurityAlerts() {
+export default function SecurityAlerts({ initialFilter = 'all' }) {
   const { alerts, acknowledgeAlert, ingestEvent } = useSecurity();
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(initialFilter);
   const [showIngest, setShowIngest] = useState(false);
   const [eventType, setEventType] = useState('');
   const [desc, setDesc] = useState('');
   const [sev, setSev] = useState('medium');
   const [ingesting, setIngesting] = useState(false);
+
+  useEffect(() => {
+    setFilter(initialFilter);
+  }, [initialFilter]);
 
   const filtered = alerts.filter(a => {
     if (filter === 'unacked') return !a.acknowledged;

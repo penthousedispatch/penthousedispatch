@@ -30,8 +30,10 @@ const EMPTY_FORM = {
   celebration_message: '',
 };
 
-export default function IncentivesPanel() {
+export default function IncentivesPanel({ orgIdOverride = null, driversOverride = null }) {
   const { org, drivers } = useApp();
+  const scopedOrgId = orgIdOverride || org?.id || null;
+  const scopedDrivers = Array.isArray(driversOverride) ? driversOverride : drivers;
   const [incentives, setIncentives] = useState([]);
   const [enrollments, setEnrollments] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -43,8 +45,15 @@ export default function IncentivesPanel() {
   const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
-    if (org?.id) loadAll();
-  }, [org?.id, drivers.length]);
+    if (scopedOrgId) {
+      loadAll();
+      return;
+    }
+
+    setIncentives([]);
+    setEnrollments([]);
+    setLoading(false);
+  }, [scopedOrgId, scopedDrivers.length]);
 
   async function ensureDefaultIncentives(orgId) {
     if (!orgId) return;
@@ -144,9 +153,9 @@ export default function IncentivesPanel() {
         .select()
         .maybeSingle();
 
-      if (incentive?.id && drivers.length > 0) {
+      if (incentive?.id && scopedDrivers.length > 0) {
         await supabase.from('driver_incentive_enrollments').upsert(
-          drivers.map(driver => ({
+          scopedDrivers.map(driver => ({
             incentive_id: incentive.id,
             driver_id: driver.id,
             current_progress: 0,
@@ -160,10 +169,10 @@ export default function IncentivesPanel() {
 
   async function loadAll() {
     setLoading(true);
-    await ensureDefaultIncentives(org?.id);
+    await ensureDefaultIncentives(scopedOrgId);
     const [{ data: inv, error: invErr }, { data: enr, error: enrErr }] = await Promise.all([
-      supabase.from('incentives').select('*').eq('org_id', org?.id).order('created_at', { ascending: false }),
-      supabase.from('driver_incentive_enrollments').select('*, incentives!inner(org_id)').eq('incentives.org_id', org?.id),
+      supabase.from('incentives').select('*').eq('org_id', scopedOrgId).order('created_at', { ascending: false }),
+      supabase.from('driver_incentive_enrollments').select('*, incentives!inner(org_id)').eq('incentives.org_id', scopedOrgId),
     ]);
     if (invErr) handleSupabaseError(invErr, 'IncentivesPanel:loadAll:incentives', { silent: true });
     if (enrErr) handleSupabaseError(enrErr, 'IncentivesPanel:loadAll:enrollments', { silent: true });
@@ -177,7 +186,7 @@ export default function IncentivesPanel() {
     setSaveError('');
     setSaving(true);
 
-    let orgId = org?.id;
+    let orgId = scopedOrgId;
     if (!orgId) {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
@@ -219,8 +228,8 @@ export default function IncentivesPanel() {
         setSaving(false);
         return;
       }
-      if (drivers.length > 0) {
-        const enrollPayload = drivers.map(d => ({
+      if (scopedDrivers.length > 0) {
+        const enrollPayload = scopedDrivers.map(d => ({
           incentive_id: newInc.id,
           driver_id: d.id,
           current_progress: 0,
@@ -286,6 +295,17 @@ export default function IncentivesPanel() {
     setShowForm(true);
   }
 
+  const getEnrollmentsForIncentive = (incId) => {
+    return enrollments.filter(e => e.incentive_id === incId).map(e => ({
+      ...e,
+      driver: scopedDrivers.find(d => d.id === e.driver_id),
+    })).filter(e => e.driver);
+  };
+
+  const getProgress = (enrollment, goalValue) => Math.min(100, (enrollment.current_progress / goalValue) * 100);
+
+  const goalTypeMeta = (type) => GOAL_TYPES.find(g => g.id === type) || GOAL_TYPES[0];
+
   const activeIncentives = incentives.filter(i => i.is_active);
   const pastIncentives = incentives.filter(i => !i.is_active);
   const enrolledDriverIds = new Set(enrollments.map(enrollment => enrollment.driver_id).filter(Boolean));
@@ -294,17 +314,6 @@ export default function IncentivesPanel() {
     const activeEnrollmentCount = getEnrollmentsForIncentive(incentive.id).length;
     return sum + (parseFloat(incentive.bonus_amount || 0) * Math.max(1, activeEnrollmentCount));
   }, 0);
-
-  const getEnrollmentsForIncentive = (incId) => {
-    return enrollments.filter(e => e.incentive_id === incId).map(e => ({
-      ...e,
-      driver: drivers.find(d => d.id === e.driver_id),
-    })).filter(e => e.driver);
-  };
-
-  const getProgress = (enrollment, goalValue) => Math.min(100, (enrollment.current_progress / goalValue) * 100);
-
-  const goalTypeMeta = (type) => GOAL_TYPES.find(g => g.id === type) || GOAL_TYPES[0];
 
   return (
     <div className="flex h-full overflow-hidden" style={{ background: '#07090d' }}>

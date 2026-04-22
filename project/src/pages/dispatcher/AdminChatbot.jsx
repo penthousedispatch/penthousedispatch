@@ -7,6 +7,8 @@ import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import { callAI } from '../../utils/aiMotivation';
 import { runAutoScheduler } from '../../utils/autoScheduler';
+import { resolveOrgIdForAdmin } from '../../lib/resolveOrgId';
+import { logFailure, toastError } from '../../utils/errorHandler';
 
 const QUICK_ACTIONS = [
   { label: 'Fleet status', msg: 'Give me a current fleet status summary. How many drivers are online, on trips, and offline?' },
@@ -44,7 +46,7 @@ Revenue model:
 - Driver pay: $35/hr
 - Margin: $25/hr per driver
 
-Your role: Help the dispatcher make smart decisions. You can:
+Your role: Help the dispatch team make smart decisions. You can:
 1. Summarize fleet and trip status
 2. Suggest which drivers should get which trips (based on proximity, pay, mileage)
 3. Identify issues (idle drivers, unassigned high-value trips)
@@ -55,7 +57,7 @@ Be concise, data-driven, and action-oriented. Use bullet points for lists. Keep 
 }
 
 export default function AdminChatbot() {
-  const { org, drivers, trips, assignments, loadAssignments, loadTrips } = useApp();
+  const { org, user, isPlatformOwner, role, drivers, trips, assignments, loadAssignments, loadTrips } = useApp();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -63,26 +65,57 @@ export default function AdminChatbot() {
   const [schedulerConfig, setSchedulerConfig] = useState(null);
   const [running, setRunning] = useState(false);
   const [lastRunResult, setLastRunResult] = useState(null);
+  const [resolvedOrgId, setResolvedOrgId] = useState(org?.id || null);
+  const [orgError, setOrgError] = useState('');
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (org?.id) {
+    if (resolvedOrgId) {
       loadHistory();
       loadAISettings();
       loadSchedulerConfig();
+    } else {
+      setMessages([{
+        role: 'assistant',
+        content: 'Org context is not ready yet. Open Ops Center once, then return here and click refresh.',
+        id: 'org-missing',
+      }]);
     }
-  }, [org?.id]);
+  }, [resolvedOrgId]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function resolveOrg() {
+      setOrgError('');
+      const nextOrgId = await resolveOrgIdForAdmin({
+        orgId: org?.id || null,
+        user,
+        isPlatformOwner,
+        role,
+      });
+      if (!mounted) return;
+      setResolvedOrgId(nextOrgId);
+      if (!nextOrgId) {
+        setOrgError('Unable to resolve organization workspace for chatbot persistence.');
+      }
+    }
+    resolveOrg();
+    return () => {
+      mounted = false;
+    };
+  }, [org?.id, user?.id, isPlatformOwner, role]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   async function loadHistory() {
+    if (!resolvedOrgId) return;
     const { data } = await supabase
       .from('admin_chat_messages')
       .select('*')
-      .eq('org_id', org.id)
+      .eq('org_id', resolvedOrgId)
       .order('created_at', { ascending: true })
       .limit(100);
     if (data?.length > 0) {
@@ -97,19 +130,21 @@ export default function AdminChatbot() {
   }
 
   async function loadAISettings() {
-    const { data } = await supabase.from('ai_settings').select('*').eq('org_id', org.id).maybeSingle();
+    if (!resolvedOrgId) return;
+    const { data } = await supabase.from('ai_settings').select('*').eq('org_id', resolvedOrgId).maybeSingle();
     setAiSettings(data);
   }
 
   async function loadSchedulerConfig() {
-    const { data } = await supabase.from('auto_scheduler_config').select('*').eq('org_id', org.id).maybeSingle();
+    if (!resolvedOrgId) return;
+    const { data } = await supabase.from('auto_scheduler_config').select('*').eq('org_id', resolvedOrgId).maybeSingle();
     setSchedulerConfig(data);
   }
 
   async function saveMessage(role, content, metadata = {}) {
-    if (!org?.id) return;
+    if (!resolvedOrgId) return;
     await supabase.from('admin_chat_messages').insert({
-      org_id: org.id,
+      org_id: resolvedOrgId,
       role,
       content,
       metadata,
@@ -118,49 +153,59 @@ export default function AdminChatbot() {
 
   async function handleSend(overrideMsg) {
     const text = (overrideMsg ?? input).trim();
-    if (!text || sending) return;
+    if (!text || sending || !resolvedOrgId) return;
 
     const userMsg = { role: 'user', content: text, id: Date.now().toString() };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setSending(true);
+    try {
+      await saveMessage('user', text);
 
-    await saveMessage('user', text);
+      const isSchedulerCommand = /run.*(scheduler|auto|assign|dispatch)|schedule.*now|auto.assign/i.test(text);
 
-    const isSchedulerCommand = /run.*(scheduler|auto|assign|dispatch)|schedule.*now|auto.assign/i.test(text);
+      if (isSchedulerCommand) {
+        const runResult = await triggerScheduler(true);
+        const assistantContent = buildSchedulerResponseText(runResult);
+        const assistantMsg = { role: 'assistant', content: assistantContent, id: Date.now().toString() + '_r', metadata: { scheduler_run: true, result: runResult } };
+        setMessages(prev => [...prev, assistantMsg]);
+        await saveMessage('assistant', assistantContent, { scheduler_run: true });
+        return;
+      }
 
-    if (isSchedulerCommand) {
-      const runResult = await triggerScheduler(true);
-      const assistantContent = buildSchedulerResponseText(runResult);
-      const assistantMsg = { role: 'assistant', content: assistantContent, id: Date.now().toString() + '_r', metadata: { scheduler_run: true, result: runResult } };
+      const systemPrompt = buildSystemPrompt(drivers, trips, assignments);
+      const history = messages.slice(-10).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+
+      let responseText = '';
+
+      if (aiSettings && aiSettings.provider !== 'disabled' && aiSettings.api_key) {
+        const result = await callAI(aiSettings, [
+          { role: 'system', content: systemPrompt },
+          ...history,
+          { role: 'user', content: text },
+        ]);
+        responseText = result?.text || '';
+      }
+
+      if (!responseText) {
+        responseText = generateFallbackResponse(text, drivers, trips, assignments);
+      }
+
+      const assistantMsg = { role: 'assistant', content: responseText, id: Date.now().toString() + '_r' };
       setMessages(prev => [...prev, assistantMsg]);
-      await saveMessage('assistant', assistantContent, { scheduler_run: true });
+      await saveMessage('assistant', responseText);
+    } catch (error) {
+      logFailure('AdminChatbot:handleSend', error);
+      toastError(error?.message || 'Chat request failed.');
+      const assistantMsg = {
+        role: 'assistant',
+        content: 'The chatbot hit an error while processing that request. Try again or refresh this page.',
+        id: Date.now().toString() + '_err',
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+    } finally {
       setSending(false);
-      return;
     }
-
-    const systemPrompt = buildSystemPrompt(drivers, trips, assignments);
-    const history = messages.slice(-10).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
-
-    let responseText = '';
-
-    if (aiSettings && aiSettings.provider !== 'disabled' && aiSettings.api_key) {
-      const result = await callAI(aiSettings, [
-        { role: 'system', content: systemPrompt },
-        ...history,
-        { role: 'user', content: text },
-      ]);
-      responseText = result?.text || '';
-    }
-
-    if (!responseText) {
-      responseText = generateFallbackResponse(text, drivers, trips, assignments);
-    }
-
-    const assistantMsg = { role: 'assistant', content: responseText, id: Date.now().toString() + '_r' };
-    setMessages(prev => [...prev, assistantMsg]);
-    await saveMessage('assistant', responseText);
-    setSending(false);
   }
 
   async function triggerScheduler(fromChat = false) {
@@ -177,21 +222,28 @@ export default function AdminChatbot() {
       shift_hours: '7am-5pm',
     };
     setRunning(true);
-    const result = await runAutoScheduler({
-      drivers,
-      trips,
-      assignments,
-      config: cfg,
-      orgId: org?.id,
-      dryRun: !cfg.auto_assign,
-    });
-    setLastRunResult(result);
-    if (cfg.auto_assign) {
-      await loadAssignments();
-      await loadTrips();
+    try {
+      const result = await runAutoScheduler({
+        drivers,
+        trips,
+        assignments,
+        config: cfg,
+        orgId: resolvedOrgId,
+        dryRun: !cfg.auto_assign,
+      });
+      setLastRunResult(result);
+      if (cfg.auto_assign) {
+        await loadAssignments();
+        await loadTrips();
+      }
+      return result;
+    } catch (error) {
+      logFailure('AdminChatbot:triggerScheduler', error);
+      toastError(error?.message || 'Scheduler run failed.');
+      return null;
+    } finally {
+      setRunning(false);
     }
-    setRunning(false);
-    return result;
   }
 
   function buildSchedulerResponseText(result) {
@@ -249,8 +301,8 @@ export default function AdminChatbot() {
   }
 
   async function clearHistory() {
-    if (!org?.id) return;
-    await supabase.from('admin_chat_messages').delete().eq('org_id', org.id);
+    if (!resolvedOrgId) return;
+    await supabase.from('admin_chat_messages').delete().eq('org_id', resolvedOrgId);
     setMessages([{
       role: 'assistant',
       content: 'Chat cleared. How can I help you?',
@@ -294,15 +346,16 @@ export default function AdminChatbot() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => triggerScheduler(false)}
-              disabled={running}
+              disabled={running || !resolvedOrgId}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-600 transition-all"
-              style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0', fontWeight: 600 }}
+              style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0', fontWeight: 600, opacity: resolvedOrgId ? 1 : 0.45 }}
             >
               <Zap className={`w-3 h-3 ${running ? 'animate-pulse' : ''}`} />
               {running ? 'Running...' : 'Run Scheduler'}
             </button>
             <button
               onClick={clearHistory}
+              disabled={!resolvedOrgId}
               className="w-8 h-8 flex items-center justify-center rounded-xl btn-ghost"
               title="Clear chat"
             >
@@ -312,16 +365,22 @@ export default function AdminChatbot() {
         </div>
 
         <div className="px-4 py-2 flex gap-2 flex-wrap flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+          {orgError ? (
+            <div className="w-full rounded-xl px-3 py-2 text-xs" style={{ background: 'rgba(255,71,87,0.08)', border: '1px solid rgba(255,71,87,0.2)', color: '#ff4757' }}>
+              {orgError}
+            </div>
+          ) : null}
           {QUICK_ACTIONS.map(a => (
             <button
               key={a.label}
               onClick={() => handleSend(a.msg)}
-              disabled={sending}
+              disabled={sending || !resolvedOrgId}
               className="px-3 py-1 rounded-full text-xs transition-all"
               style={{
                 background: 'rgba(201,168,76,0.06)',
                 border: '1px solid rgba(201,168,76,0.15)',
                 color: 'rgba(201,168,76,0.8)',
+                opacity: resolvedOrgId ? 1 : 0.45,
               }}
             >
               {a.label}
@@ -440,11 +499,11 @@ export default function AdminChatbot() {
             />
             <button
               onClick={() => handleSend()}
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || sending || !resolvedOrgId}
               className="w-8 h-8 flex items-center justify-center rounded-xl flex-shrink-0 transition-all"
               style={{
-                background: input.trim() && !sending ? '#c9a84c' : 'rgba(255,255,255,0.05)',
-                color: input.trim() && !sending ? '#07090d' : 'rgba(255,255,255,0.2)',
+                background: input.trim() && !sending && resolvedOrgId ? '#c9a84c' : 'rgba(255,255,255,0.05)',
+                color: input.trim() && !sending && resolvedOrgId ? '#07090d' : 'rgba(255,255,255,0.2)',
               }}
             >
               <Send className="w-4 h-4" />

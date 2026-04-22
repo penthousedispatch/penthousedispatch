@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Shield, AlertTriangle, Search, List, Target, Bell } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { SecurityProvider, useSecurity } from '../../context/SecurityContext';
 import SecurityDashboard from './security/SecurityDashboard';
 import ThreatsList from './security/ThreatsList';
@@ -17,12 +18,28 @@ const TABS = [
 ];
 
 function SecurityContent() {
-  const [tab, setTab] = useState('dashboard');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const initialTab = TABS.some(t => t.id === requestedTab) ? requestedTab : 'dashboard';
+  const [tab, setTab] = useState(initialTab);
   const [viewThreat, setViewThreat] = useState(null);
   const { unacknowledgedAlerts, stats } = useSecurity();
 
+  useEffect(() => {
+    if (requestedTab && TABS.some(t => t.id === requestedTab) && requestedTab !== tab) {
+      setTab(requestedTab);
+    }
+  }, [requestedTab, tab]);
+
   function handleViewThreat(t) {
     setViewThreat(t);
+  }
+
+  function handleTabChange(nextTab) {
+    setTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', nextTab);
+    setSearchParams(next, { replace: true });
   }
 
   return (
@@ -54,7 +71,7 @@ function SecurityContent() {
           return (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => handleTabChange(t.id)}
               className="flex items-center gap-1.5 px-3 py-3 text-xs font-500 relative transition-colors"
               style={{
                 color: tab === t.id ? '#e5e7eb' : 'rgba(255,255,255,0.4)',
@@ -78,7 +95,7 @@ function SecurityContent() {
       <div className="flex-1 overflow-y-auto p-5">
         {tab === 'dashboard' && <SecurityDashboard onViewThreat={handleViewThreat} />}
         {tab === 'threats' && <ThreatsList onViewThreat={handleViewThreat} />}
-        {tab === 'alerts' && <SecurityAlerts />}
+        {tab === 'alerts' && <SecurityAlerts initialFilter={searchParams.get('filter') || 'all'} />}
         {tab === 'research' && <ThreatResearch />}
         {tab === 'mitre' && <MITREViewer />}
       </div>

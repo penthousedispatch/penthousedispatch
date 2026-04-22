@@ -3,6 +3,17 @@ import { supabase } from '../lib/supabase';
 import { Link, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, Lock, Mail, User, Building2, Database } from 'lucide-react';
 import { getAuthRedirectUrl } from '../lib/mobileRuntime';
+import { APP_VARIANT, APP_VARIANT_META, allowsSelfSignup, getSignupRolesForVariant, isRiderVariant } from '../lib/appVariant';
+import { COMPANY_SEGMENTS, DEFAULT_COMPANY_SEGMENT, normalizeCompanySegment } from '../lib/companyType';
+
+const LIVE_COMPANY_SIGNUP_SEGMENTS = ['transport_company'];
+
+function isApprovedCompanyRecord(company) {
+  return Boolean(
+    company?.is_approved ||
+    String(company?.onboarding_status || '').toLowerCase() === 'approved'
+  );
+}
 
 export default function AuthPage() {
   const location = useLocation();
@@ -12,11 +23,14 @@ export default function AuthPage() {
   const [name, setName] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [signupRole, setSignupRole] = useState('company');
+  const [companySegment, setCompanySegment] = useState(DEFAULT_COMPANY_SEGMENT);
   const [importSource, setImportSource] = useState('sentry');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
+  const signupRoles = getSignupRolesForVariant();
+  const signupEnabled = allowsSelfSignup();
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -35,6 +49,52 @@ export default function AuthPage() {
     }
   }, [location.search]);
 
+  useEffect(() => {
+    if (!signupEnabled) {
+      setMode('login');
+      return;
+    }
+
+    if (!signupRoles.includes(signupRole)) {
+      setSignupRole(signupRoles[0] || 'company');
+    }
+  }, [signupEnabled, signupRole, signupRoles]);
+
+  async function findApprovedCompanyCandidate(cleanEmail, cleanCompanyName) {
+    const lookups = [];
+
+    if (cleanEmail) {
+      lookups.push(
+        supabase
+          .from('companies')
+          .select('*')
+          .ilike('billing_contact_email', cleanEmail)
+          .order('updated_at', { ascending: false })
+          .limit(5)
+      );
+    }
+
+    if (cleanCompanyName) {
+      lookups.push(
+        supabase
+          .from('companies')
+          .select('*')
+          .ilike('company_name', cleanCompanyName)
+          .order('updated_at', { ascending: false })
+          .limit(5)
+      );
+    }
+
+    for (const lookup of lookups) {
+      const { data, error: lookupError } = await lookup;
+      if (lookupError) throw lookupError;
+      const approvedMatch = (data || []).find(isApprovedCompanyRecord);
+      if (approvedMatch?.id) return approvedMatch;
+    }
+
+    return null;
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
@@ -49,6 +109,26 @@ export default function AuthPage() {
       const cleanName = name.trim();
       const cleanCompanyName = companyName.trim();
       const nextRole = signupRole;
+      let approvedCompany = null;
+
+      if (nextRole === 'company') {
+        try {
+          approvedCompany = await findApprovedCompanyCandidate(cleanEmail, cleanCompanyName);
+        } catch (lookupError) {
+          setError(lookupError.message || 'Failed to check existing company approval.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (approvedCompany?.owner_user_id) {
+        setMode('login');
+        setPassword('');
+        setInfo(`${approvedCompany.company_name || 'This company'} is already approved and linked to an account. Sign in instead, or use Forgot password if needed.`);
+        setLoading(false);
+        return;
+      }
+
       const { data, error: err } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -58,6 +138,7 @@ export default function AuthPage() {
             full_name: cleanName,
             role: nextRole,
             company_name: cleanCompanyName,
+            company_segment: normalizeCompanySegment(companySegment),
             import_source: importSource,
           },
         },
@@ -77,26 +158,71 @@ export default function AuthPage() {
           setLoading(false);
           return;
         }
+
+        if (nextRole === 'company' && approvedCompany?.id) {
+          const now = new Date().toISOString();
+          const { error: companyLinkError } = await supabase
+            .from('companies')
+            .update({
+              owner_user_id: data.user.id,
+              billing_contact_name: approvedCompany.billing_contact_name || cleanName,
+              billing_contact_email: approvedCompany.billing_contact_email || cleanEmail,
+              updated_at: now,
+            })
+            .eq('id', approvedCompany.id)
+            .is('owner_user_id', null);
+
+          if (companyLinkError) {
+            setError(companyLinkError.message || 'Your account was created, but linking the approved company failed.');
+            setLoading(false);
+            return;
+          }
+
+          const { error: profileCompanyError } = await supabase
+            .from('profiles')
+            .update({
+              role: 'company',
+              company_id: approvedCompany.id,
+              updated_at: now,
+            })
+            .eq('id', data.user.id);
+
+          if (profileCompanyError) {
+            setError(profileCompanyError.message || 'Your account was created, but linking your company profile failed.');
+            setLoading(false);
+            return;
+          }
+        }
       }
 
       if (nextRole === 'company') {
         localStorage.setItem('pd_company_signup_seed', JSON.stringify({
-          company_name: cleanCompanyName,
-          billing_contact_name: cleanName,
-          billing_contact_email: cleanEmail,
+          company_name: approvedCompany?.company_name || cleanCompanyName,
+          company_segment: normalizeCompanySegment(companySegment),
+          billing_contact_name: approvedCompany?.billing_contact_name || cleanName,
+          billing_contact_email: approvedCompany?.billing_contact_email || cleanEmail,
           import_source: importSource,
+          company_id: approvedCompany?.id || null,
         }));
       }
 
       if (data.user && !data.session) {
-        setInfo('Account created. Check your email for the confirmation link, then sign in here.');
+        setInfo(
+          nextRole === 'company' && approvedCompany?.id
+            ? 'Account created and linked to your approved company. Check your email for the confirmation link, then sign in here.'
+            : 'Account created. Check your email for the confirmation link, then sign in here.'
+        );
         setMode('login');
         setPassword('');
       } else {
         await supabase.auth.signOut();
         setMode('login');
         setPassword('');
-        setInfo('Account created successfully. Please sign in with your password.');
+        setInfo(
+          nextRole === 'company' && approvedCompany?.id
+            ? 'Approved company linked successfully. Please sign in with your password.'
+            : 'Account created successfully. Please sign in with your password.'
+        );
       }
     }
     setLoading(false);
@@ -137,37 +263,46 @@ export default function AuthPage() {
             <span style={{ color: '#c9a84c', fontSize: 32, fontWeight: 800 }}>P</span>
           </div>
           <div className="text-center">
-            <p style={{ color: '#c9a84c', fontSize: 18, fontWeight: 800 }}>PENTHOUSE DISPATCH</p>
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>Premium NEMT Operations Platform</p>
+            <p style={{ color: '#c9a84c', fontSize: 18, fontWeight: 800 }}>{APP_VARIANT_META[APP_VARIANT].authTitle}</p>
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{APP_VARIANT_META[APP_VARIANT].authSubtitle}</p>
           </div>
         </div>
 
         <div className="rounded-2xl p-6" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
-          <div className="flex rounded-xl overflow-hidden mb-6" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            {['login', 'signup'].map(m => (
-              <button
-                key={m}
-                onClick={() => { setMode(m); setError(''); }}
-                className="flex-1 py-2.5 text-sm transition-all"
-                style={{
-                  background: mode === m ? 'rgba(201,168,76,0.15)' : 'transparent',
-                  color: mode === m ? '#c9a84c' : 'rgba(255,255,255,0.4)',
-                  fontWeight: mode === m ? 600 : 400,
-                  border: 'none',
-                }}
-              >
-                {m === 'login' ? 'Sign In' : 'Create Account'}
-              </button>
-            ))}
-          </div>
+          {signupEnabled ? (
+            <div className="flex rounded-xl overflow-hidden mb-6" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              {['login', 'signup'].map(m => (
+                <button
+                  key={m}
+                  onClick={() => { setMode(m); setError(''); }}
+                  className="flex-1 py-2.5 text-sm transition-all"
+                  style={{
+                    background: mode === m ? 'rgba(201,168,76,0.15)' : 'transparent',
+                    color: mode === m ? '#c9a84c' : 'rgba(255,255,255,0.4)',
+                    fontWeight: mode === m ? 600 : 400,
+                    border: 'none',
+                  }}
+                >
+                  {m === 'login' ? 'Sign In' : 'Create Account'}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl px-4 py-3 mb-6" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <p className="text-sm" style={{ color: 'rgba(255,255,255,0.56)' }}>
+                {APP_VARIANT_META[APP_VARIANT].authHelp}
+              </p>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             {mode === 'signup' && (
               <>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { value: 'company', label: 'Company', icon: Building2 },
-                  ].map(option => {
+                    signupRoles.includes('company') ? { value: 'company', label: 'Company', icon: Building2 } : null,
+                    signupRoles.includes('rider') ? { value: 'rider', label: 'Rider', icon: User } : null,
+                  ].filter(Boolean).map(option => {
                     const Icon = option.icon;
                     const active = signupRole === option.value;
                     return (
@@ -204,6 +339,35 @@ export default function AuthPage() {
 
                 {signupRole === 'company' && (
                   <>
+                    <div>
+                      <label className="block text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.45)' }}>Signup track</label>
+                      <div className="grid grid-cols-1 gap-2">
+                        {LIVE_COMPANY_SIGNUP_SEGMENTS.map(segmentId => {
+                          const option = COMPANY_SEGMENTS[segmentId];
+                          const active = companySegment === segmentId;
+
+                          return (
+                            <button
+                              key={segmentId}
+                              type="button"
+                              onClick={() => setCompanySegment(segmentId)}
+                              className="text-left rounded-xl px-3 py-3 transition-all"
+                              style={{
+                                background: active ? `${option.accent}18` : 'rgba(255,255,255,0.03)',
+                                border: `1px solid ${active ? `${option.accent}50` : 'rgba(255,255,255,0.08)'}`,
+                                color: active ? option.accent : 'rgba(255,255,255,0.62)',
+                              }}
+                            >
+                              <p className="text-sm font-600 mb-1" style={{ fontWeight: 600 }}>{option.label}</p>
+                              <p className="text-xs leading-5" style={{ color: active ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.42)' }}>
+                                {option.description}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <div className="relative">
                       <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'rgba(255,255,255,0.3)' }} />
                       <input
@@ -307,7 +471,7 @@ export default function AuthPage() {
               className="btn-gold w-full py-3 mt-1"
               style={{ opacity: loading ? 0.7 : 1 }}
             >
-              {loading ? 'Please wait...' : (mode === 'login' ? 'Sign In' : 'Create Account')}
+              {loading ? 'Please wait...' : (mode === 'login' ? 'Sign In' : (isRiderVariant() ? 'Create Rider Account' : 'Create Account'))}
             </button>
 
             {mode === 'login' && (
@@ -349,14 +513,14 @@ export default function AuthPage() {
           {mode === 'signup' && (
             <p className="text-xs text-center mt-4" style={{ color: 'rgba(255,255,255,0.3)', lineHeight: 1.6 }}>
               {signupRole === 'company'
-                ? 'Company accounts can start onboarding immediately and choose to port data from Sentry, ASM, or manual setup.'
-                : 'Dispatcher accounts are created for platform operations and internal dispatch use.'}
+                ? 'Transportation companies sign up here first, then finish onboarding and connect their dispatch setup.'
+                : 'Rider accounts let passengers save their sign-in and reopen trip tracking links from the native Rider app.'}
             </p>
           )}
         </div>
 
         <p className="text-center mt-4 text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
-          Penthouse Dispatch v1.0 — Powered by AI
+          {APP_VARIANT_META[APP_VARIANT].label} v1.0
         </p>
         <div className="mt-3 flex items-center justify-center gap-4 text-xs">
           <Link to="/privacy" style={{ color: 'rgba(255,255,255,0.42)' }}>Privacy</Link>

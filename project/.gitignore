@@ -1,5 +1,11 @@
 node_modules/
 dist/
+dist-driver/
+dist-rider/
+build/
+assets/mobile/generated/
 .env
 .DS_Store
 supabase/.temp/
+.vercel
+.env*.local

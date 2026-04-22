@@ -156,7 +156,7 @@ function MobileDrawer({ open, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
       <div className="flex flex-col w-72 h-full overflow-y-auto" style={{ background: '#0d1117', borderRight: '1px solid rgba(255,255,255,0.08)' }} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+        <div className="flex items-center justify-between px-4 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)', paddingTop: 'calc(var(--safe-top) + 10px)' }}>
           <p className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>Admin Menu</p>
           <div className="flex items-center gap-2">
             <ThemeToggle showLabel />
@@ -185,6 +185,15 @@ function MobileDrawer({ open, onClose }) {
         ))}
         <div className="mt-auto px-4 py-4 border-t space-y-2" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
           <Link
+            to="/"
+            className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm transition-all"
+            style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.15)', color: '#c9a84c', textDecoration: 'none', fontWeight: 600 }}
+            onClick={onClose}
+          >
+            <LayoutGrid className="w-4 h-4" />
+            Dispatch Map
+          </Link>
+          <Link
             to="/driver"
             className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm transition-all"
             style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.15)', color: '#00e5a0', textDecoration: 'none', fontWeight: 600 }}
@@ -192,6 +201,15 @@ function MobileDrawer({ open, onClose }) {
           >
             <Car className="w-4 h-4" />
             Open Driver App
+          </Link>
+          <Link
+            to="/admin/rider-preview"
+            className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm transition-all"
+            style={{ background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.15)', color: '#7dd3fc', textDecoration: 'none', fontWeight: 600 }}
+            onClick={onClose}
+          >
+            <Eye className="w-4 h-4" />
+            Open Rider App
           </Link>
           <button
             onClick={() => supabase.auth.signOut()}
@@ -209,28 +227,17 @@ function MobileDrawer({ open, onClose }) {
 
 function AdminCompanyPreview() {
   const { companyId } = useParams();
-  const { loadDrivers, loadTrips, loadAssignments, setAdminPreviewCompany } = useApp();
-  const [previewCompany, setPreviewCompany] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem(`admin-preview-company:${companyId}`);
-      return cached ? JSON.parse(cached) : null;
-    } catch {
-      return null;
-    }
-  });
-  const [loading, setLoading] = useState(!previewCompany);
+  const { loadDrivers, loadTrips, loadAssignments, adminPreviewCompany, setAdminPreviewCompany } = useApp();
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
+    const channel = supabase.channel(`admin-company-preview:${companyId}`);
 
-    async function loadPreviewCompany() {
-      if (previewCompany?.id === companyId) {
-        setAdminPreviewCompany(previewCompany);
-        setLoading(false);
-      } else {
+    async function loadPreviewCompany({ preserveCurrent = false } = {}) {
+      if (!preserveCurrent) {
         setLoading(true);
       }
-
       const companyResult = await Promise.race([
         supabase.from('companies').select('*').eq('id', companyId).maybeSingle(),
         new Promise((_, reject) =>
@@ -242,10 +249,6 @@ function AdminCompanyPreview() {
       if (!mounted) return;
 
       if (data) {
-        try {
-          sessionStorage.setItem(`admin-preview-company:${companyId}`, JSON.stringify(data));
-        } catch {}
-        setPreviewCompany(data);
         setAdminPreviewCompany(data);
         setLoading(false);
         Promise.all([
@@ -256,8 +259,7 @@ function AdminCompanyPreview() {
         return;
       }
 
-      if (!data && !previewCompany) {
-        setPreviewCompany(null);
+      if (!data) {
         setAdminPreviewCompany(null);
         setLoading(false);
         return;
@@ -266,8 +268,19 @@ function AdminCompanyPreview() {
 
     loadPreviewCompany();
 
+    channel
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'companies', filter: `id=eq.${companyId}` },
+        () => {
+          loadPreviewCompany({ preserveCurrent: true }).catch(() => {});
+        }
+      )
+      .subscribe();
+
     return () => {
       mounted = false;
+      supabase.removeChannel(channel);
       setAdminPreviewCompany(null);
       loadDrivers();
       loadTrips();
@@ -279,11 +292,11 @@ function AdminCompanyPreview() {
     return <div className="h-full flex items-center justify-center" style={{ color: 'rgba(255,255,255,0.45)' }}>Loading company workspace...</div>;
   }
 
-  if (!previewCompany) {
+  if (!adminPreviewCompany?.id) {
     return <div className="h-full flex items-center justify-center" style={{ color: '#ff4757' }}>Company workspace could not be loaded.</div>;
   }
 
-  return <CompanyDashboard previewMode companyOverride={previewCompany} />;
+  return <CompanyDashboard previewMode />;
 }
 
 export default function AdminDashboard() {
@@ -297,13 +310,21 @@ export default function AdminDashboard() {
     PLATFORM_TABS.some(t => t.exact ? location.pathname === t.path : location.pathname.startsWith(t.path));
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d' }}>
-      <header className="flex items-center justify-between gap-3 px-3 sm:px-4 h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
+    <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d', paddingTop: 'calc(var(--safe-top) + 6px)' }}>
+      <header className="flex items-center justify-between gap-3 px-3 sm:px-4 min-h-14 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)', background: '#07090d' }}>
         <div className="flex items-center gap-3 min-w-0">
+          <button
+            className="lg:hidden flex items-center gap-1.5 px-3 py-2 rounded-lg btn-ghost text-xs font-semibold flex-shrink-0"
+            onClick={() => setMobileNav(true)}
+            title="Open admin menu"
+          >
+            <Menu className="w-4 h-4" />
+            Menu
+          </button>
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(201,168,76,0.25), rgba(201,168,76,0.08))', border: '1px solid rgba(201,168,76,0.4)' }}>
             <ShieldCheck className="w-4 h-4" style={{ color: '#c9a84c' }} />
           </div>
-          <div className="hidden sm:block min-w-0 max-w-[160px]">
+          <div className="min-w-0 max-w-[190px]">
             <p className="truncate" style={{ color: '#c9a84c', fontSize: 13, fontWeight: 700, letterSpacing: '0.5px' }}>PENTHOUSE ADMIN</p>
             <p className="truncate" style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>Platform Control Center</p>
           </div>
@@ -368,30 +389,27 @@ export default function AdminDashboard() {
             style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.2)', color: '#00e5a0', fontWeight: 600, textDecoration: 'none' }}
           >
             <Car className="w-3.5 h-3.5" />
-            Driver App
+            <span className="hidden sm:inline">Driver App</span>
           </Link>
           <Link
             to="/admin/rider-preview"
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all"
             title="Open Rider App Preview"
             style={{ background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.2)', color: '#7dd3fc', fontWeight: 600, textDecoration: 'none' }}
           >
             <Eye className="w-3.5 h-3.5" />
-            Rider App
+            <span className="hidden sm:inline">Rider App</span>
           </Link>
-          <ThemeToggle />
+          <div className="hidden sm:block">
+            <ThemeToggle />
+          </div>
           <button
             onClick={() => supabase.auth.signOut()}
-            className="w-8 h-8 flex items-center justify-center rounded-lg btn-ghost"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg btn-ghost text-xs font-semibold"
             title="Sign out"
           >
             <LogOut className="w-4 h-4" />
-          </button>
-          <button
-            className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg btn-ghost"
-            onClick={() => setMobileNav(!mobileNav)}
-          >
-            <Menu className="w-4 h-4" />
+            Logout
           </button>
         </div>
       </header>

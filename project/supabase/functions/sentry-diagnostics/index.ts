@@ -16,6 +16,18 @@ function json(data: unknown, status = 200) {
   });
 }
 
+function cleanAuthValue(value: unknown) {
+  return String(value || '').replace(/\u00a0/g, ' ').trim();
+}
+
+function resolveAuthMode(authType: unknown, username: string, apiKey: string) {
+  const normalized = cleanAuthValue(authType).toLowerCase();
+  if ((normalized === 'bearer' || normalized === 'api_key') && apiKey) return 'bearer';
+  if (username) return 'basic';
+  if (apiKey) return 'bearer';
+  return 'none';
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -28,11 +40,11 @@ serve(async (req) => {
     }
 
     const body = await req.json();
-    const baseUrl = String(body.base_url || '').replace(/\/$/, '');
+    const baseUrl = cleanAuthValue(body.base_url).replace(/\/$/, '');
     const authType = String(body.auth_type || 'basic');
-    const username = String(body.username || '');
-    const password = String(body.password_enc || '');
-    const apiKey = String(body.api_key || '');
+    const username = cleanAuthValue(body.username);
+    const password = cleanAuthValue(body.password_enc);
+    const apiKey = cleanAuthValue(body.api_key);
 
     if (!baseUrl) {
       return json({ authenticated: false, error: 'Missing base_url' }, 400);
@@ -43,14 +55,22 @@ serve(async (req) => {
       'Content-Type': 'application/json',
     };
 
-    if (authType === 'basic' && username) {
+    const authMode = resolveAuthMode(authType, username, apiKey);
+
+    if (authMode === 'basic' && username) {
       headers.Authorization = `Basic ${btoa(`${username}:${password}`)}`;
-    } else if (apiKey) {
+    } else if (authMode === 'bearer' && apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
     }
 
     const started = Date.now();
-    const res = await fetch(`${baseUrl}/rest/transportation_provider_facade/v4.0/trips.json`, {
+    const today = new Date();
+    const dateMin = today.toISOString().slice(0, 10);
+    const dateMaxDate = new Date(today);
+    dateMaxDate.setDate(dateMaxDate.getDate() + 7);
+    const dateMax = dateMaxDate.toISOString().slice(0, 10);
+
+    const res = await fetch(`${baseUrl}/rest/transportation_provider_facade/v4.0/trips.json?date_min=${dateMin}&date_max=${dateMax}`, {
       method: 'GET',
       headers,
     });
@@ -67,9 +87,7 @@ serve(async (req) => {
     const authenticated = res.ok || res.status === 400 || res.status === 206;
     let hint: string | null = null;
 
-    if (res.status === 400) {
-      hint = 'Connected. Sentry responded with 400 because the trips endpoint expects date parameters.';
-    } else if (res.status === 401) {
+    if (res.status === 401) {
       hint = 'Authentication failed. Double-check the saved Sentry username/password or bearer token.';
     } else if (res.status === 403) {
       hint = 'Authenticated, but this account does not have permission for the endpoint.';

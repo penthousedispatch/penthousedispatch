@@ -19,6 +19,11 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
     const pathname = url.pathname;
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
 
     const secret = url.searchParams.get('secret') || '';
     const authHeader = req.headers.get('authorization') || req.headers.get('Authorization') || '';
@@ -33,16 +38,14 @@ Deno.serve(async (req: Request) => {
     const providedSecret = secret || bearerToken;
 
     if (cfg?.webhook_secret && cfg.webhook_secret !== '' && cfg.webhook_secret !== providedSecret) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return json({ error: 'Unauthorized (authentication data are missing or wrong)' }, 401);
     }
 
     let endpoint = 'unknown';
     if (pathname.includes('trips_receiver')) endpoint = 'trips_receiver';
     else if (pathname.includes('drivers_receiver')) endpoint = 'drivers_receiver';
     else if (pathname.includes('vehicles_receiver')) endpoint = 'vehicles_receiver';
+    else return json({ error: 'Not Found (the service endpoint is not found)' }, 404);
 
     let payload: Record<string, unknown> = {};
     try {
@@ -51,11 +54,14 @@ Deno.serve(async (req: Request) => {
       payload = {};
     }
 
-    const idempotencyKey = String(
-      (payload as Record<string, unknown>).trip_id ||
-      (payload as Record<string, unknown>).id ||
-      Date.now()
+    const payloadString = JSON.stringify(payload);
+    const digestBuffer = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(`${endpoint}:${payloadString}`)
     );
+    const idempotencyKey = Array.from(new Uint8Array(digestBuffer))
+      .map(byte => byte.toString(16).padStart(2, '0'))
+      .join('');
 
     const { data: existing } = await supabase
       .from('webhook_logs')
@@ -65,41 +71,86 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (existing) {
-      return new Response(JSON.stringify({ status: 'duplicate', trip_processing_status_id: 1 }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      const tripId = String(
+        (payload as Record<string, unknown>).trip_id ||
+        (payload as Record<string, unknown>).id ||
+        ''
+      );
+      return json([{
+        trip_id: tripId,
+        http_status_code: 200,
+        trip_processing_status_id: 1,
+        error_message: null,
+      }], 207);
     }
 
     const acceptedIds: string[] = [];
     let logStatus = 'processed';
     let logError = '';
+    const tripResponses: Array<{
+      trip_id: string;
+      http_status_code: number;
+      trip_processing_status_id: number;
+      error_message: string | null;
+    }> = [];
 
     if (endpoint === 'trips_receiver') {
       const trips = Array.isArray(payload) ? payload : (payload.trips as unknown[] || [payload]);
+      let processedCount = 0;
 
       for (const raw of trips) {
         const t = raw as Record<string, unknown>;
         const tripId = String(t.trip_id || t.id || '');
-        if (!tripId) continue;
+        if (!tripId) {
+          tripResponses.push({
+            trip_id: '',
+            http_status_code: 400,
+            trip_processing_status_id: 2,
+            error_message: 'Bad Request (a URL parameter is missing)',
+          });
+          logStatus = 'error';
+          logError = 'Trip payload missing trip_id';
+          continue;
+        }
+        processedCount += 1;
+        const pickup = (t.pick_up_location as Record<string, unknown>) || {};
+        const dropoff = (t.drop_off_location as Record<string, unknown>) || {};
+        const prices = (t.prices as Record<string, unknown>) || {};
 
         const mapped = {
           sentry_trip_id: tripId,
           sentry_last_modified_at: String(t.last_modified_at || ''),
           date_val: String(t.date || t.schedule_date || ''),
-          los: String(t.level_of_service || t.los || ''),
-          passengers: String(t.passenger_count || t.passengers || '1'),
+          los: String(t.service_level_code || t.level_of_service || t.los || ''),
+          passengers: String(
+            t.passenger_count ||
+            t.passengers ||
+            t.client_count ||
+            (t.client ? 1 : '') ||
+            '1'
+          ),
           mileage: String(t.mileage || t.estimated_miles || ''),
-          pu_address: String(t.pickup_address || t.pu_address || ''),
-          pu_city: String(t.pickup_city || t.pu_city || ''),
-          pu_zip: String(t.pickup_zip || t.pu_zip || ''),
-          pu_time: String(t.scheduled_pickup_time || t.pu_time || ''),
-          do_address: String(t.dropoff_address || t.do_address || ''),
-          do_city: String(t.dropoff_city || t.do_city || ''),
-          do_zip: String(t.dropoff_zip || t.do_zip || ''),
-          do_time: String(t.scheduled_dropoff_time || t.do_time || ''),
-          delivery_price: String(t.total_amount || t.delivery_price || ''),
+          pu_address: String(t.pickup_address || t.pu_address || pickup.address || ''),
+          pu_city: String(t.pickup_city || t.pu_city || pickup.city || ''),
+          pu_zip: String(t.pickup_zip || t.pu_zip || pickup.zip_code || ''),
+          pu_time: String(t.scheduled_pickup_time || t.scheduled_pick_up_timestamp || t.pu_time || ''),
+          do_address: String(t.dropoff_address || t.do_address || dropoff.address || ''),
+          do_city: String(t.dropoff_city || t.do_city || dropoff.city || ''),
+          do_zip: String(t.dropoff_zip || t.do_zip || dropoff.zip_code || ''),
+          do_time: String(t.scheduled_dropoff_time || t.scheduled_drop_off_timestamp || t.do_time || ''),
+          delivery_price: String(
+            t.total_amount ||
+            t.delivery_price ||
+            prices.delivery_cost ||
+            prices.actual_cost ||
+            ''
+          ),
           status: 'available',
+          pu_lat: pickup.lat ?? null,
+          pu_lng: pickup.lng ?? null,
+          do_lat: dropoff.lat ?? null,
+          do_lng: dropoff.lng ?? null,
+          raw_payload: t,
           loaded_at: new Date().toISOString(),
         };
 
@@ -109,6 +160,12 @@ Deno.serve(async (req: Request) => {
 
         if (!upsertErr) {
           acceptedIds.push(tripId);
+          tripResponses.push({
+            trip_id: tripId,
+            http_status_code: 200,
+            trip_processing_status_id: 1,
+            error_message: null,
+          });
 
           const { data: schedCfg } = await supabase
             .from('auto_scheduler_config')
@@ -168,14 +225,31 @@ Deno.serve(async (req: Request) => {
         } else {
           logStatus = 'error';
           logError = upsertErr.message;
+          tripResponses.push({
+            trip_id: tripId,
+            http_status_code: 500,
+            trip_processing_status_id: 2,
+            error_message: upsertErr.message,
+          });
         }
+      }
+
+      if (processedCount === 0) {
+        return json([{
+          trip_id: '',
+          http_status_code: 400,
+          trip_processing_status_id: 2,
+          error_message: 'Bad Request (a URL parameter is missing)',
+        }], 400);
       }
     } else if (endpoint === 'drivers_receiver') {
       const drivers = Array.isArray(payload) ? payload : (payload.drivers as unknown[] || [payload]);
+      let processedDrivers = 0;
       for (const raw of drivers) {
         const d = raw as Record<string, unknown>;
         const sentryId = String(d.id || d.driver_id || '');
         if (!sentryId) continue;
+        processedDrivers += 1;
 
         const { data: existing } = await supabase
           .from('drivers')
@@ -191,17 +265,29 @@ Deno.serve(async (req: Request) => {
             updated_at: new Date().toISOString(),
           }).eq('id', existing.id);
         }
+        acceptedIds.push(sentryId);
+      }
+      if (processedDrivers === 0) {
+        logStatus = 'error';
+        logError = 'Driver payload missing id';
       }
     } else if (endpoint === 'vehicles_receiver') {
       const vehicles = Array.isArray(payload) ? payload : (payload.vehicles as unknown[] || [payload]);
+      let processedVehicles = 0;
       for (const raw of vehicles) {
         const v = raw as Record<string, unknown>;
         const sentryVehicleId = String(v.id || v.vehicle_id || '');
         if (!sentryVehicleId) continue;
+        processedVehicles += 1;
 
         await supabase.from('drivers').update({
           updated_at: new Date().toISOString(),
         }).eq('sentry_vehicle_id', sentryVehicleId);
+        acceptedIds.push(sentryVehicleId);
+      }
+      if (processedVehicles === 0) {
+        logStatus = 'error';
+        logError = 'Vehicle payload missing id';
       }
     }
 
@@ -215,17 +301,16 @@ Deno.serve(async (req: Request) => {
       received_at: new Date().toISOString(),
     });
 
+    if (endpoint === 'trips_receiver') {
+      return json(tripResponses, 207);
+    }
+
     const response: Record<string, unknown> = {
       status: logStatus,
-      trip_processing_status_id: 1,
       accepted_count: acceptedIds.length,
     };
-    if (acceptedIds.length > 0) response.accepted_trip_ids = acceptedIds;
 
-    return new Response(JSON.stringify(response), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return json(response, logStatus === 'error' ? 400 : 200);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return new Response(JSON.stringify({ error: message }), {

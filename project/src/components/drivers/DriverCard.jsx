@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Zap, X, Camera, Clock } from 'lucide-react';
+import { Zap, X, Camera, Clock, Navigation, BellRing } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 const STATUS_LABEL = {
@@ -23,7 +23,19 @@ async function uploadDriverPhoto(file, driverId) {
   return urlData.publicUrl;
 }
 
-export default function DriverCard({ driver, selected, onClick, onTake5, onRemove, tripCount, onPhotoUpdate }) {
+export default function DriverCard({
+  driver,
+  selected,
+  onClick,
+  onTake5,
+  onRemove,
+  tripCount,
+  onPhotoUpdate,
+  onSendTestTrip,
+  onSendInstruction,
+  sendingTestTrip,
+  sendingInstruction,
+}) {
   const fileRef = useRef();
   const [uploading, setUploading] = useState(false);
 
@@ -139,12 +151,53 @@ export default function DriverCard({ driver, selected, onClick, onTake5, onRemov
           <Zap className="w-3 h-3" /> Take 5
         </button>
         <button
-          onClick={e => { e.stopPropagation(); fileRef.current?.click(); }}
-          className="w-8 h-7 flex items-center justify-center rounded-lg btn-ghost"
-          title="Upload driver photo"
+          onClick={e => { e.stopPropagation(); onSendTestTrip?.(); }}
+          disabled={sendingTestTrip}
+          className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-600 transition-all"
+          style={{
+            background: 'rgba(14,165,233,0.12)',
+            border: '1px solid rgba(14,165,233,0.22)',
+            color: '#38bdf8',
+            fontWeight: 600,
+            opacity: sendingTestTrip ? 0.7 : 1,
+          }}
         >
-          <Camera className="w-3 h-3" style={{ color: driver.photo_data ? 'rgba(255,255,255,0.4)' : '#ff4757' }} />
+          <Navigation className="w-3 h-3" /> {sendingTestTrip ? 'Sending...' : '1 Trip'}
         </button>
+      </div>
+
+      <div className="flex items-center gap-1.5 mt-1.5">
+        <button
+          onClick={e => { e.stopPropagation(); onSendInstruction?.(); }}
+          disabled={sendingInstruction}
+          className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-600 transition-all"
+          style={{
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: '#e5e7eb',
+            fontWeight: 600,
+            opacity: sendingInstruction ? 0.7 : 1,
+          }}
+        >
+          <BellRing className="w-3 h-3" /> {sendingInstruction ? 'Sending...' : 'Ping Driver'}
+        </button>
+        <div
+          className="h-7 px-2.5 flex items-center justify-center gap-1 rounded-lg"
+          style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: '#d4d4d4',
+          }}
+          title={driver.shift_hours ? `Work shift: ${driver.shift_hours}` : 'Work shift not set'}
+        >
+          <Clock className="w-3 h-3" style={{ color: '#c9a84c' }} />
+          <span
+            className="text-[10px] font-600 max-w-[72px] truncate"
+            style={{ fontWeight: 600 }}
+          >
+            {driver.shift_hours || 'Shift TBD'}
+          </span>
+        </div>
         <button
           onClick={e => { e.stopPropagation(); onRemove(); }}
           className="w-8 h-7 flex items-center justify-center rounded-lg"

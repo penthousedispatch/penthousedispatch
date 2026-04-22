@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight, Trophy, MapPin } from 'lucide-react';
-import { fbSet, fbGet } from '../../lib/firebase';
+import { Link } from 'react-router-dom';
+import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight, Trophy, MapPin, ClipboardList, BellRing } from 'lucide-react';
+import { fbSet, fbGet, fbUpdate } from '../../lib/firebase';
 import { supabase } from '../../lib/supabase';
 import { getMotivationMessage } from '../../utils/aiMotivation';
 import { logFailure } from '../../utils/errorHandler';
@@ -20,6 +21,7 @@ import IncentiveCelebrationOverlay from '../../components/drivers/IncentiveCeleb
 import DriverZonePreferences from '../../components/drivers/DriverZonePreferences';
 import { formatServiceZone, normalizePreferredZones } from '../../lib/serviceZones';
 import { useApp } from '../../context/AppContext';
+import { getPublicAppUrl } from '../../lib/mobileRuntime';
 
 const DEFAULT_RIDE_PREFERENCES = {
   shortTripPreference: '2-4 mi',
@@ -28,15 +30,15 @@ const DEFAULT_RIDE_PREFERENCES = {
 };
 
 function buildRiderTrackingUrl(riderKey) {
-  if (!riderKey || typeof window === 'undefined') return '';
-  return `${window.location.origin}/rider?trip=${encodeURIComponent(riderKey)}`;
+  if (!riderKey) return '';
+  return getPublicAppUrl(`/rider?trip=${encodeURIComponent(riderKey)}`);
 }
 
 function getDriverOnboardingKey(driverId) {
   return `pds_onboarding_seen:${driverId}`;
 }
 
-function DriverAccessChooser({ role, company, onSelectDriver }) {
+function DriverAccessChooser({ role, company, onSelectDriver, onExit }) {
   const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sandboxCompanyId, setSandboxCompanyId] = useState(null);
@@ -96,8 +98,11 @@ function DriverAccessChooser({ role, company, onSelectDriver }) {
   });
 
   return (
-    <div className="fixed inset-0 flex flex-col items-center justify-center px-6" style={{ background: '#07090d' }}>
-      <div className="w-full max-w-2xl rounded-3xl p-6" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
+    <div
+      className="fixed inset-0 flex flex-col items-center justify-center px-4 sm:px-6"
+      style={{ background: '#07090d', paddingTop: 'calc(var(--safe-top) + 20px)', paddingBottom: 'calc(var(--safe-bottom) + 12px)' }}
+    >
+      <div className="w-full max-w-2xl rounded-3xl p-5 sm:p-6" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.08)' }}>
         <div className="mb-5">
           <p style={{ color: '#c9a84c', fontSize: 22, fontWeight: 800 }}>
             {role === 'admin' ? 'Admin Test Driver Access' : 'Driver App Access'}
@@ -108,6 +113,15 @@ function DriverAccessChooser({ role, company, onSelectDriver }) {
               : 'Open the driver app as one of your company drivers without using their password.'}
           </p>
         </div>
+
+        <button
+          onClick={onExit}
+          className="w-full mb-4 px-4 py-3 rounded-2xl text-sm font-700 flex items-center justify-center gap-2"
+          style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.24)', color: '#c9a84c', fontWeight: 700 }}
+        >
+          <X className="w-4 h-4" />
+          {role === 'admin' ? 'Exit Back To Admin Dashboard' : 'Exit Back To Company Dashboard'}
+        </button>
 
         <div className="mb-4">
           <input
@@ -169,6 +183,16 @@ function DriverAccessChooser({ role, company, onSelectDriver }) {
             })
           )}
         </div>
+
+        <div className="mt-4 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+          <button
+            onClick={onExit}
+            className="w-full px-4 py-3 rounded-2xl text-sm font-700"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#e5e7eb', fontWeight: 700 }}
+          >
+            {role === 'admin' ? 'Cancel Driver Preview And Return To Admin' : 'Cancel Driver Preview And Return To Company'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -184,6 +208,7 @@ export default function DriverApp() {
   const [currentTrip, setCurrentTrip] = useState(null);
   const [onBreak, setOnBreak] = useState(false);
   const [location, setLocation] = useState(null);
+  const [gpsIssue, setGpsIssue] = useState('');
   const [earnings, setEarnings] = useState({ today: 0, trips: 0 });
   const [sheetOpen, setSheetOpen] = useState(true);
   const [motivationToast, setMotivationToast] = useState(null);
@@ -204,6 +229,7 @@ export default function DriverApp() {
   const [showZonePreferences, setShowZonePreferences] = useState(false);
   const [zoneSaving, setZoneSaving] = useState(false);
   const [zoneSavedMessage, setZoneSavedMessage] = useState('');
+  const [driverInstruction, setDriverInstruction] = useState(null);
   const [ridePreferences, setRidePreferences] = useState(DEFAULT_RIDE_PREFERENCES);
   const [driverWaitMins, setDriverWaitMins] = useState(5);
   const [waitRemaining, setWaitRemaining] = useState(null);
@@ -314,6 +340,7 @@ export default function DriverApp() {
     setShowZonePreferences(false);
     setCurrentTrip(null);
     setSheetState('waiting');
+    setGpsIssue('');
     setLoggedIn(false);
     setDriverData(null);
     setDriverRecord(null);
@@ -543,29 +570,60 @@ export default function DriverApp() {
     setZoneSaving(false);
   }
 
-  function startShift(driver) {
-    shiftStartRef.current = Date.now();
-    watchRef.current = navigator.geolocation.watchPosition(
+  function applyDriverLocation(driverId, coords) {
+    setLocation(coords);
+    locationRef.current = coords;
+    setGpsIssue('');
+    fbSet(`drivers/${driverId}/coords`, coords);
+    fbSet(`drivers/${driverId}/lastSeen`, Date.now());
+    if (driverId) {
+      supabase.from('drivers').update({
+        current_lat: coords.lat,
+        current_lng: coords.lng,
+        last_location_update: new Date().toISOString(),
+        status: 'online',
+      }).eq('id', driverId).then(({ error }) => {
+        if (error) logFailure('DriverApp:applyDriverLocation', error);
+      });
+    }
+  }
+
+  function retryGpsLocation() {
+    if (!driverData?.id) return;
+    if (!navigator.geolocation) {
+      setGpsIssue('GPS is not supported on this device.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
       pos => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setLocation(coords);
-        locationRef.current = coords;
-        fbSet(`drivers/${driver.id}/coords`, coords);
-        fbSet(`drivers/${driver.id}/lastSeen`, Date.now());
-        if (driver.id) {
-          supabase.from('drivers').update({
-            current_lat: coords.lat,
-            current_lng: coords.lng,
-            last_location_update: new Date().toISOString(),
-            status: 'online',
-          }).eq('id', driver.id).then(({ error }) => {
-            if (error) logFailure('DriverApp:startShift:locationUpdate', error);
-          });
-        }
+        applyDriverLocation(driverData.id, coords);
       },
-      err => console.warn('GPS error', err),
+      err => {
+        logFailure('DriverApp:retryGpsLocation', err);
+        setGpsIssue('GPS is still blocked. Enable location permission and retry.');
+      },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
+  }
+
+  function startShift(driver) {
+    shiftStartRef.current = Date.now();
+    if (!navigator.geolocation) {
+      setGpsIssue('GPS is not supported on this device.');
+    } else {
+      watchRef.current = navigator.geolocation.watchPosition(
+        pos => {
+          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          applyDriverLocation(driver.id, coords);
+        },
+        err => {
+          logFailure('DriverApp:startShift:gps', err);
+          setGpsIssue('GPS unavailable. Enable location permissions for live trip updates.');
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+    }
 
     pollRef.current = setInterval(() => pollForNotifications(driver), 8000);
     pollForNotifications(driver);
@@ -588,6 +646,15 @@ export default function DriverApp() {
         setSheetState('new_trip');
         startTripCountdown(15);
         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+      }
+    }
+
+    const instructionResult = await fbGet(`driver_testing_messages/${driver.id}`);
+    if (instructionResult.ok && instructionResult.data) {
+      const incoming = instructionResult.data;
+      if (!driverInstruction || incoming.sentAt !== driverInstruction.sentAt) {
+        setDriverInstruction(incoming);
+        if (navigator.vibrate) navigator.vibrate([150, 60, 150]);
       }
     }
 
@@ -725,28 +792,56 @@ export default function DriverApp() {
     const coords = locationRef.current || location || {};
     const sentryDriverId = driverRecord?.sentry_driver_id || driverRecord?.id || driverData?.id || null;
     const sentryVehicleId = driverRecord?.sentry_vehicle_id || driverRecord?.id || null;
+    const locationTimestamp = new Date().toISOString();
+    const vehiclePlate = driverRecord?.vehicle_plate || '';
+    const driverLicenseNumber = driverRecord?.license_number || '';
+    const driverLicenseState = driverRecord?.license_state || 'NY';
+    const buildAddress = currentTrip?.puAddress || currentTrip?.pu_address || currentTrip?.doAddress || currentTrip?.do_address || '';
+
+    const driver = {};
+    if (sentryDriverId) driver.id = sentryDriverId;
+    if (driverLicenseNumber) {
+      driver.dmv_license = {
+        license_number: driverLicenseNumber,
+        state_code: driverLicenseState,
+      };
+    }
+
+    const vehicle = {};
+    if (sentryVehicleId) vehicle.id = sentryVehicleId;
+    if (vehiclePlate) {
+      vehicle.dmv_registration = {
+        license_plate_number: vehiclePlate,
+      };
+    }
+    if (
+      coords?.lat ||
+      coords?.lng ||
+      driverRecord?.current_lat ||
+      driverRecord?.current_lng ||
+      buildAddress
+    ) {
+      vehicle.location = {
+        lat: coords?.lat || driverRecord?.current_lat || null,
+        lng: coords?.lng || driverRecord?.current_lng || null,
+        address: buildAddress,
+        timestamp: locationTimestamp,
+      };
+    }
 
     return {
       status_id: statusId,
-      driver: {
-        id: sentryDriverId,
-        name: driverRecord?.full_name || driverData?.name || 'Driver',
-        phone: driverRecord?.phone || driverData?.phone || '',
-        email: driverRecord?.email || driverData?.email || '',
-      },
-      vehicle: {
-        id: sentryVehicleId,
-        lat: coords?.lat || driverRecord?.current_lat || null,
-        lng: coords?.lng || driverRecord?.current_lng || null,
-        plate: driverRecord?.vehicle_plate || '',
-        timestamp: new Date().toISOString(),
-      },
+      is_done_by_not_integrated_provider: 0,
+      is_confirmed: statusId >= 3 ? 1 : 0,
+      last_modified_at: extra.last_modified_at || currentTrip?.lastModifiedAt || locationTimestamp,
+      ...(Object.keys(driver).length ? { driver } : {}),
+      ...(Object.keys(vehicle).length ? { vehicle } : {}),
       ...extra,
     };
   }
 
   async function sendSentryLifecycleStatus(tripId, statusId, extra = {}) {
-    if (!tripId || !sentryApi.enabled || !sentryApi.features.tripStatusUpdate) return;
+    if (!tripId || !sentryApi.enabled || !sentryApi.features.tripStatusUpdate) return { skipped: true };
 
     const payload = buildSentryLifecyclePayload(statusId, extra);
     const sentryResult = await sentryApi.updateTripStatus(tripId, payload);
@@ -764,6 +859,24 @@ export default function DriverApp() {
     if (!sentryResult.ok) {
       logFailure(`DriverApp:tripStatus:${statusId}`, { status: sentryResult.status, error: sentryResult.error });
     }
+
+    return sentryResult;
+  }
+
+  function normalizeCompletionMeta(meta = {}) {
+    const fareValue = meta.collectedFare;
+    const parsedFare =
+      fareValue === null || fareValue === undefined || fareValue === ''
+        ? null
+        : Number(fareValue);
+
+    return {
+      collectedFare:
+        parsedFare === null || Number.isNaN(parsedFare)
+          ? null
+          : Number(parsedFare.toFixed(2)),
+      isNextDay: Boolean(meta.isNextDay),
+    };
   }
 
   async function acceptTrip() {
@@ -798,6 +911,14 @@ export default function DriverApp() {
         .update({ status: 'accepted', trip_processing_status_id: 1, accepted_at: acceptedAt })
         .eq('trip_id', currentTrip.tripId);
 
+      if (driverRecord?.id) {
+        const { error: driverStatusError } = await supabase
+          .from('drivers')
+          .update({ status: 'on_trip' })
+          .eq('id', driverRecord.id);
+        if (driverStatusError) logFailure('DriverApp:acceptTrip:drivers', driverStatusError);
+      }
+
       if (sentryApi.enabled && sentryApi.features.tripAcceptReject) {
         const acceptResult = await sentryApi.acceptTrip(currentTrip.tripId, {
           last_modified_at: currentTrip.lastModifiedAt || '',
@@ -812,15 +933,18 @@ export default function DriverApp() {
           error_message: acceptResult.ok ? '' : (acceptResult.error || `HTTP ${acceptResult.status}`),
           payload: { driver_id: driverData.id, trip_processing_status_id: 1 },
         });
+        if (!acceptResult.ok) {
+          showToast(`Trip accepted locally, but Sentry accept sync failed. ${acceptResult.error || `HTTP ${acceptResult.status}`}`);
+        }
       }
 
-      await sendSentryLifecycleStatus(currentTrip.tripId, 2, {
+      const statusResult = await sendSentryLifecycleStatus(currentTrip.tripId, 2, {
         assigned_at: acceptedAt,
         accepted_at: acceptedAt,
       });
-      await sendSentryLifecycleStatus(currentTrip.tripId, 3, {
-        en_route_at: acceptedAt,
-      });
+      if (statusResult && !statusResult.ok && !statusResult.skipped) {
+        showToast(`Trip accepted locally, but Sentry status update failed. ${statusResult.error || `HTTP ${statusResult.status}`}`);
+      }
     }
 
     await publishTripAlert(
@@ -835,8 +959,31 @@ export default function DriverApp() {
       }
     );
 
-    setCurrentTrip(prev => ({ ...prev, acceptedAt }));
+    setCurrentTrip(prev => ({ ...prev, acceptedAt, enRouteAt: null }));
     setSheetState('navigation');
+  }
+
+  async function startRouteToPickup() {
+    if (!currentTrip?.tripId || currentTrip?.enRouteAt) return;
+
+    const enRouteAt = new Date().toISOString();
+    const statusResult = await sendSentryLifecycleStatus(currentTrip.tripId, 3, {
+      en_route_at: enRouteAt,
+      accepted_at: currentTrip?.acceptedAt || enRouteAt,
+      assigned_at: currentTrip?.acceptedAt || enRouteAt,
+    });
+    if (statusResult && !statusResult.ok && !statusResult.skipped) {
+      showToast(`Route start saved locally, but Sentry status update failed. ${statusResult.error || `HTTP ${statusResult.status}`}`);
+    }
+
+    await publishTripAlert(
+      'driver_started_route_to_pickup',
+      `${driverData?.name || 'Driver'} started driving to pickup for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      'info',
+      { status: 'en_route', en_route_at: enRouteAt }
+    );
+
+    setCurrentTrip(prev => ({ ...prev, enRouteAt }));
   }
 
   async function rejectTrip() {
@@ -854,16 +1001,41 @@ export default function DriverApp() {
         .update({ status: 'rejected', trip_processing_status_id: 2, rejected_at: rejectedAt })
         .eq('trip_id', currentTrip.tripId);
 
-      if (sentryApi.enabled && sentryApi.features.tripAcceptReject) {
-        const rejectResult = await sentryApi.rejectTrip(currentTrip.tripId, 1, currentTrip.lastModifiedAt || null);
+      if (sentryApi.enabled) {
+        // Align with Sentry lifecycle sheet:
+        // - no-show before arrival  -> status_id=7
+        // - no-show after arrival   -> status_id=8
+        // For pre-accept release, use reject endpoint status_id=1.
+        const hasAccepted = Boolean(currentTrip?.acceptedAt);
+        const hasArrived = Boolean(currentTrip?.arrivedAt);
+        const statusSyncResult = hasAccepted
+          ? await sentryApi.updateTripStatus(currentTrip.tripId, {
+              status_id: hasArrived ? 8 : 7,
+              cancel_reason_id: 1,
+              cancel_note: null,
+              pick_up_arrival_timestamp: hasArrived ? currentTrip.arrivedAt : null,
+              last_modified_at: currentTrip.lastModifiedAt || rejectedAt,
+            })
+          : await sentryApi.rejectTrip(
+              currentTrip.tripId,
+              1,
+              currentTrip.lastModifiedAt || null,
+              null
+            );
+
         await supabase.from('sentry_sync_log').insert({
-          sync_type: 'trip_reject',
+          sync_type: hasAccepted ? 'trip_cancel_no_show' : 'trip_reject',
           direction: 'export',
           record_type: 'trip',
           external_id: String(currentTrip.tripId),
-          status: rejectResult.ok ? 'success' : 'failed',
-          error_message: rejectResult.ok ? '' : (rejectResult.error || `HTTP ${rejectResult.status}`),
-          payload: { driver_id: driverData.id, trip_processing_status_id: 2 },
+          status: statusSyncResult.ok ? 'success' : 'failed',
+          error_message: statusSyncResult.ok ? '' : (statusSyncResult.error || `HTTP ${statusSyncResult.status}`),
+          payload: {
+            driver_id: driverData.id,
+            trip_processing_status_id: 2,
+            sentry_status_id: hasAccepted ? (hasArrived ? 8 : 7) : 1,
+            cancel_reason_id: hasAccepted ? 1 : null,
+          },
         });
       }
     }
@@ -876,7 +1048,11 @@ export default function DriverApp() {
     if (!currentTrip) return;
     const arrivedAt = new Date().toISOString();
 
-    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'arrived', driverId: driverData.id, arrivedAt: Date.now() });
+    await fbUpdate(`rider_tracking/${currentTrip?.riderKey}`, {
+      status: 'arrived',
+      driverId: driverData.id,
+      arrivedAt: Date.now(),
+    });
     if (currentTrip?.tripId) {
       const { error } = await supabase
         .from('trip_assignments')
@@ -886,9 +1062,12 @@ export default function DriverApp() {
     }
 
     setCurrentTrip(prev => ({ ...prev, arrivedAt }));
-    await sendSentryLifecycleStatus(currentTrip.tripId, 4, {
+    const arrivedResult = await sendSentryLifecycleStatus(currentTrip.tripId, 4, {
       pick_up_arrival_timestamp: arrivedAt,
     });
+    if (arrivedResult && !arrivedResult.ok && !arrivedResult.skipped) {
+      showToast(`Arrival saved locally, but Sentry status update failed. ${arrivedResult.error || `HTTP ${arrivedResult.status}`}`);
+    }
     await publishTripAlert(
       'driver_arrived_pickup',
       `${driverData?.name || 'Driver'} arrived at pickup for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
@@ -900,19 +1079,26 @@ export default function DriverApp() {
 
   async function confirmPickup() {
     const pickedUpAt = new Date().toISOString();
-    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'picked_up', driverId: driverData.id, pickedUpAt: Date.now() });
+    await fbUpdate(`rider_tracking/${currentTrip?.riderKey}`, {
+      status: 'picked_up',
+      driverId: driverData.id,
+      pickedUpAt: Date.now(),
+    });
     if (currentTrip?.tripId) {
       const { error } = await supabase
         .from('trip_assignments')
-        .update({ status: 'picked_up' })
+        .update({ status: 'picked_up', actual_pickup_time: pickedUpAt })
         .eq('trip_id', currentTrip.tripId);
       if (error) logFailure('DriverApp:confirmPickup:trip_assignments', error);
     }
     stopPickupWait();
-    await sendSentryLifecycleStatus(currentTrip?.tripId, 5, {
+    const pickupResult = await sendSentryLifecycleStatus(currentTrip?.tripId, 5, {
       pick_up_timestamp: pickedUpAt,
       pick_up_arrival_timestamp: currentTrip?.arrivedAt || pickedUpAt,
     });
+    if (pickupResult && !pickupResult.ok && !pickupResult.skipped) {
+      showToast(`Pickup saved locally, but Sentry status update failed. ${pickupResult.error || `HTTP ${pickupResult.status}`}`);
+    }
     await publishTripAlert(
       'driver_picked_up_rider',
       `${driverData?.name || 'Driver'} picked up the rider for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
@@ -928,7 +1114,11 @@ export default function DriverApp() {
     const noShowAt = new Date().toISOString();
 
     await fbSet(`trip_assignments/${currentTrip?.tripId}`, { status: 'no_show', driverId: driverData.id, noShowAt: Date.now() });
-    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'no_show', driverId: driverData.id, noShowAt: Date.now() });
+    await fbUpdate(`rider_tracking/${currentTrip?.riderKey}`, {
+      status: 'no_show',
+      driverId: driverData.id,
+      noShowAt: Date.now(),
+    });
     await fbSet(`driver_notifications/${driverData.id}`, null);
 
     if (currentTrip?.tripId) {
@@ -945,6 +1135,14 @@ export default function DriverApp() {
     }
 
     stopPickupWait();
+    const noShowResult = await sendSentryLifecycleStatus(currentTrip?.tripId, currentTrip?.arrivedAt ? 8 : 7, {
+      cancel_reason_id: 1,
+      cancelled_at: noShowAt,
+      ...(currentTrip?.arrivedAt ? { pick_up_arrival_timestamp: currentTrip.arrivedAt } : {}),
+    });
+    if (noShowResult && !noShowResult.ok && !noShowResult.skipped) {
+      showToast(`No-show saved locally, but Sentry status update failed. ${noShowResult.error || `HTTP ${noShowResult.status}`}`);
+    }
     await publishTripAlert(
       'driver_marked_no_show',
       `${driverData?.name || 'Driver'} marked a rider as no-show for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
@@ -955,20 +1153,44 @@ export default function DriverApp() {
     setSheetState('waiting');
   }
 
-  async function completeTrip() {
+  async function completeTrip(meta = {}) {
     const tripEarnings = driverRecord?.pay_rate && driverRecord?.pay_rate_type === 'per_trip'
       ? parseFloat(driverRecord.pay_rate)
       : null;
 
     const completedAt = new Date().toISOString();
+    const completionMeta = normalizeCompletionMeta(meta);
+    const effectiveCollectedFare = completionMeta.collectedFare ?? (
+      currentTrip?.isTestTrip ? 1.8 : null
+    );
+    const lifecycleExtras = {
+      drop_off_timestamp: completedAt,
+      pick_up_timestamp: currentTrip?.pickedUpAt || null,
+      pick_up_arrival_timestamp: currentTrip?.arrivedAt || null,
+      collected_fare: effectiveCollectedFare,
+      collected_fare_amount: effectiveCollectedFare,
+      is_next_day: completionMeta.isNextDay ? 1 : 0,
+      next_day: completionMeta.isNextDay ? 1 : 0,
+      next_day_requested_at: completionMeta.isNextDay ? completedAt : null,
+    };
 
     await fbSet(`trip_assignments/${currentTrip?.tripId}`, { status: 'completed', driverId: driverData.id, completedAt: Date.now() });
-    await fbSet(`rider_tracking/${currentTrip?.riderKey}`, { status: 'completed' });
+    await fbUpdate(`rider_tracking/${currentTrip?.riderKey}`, {
+      status: 'completed',
+      completedAt: Date.now(),
+    });
 
     if (currentTrip?.tripId) {
       const { error: taErr } = await supabase
         .from('trip_assignments')
-        .update({ status: 'completed', completed_at: completedAt })
+        .update({
+          status: 'completed',
+          completed_at: completedAt,
+          actual_dropoff_time: completedAt,
+          collected_fare: effectiveCollectedFare,
+          is_next_day: completionMeta.isNextDay,
+          next_day_requested_at: completionMeta.isNextDay ? completedAt : null,
+        })
         .eq('trip_id', currentTrip.tripId);
       if (taErr) logFailure('DriverApp:completeTrip:trip_assignments', taErr);
 
@@ -977,9 +1199,10 @@ export default function DriverApp() {
         .update({ status: 'completed' })
         .eq('sentry_trip_id', String(currentTrip.tripId));
 
-      await sendSentryLifecycleStatus(currentTrip.tripId, 7, {
-        completed_at: completedAt,
-      });
+      const completionResult = await sendSentryLifecycleStatus(currentTrip.tripId, 6, lifecycleExtras);
+      if (completionResult && !completionResult.ok && !completionResult.skipped) {
+        showToast(`Trip completed locally, but Sentry completion sync failed. ${completionResult.error || `HTTP ${completionResult.status}`}`);
+      }
     }
 
     if (driverRecord?.id) {
@@ -990,7 +1213,12 @@ export default function DriverApp() {
       'driver_dropped_off_rider',
       `${driverData?.name || 'Driver'} dropped off the rider for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
       'info',
-      { status: 'completed', completed_at: completedAt }
+      {
+        status: 'completed',
+        completed_at: completedAt,
+        collected_fare: effectiveCollectedFare,
+        is_next_day: completionMeta.isNextDay,
+      }
     );
 
     consecutiveTripsRef.current += 1;
@@ -1084,6 +1312,18 @@ export default function DriverApp() {
     : earnings;
 
   const hoursWorked = ((Date.now() - shiftStartRef.current) / 3600000).toFixed(1);
+  const tripStarted = Boolean(
+    currentTrip?.acceptedAt ||
+    currentTrip?.arrivedAt ||
+    currentTrip?.pickedUpAt ||
+    ['navigation', 'to_dropoff'].includes(sheetState)
+  );
+  const testChecklist = [
+    { label: 'Accept trip', done: tripStarted },
+    { label: 'Arrive at pickup', done: Boolean(currentTrip?.arrivedAt) || sheetState === 'to_dropoff' },
+    { label: 'Pick up rider', done: Boolean(currentTrip?.pickedUpAt) },
+    { label: 'Complete trip', done: tripStarted && sheetState === 'waiting' && !currentTrip },
+  ];
 
   if (showOnboarding) {
     return <OnboardingSlides onDone={completeDriverOnboarding} />;
@@ -1096,6 +1336,17 @@ export default function DriverApp() {
           role={role}
           company={company}
           onSelectDriver={launchDriverSession}
+          onExit={() => {
+            if (role === 'admin') {
+              window.location.assign('/admin/platform');
+              return;
+            }
+            if (role === 'company') {
+              window.location.assign('/company/dashboard');
+              return;
+            }
+            window.history.back();
+          }}
         />
       );
     }
@@ -1103,10 +1354,20 @@ export default function DriverApp() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col" style={{ background: '#07090d', fontFamily: 'Inter,sans-serif' }}>
-      <div className="flex items-center justify-between px-4 py-3 z-10 absolute top-0 left-0 right-0"
-        style={{ background: 'linear-gradient(to bottom, rgba(7,9,13,0.95), transparent)' }}>
-        <div className="flex items-center gap-2.5">
+    <div className="fixed inset-0 flex flex-col mobile-safe-bottom" style={{ background: '#07090d', fontFamily: 'Inter,sans-serif' }}>
+      <div className="flex items-center justify-between px-4 py-3 z-10 absolute left-0 right-0 gap-2"
+        style={{ top: 'calc(var(--safe-top) + 8px)', background: 'linear-gradient(to bottom, rgba(7,9,13,0.95), transparent)' }}>
+        <div className="flex items-center gap-2.5 min-w-0">
+          {role === 'admin' && (
+            <Link
+              to="/admin/platform"
+              className="px-3 h-9 flex items-center justify-center gap-1.5 rounded-full flex-shrink-0"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#e5e7eb', textDecoration: 'none' }}
+            >
+              <X className="w-4 h-4" />
+              <span className="text-xs font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>Exit</span>
+            </Link>
+          )}
           <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-700"
             style={{ background: 'rgba(201,168,76,0.2)', color: '#c9a84c', border: '2px solid rgba(201,168,76,0.4)', fontWeight: 700 }}>
             {driverData?.name?.charAt(0).toUpperCase() || 'D'}
@@ -1118,6 +1379,17 @@ export default function DriverApp() {
               <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
                 {location ? 'GPS Active' : 'Getting GPS...'}
               </span>
+              {gpsIssue && (
+                <button
+                  type="button"
+                  onClick={retryGpsLocation}
+                  className="text-[10px] px-2 py-0.5 rounded-full"
+                  style={{ background: 'rgba(255,71,87,0.14)', color: '#ff8a95', border: '1px solid rgba(255,71,87,0.25)' }}
+                  title={gpsIssue}
+                >
+                  Fix GPS
+                </button>
+              )}
               {driverData?.adminPreview && (
                 <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(201,168,76,0.14)', color: '#c9a84c' }}>
                   ADMIN TEST DRIVER
@@ -1137,16 +1409,17 @@ export default function DriverApp() {
           </div>
           <button
             onClick={() => setShowMenu(true)}
-            className="w-9 h-9 flex items-center justify-center rounded-full"
+            className="px-3 h-10 flex items-center justify-center gap-1.5 rounded-full"
             style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
           >
             <Menu className="w-4 h-4" style={{ color: '#e5e7eb' }} />
+            <span className="text-xs font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>Menu</span>
           </button>
         </div>
       </div>
 
       <div className="absolute z-10 left-0 right-0 flex gap-2 px-4"
-        style={{ top: 68, pointerEvents: 'none' }}>
+        style={{ top: 'calc(var(--safe-top) + 78px)', pointerEvents: 'none' }}>
         <div className="flex-1 flex items-center justify-between gap-3 px-3 py-2 rounded-2xl text-xs"
           style={{ background: 'rgba(13,17,23,0.92)', border: '1px solid rgba(255,255,255,0.08)', pointerEvents: 'auto' }}>
           <div>
@@ -1160,7 +1433,7 @@ export default function DriverApp() {
       </div>
 
       <div className="absolute z-10 left-0 right-0 flex gap-2 px-4"
-        style={{ top: 140, pointerEvents: 'none' }}>
+        style={{ top: 'calc(var(--safe-top) + 150px)', pointerEvents: 'none' }}>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
           style={{ background: 'rgba(13,17,23,0.9)', border: '1px solid rgba(255,255,255,0.08)', pointerEvents: 'auto' }}>
           <TrendingUp className="w-3 h-3" style={{ color: '#00e5a0' }} />
@@ -1173,8 +1446,63 @@ export default function DriverApp() {
         </div>
       </div>
 
+      {driverInstruction?.message && (
+        <div className="absolute z-20 left-0 right-0 px-4" style={{ top: 'calc(var(--safe-top) + 198px)' }}>
+          <div
+            className="rounded-2xl px-4 py-3 flex items-start gap-3"
+            style={{ background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(56,189,248,0.22)', backdropFilter: 'blur(18px)' }}
+          >
+            <BellRing className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#38bdf8' }} />
+            <div className="flex-1">
+              <p className="text-xs font-700" style={{ color: '#38bdf8', fontWeight: 700 }}>Dispatch note</p>
+              <p className="text-sm mt-1" style={{ color: '#e5e7eb' }}>{driverInstruction.message}</p>
+            </div>
+            <button
+              onClick={() => setDriverInstruction(null)}
+              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)' }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(currentTrip?.isTestTrip || currentTrip?.testingNote) && (
+        <div className="absolute z-20 left-0 right-0 px-4" style={{ top: driverInstruction?.message ? 'calc(var(--safe-top) + 286px)' : 'calc(var(--safe-top) + 198px)' }}>
+          <div
+            className="rounded-2xl px-4 py-3"
+            style={{ background: 'rgba(13,17,23,0.92)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(18px)' }}
+          >
+            <div className="flex items-center gap-2">
+              <ClipboardList className="w-4 h-4" style={{ color: '#c9a84c' }} />
+              <p className="text-xs font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>Test trip checklist</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              {testChecklist.map(item => (
+                <div
+                  key={item.label}
+                  className="px-3 py-2 rounded-xl text-xs"
+                  style={{
+                    background: item.done ? 'rgba(0,229,160,0.1)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${item.done ? 'rgba(0,229,160,0.22)' : 'rgba(255,255,255,0.07)'}`,
+                    color: item.done ? '#00e5a0' : '#e5e7eb',
+                  }}
+                >
+                  {item.done ? 'Done' : 'Next'}: {item.label}
+                </div>
+              ))}
+            </div>
+            {currentTrip?.testingNote && (
+              <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                Dispatch note: {currentTrip.testingNote}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {countdown !== null && (
-        <div className="absolute z-30 top-36 left-1/2" style={{ transform: 'translateX(-50%)' }}>
+        <div className="absolute z-30 left-1/2" style={{ top: 'calc(var(--safe-top) + 144px)', transform: 'translateX(-50%)' }}>
           <div className="flex flex-col items-center gap-1 px-6 py-4 rounded-2xl"
             style={{ background: 'rgba(13,17,23,0.97)', border: '1px solid rgba(255,71,87,0.4)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
             <div className="w-14 h-14 rounded-full flex items-center justify-center relative">
@@ -1262,7 +1590,7 @@ export default function DriverApp() {
 
       <DriverMapView location={location} trip={currentTrip} sheetState={sheetState} />
 
-      <TripBottomSheet
+        <TripBottomSheet
         state={sheetState}
         trip={currentTrip}
         open={sheetOpen}
@@ -1270,6 +1598,7 @@ export default function DriverApp() {
         onRequestRides={requestRides}
         onAccept={acceptTrip}
         onReject={rejectTrip}
+        onStartRoute={startRouteToPickup}
         onArrive={markArrivedAtPickup}
         onConfirmPickup={confirmPickup}
         onNoShow={markNoShow}
@@ -1284,6 +1613,23 @@ export default function DriverApp() {
         pickupArrived={Boolean(currentTrip?.arrivedAt)}
         waitRemaining={waitRemaining}
         waitTargetMins={driverWaitMins}
+        sosButton={
+          <button
+            onPointerDown={() => handleSosPress(true)}
+            onPointerUp={() => handleSosPress(false)}
+            onPointerLeave={() => handleSosPress(false)}
+            className="w-11 h-11 rounded-full flex items-center justify-center select-none"
+            style={{
+              background: sosPressed ? `conic-gradient(#ff4757 ${sosProgress * 3.6}deg, rgba(255,71,87,0.15) 0deg)` : 'rgba(255,71,87,0.15)',
+              border: '2px solid rgba(255,71,87,0.4)',
+              boxShadow: sosPressed ? '0 0 20px rgba(255,71,87,0.5)' : 'none',
+              transition: 'box-shadow 0.1s',
+            }}
+            title="Hold for SOS"
+          >
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#ff4757', textAlign: 'center', lineHeight: 1.2 }}>SOS</span>
+          </button>
+        }
       />
 
       {incentiveGoals && (
@@ -1310,22 +1656,6 @@ export default function DriverApp() {
           onClose={() => setShowPaymentSetup(false)}
         />
       )}
-
-      <button
-        onPointerDown={() => handleSosPress(true)}
-        onPointerUp={() => handleSosPress(false)}
-        onPointerLeave={() => handleSosPress(false)}
-        className="fixed bottom-24 right-6 z-40 w-14 h-14 rounded-full flex items-center justify-center select-none"
-        style={{
-          background: sosPressed ? `conic-gradient(#ff4757 ${sosProgress * 3.6}deg, rgba(255,71,87,0.15) 0deg)` : 'rgba(255,71,87,0.15)',
-          border: '2px solid rgba(255,71,87,0.4)',
-          boxShadow: sosPressed ? '0 0 20px rgba(255,71,87,0.5)' : 'none',
-          transition: 'box-shadow 0.1s',
-        }}
-        title="Hold for SOS"
-      >
-        <span style={{ fontSize: 10, fontWeight: 700, color: '#ff4757', textAlign: 'center', lineHeight: 1.2 }}>SOS</span>
-      </button>
 
       {loggedIn && driverData && (
         <DriverChat
@@ -1368,10 +1698,22 @@ export default function DriverApp() {
           <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} />
           <div
             className="absolute right-0 top-0 bottom-0 flex flex-col"
-            style={{ width: 280, background: '#0d1117', borderLeft: '1px solid rgba(255,255,255,0.1)' }}
+            style={{ width: 280, background: '#0d1117', borderLeft: '1px solid rgba(255,255,255,0.1)', paddingTop: 'calc(var(--safe-top) + 12px)', paddingBottom: 'var(--safe-bottom)' }}
             onClick={e => e.stopPropagation()}
           >
-            <div className="px-5 pt-12 pb-6" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="px-5 pt-4 pb-6" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.36)', fontWeight: 700 }}>
+                  Driver Menu
+                </p>
+                <button
+                  onClick={() => setShowMenu(false)}
+                  className="w-9 h-9 rounded-full flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  <X className="w-4 h-4" style={{ color: '#e5e7eb' }} />
+                </button>
+              </div>
               <div className="flex items-center gap-3 mb-1">
                 <div className="w-12 h-12 rounded-full flex items-center justify-center text-base font-700"
                   style={{ background: 'rgba(201,168,76,0.2)', color: '#c9a84c', border: '2px solid rgba(201,168,76,0.4)', fontWeight: 700 }}>

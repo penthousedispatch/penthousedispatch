@@ -117,7 +117,7 @@ export default function HelpCenter() {
               <div>
                 <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>SentryMS Sandbox Setup</h2>
                 <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                  Step-by-step guide to connect your dispatcher to the SentryMS sandbox environment and start pulling live marketplace trips.
+                  Step-by-step guide to connect your dispatch workspace to the SentryMS sandbox environment and start pulling live marketplace trips.
                 </p>
               </div>
 
@@ -129,7 +129,7 @@ export default function HelpCenter() {
 
               <div className="space-y-0">
                 <Step n="1" title="Get SentryMS Sandbox Credentials">
-                  Contact your SentryMS account representative or log in to the SentryMS portal and request sandbox dispatcher credentials. You will receive a username and password for the test environment.
+                  Contact your SentryMS account representative or log in to the SentryMS portal and request sandbox transportation-provider credentials. You will receive a username and password for the test environment.
                   <br /><br />
                   If you already have credentials, skip to Step 2.
                 </Step>
@@ -305,9 +305,9 @@ export default function HelpCenter() {
                   icon={Lock}
                   color="#00e5a0"
                   items={[
-                    'Role-based access: admin, dispatcher, driver, company',
+                    'Role-based access: admin, company, and driver',
                     'Drivers can only see their own pay and trip assignments',
-                    'Dispatchers cannot access billing or admin functions',
+                    'Company users cannot access platform-only admin functions',
                     'All API requests require authenticated sessions',
                     'Session tokens expire automatically after inactivity',
                   ]}
@@ -318,9 +318,9 @@ export default function HelpCenter() {
                   color="#0ea5e9"
                   items={[
                     'Revenue targets are hidden from driver-facing views',
-                    'Margin data is restricted to admin and dispatcher roles',
+                    'Margin data is restricted to admin and company management views',
                     'Driver pay shows only their hourly/per-trip rate',
-                    'Trip pricing shown to dispatchers only',
+                    'Trip pricing shown only in management views',
                     'GPS location shared only during active shifts',
                   ]}
                 />
@@ -355,7 +355,7 @@ export default function HelpCenter() {
                   items={[
                     'Bots operate with minimum required permissions',
                     'All bot actions are logged with timestamps',
-                    'Auto-assign requires explicit dispatcher enablement',
+                    'Auto-assign requires explicit management enablement',
                     'SecurityBot flags anomalies but does not auto-resolve',
                     'Bot intervals configurable — never override manual actions',
                   ]}
@@ -407,7 +407,7 @@ export default function HelpCenter() {
                   },
                   {
                     q: 'How do I prevent drivers from seeing the $60/hr revenue target?',
-                    a: 'This is enforced by design. The driver app only shows their pay rate ($35/hr) and their individual trip earnings. Revenue targets, pricing, and margins are only visible to dispatchers and admins.',
+                    a: 'This is enforced by design. The driver app only shows their pay rate ($35/hr) and their individual trip earnings. Revenue targets, pricing, and margins are only visible in company and admin management views.',
                   },
                   {
                     q: 'The auto-scheduler assigned 0 trips — why?',
