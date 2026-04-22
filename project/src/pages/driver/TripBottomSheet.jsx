@@ -1,6 +1,25 @@
 import React, { useState } from 'react';
 import { Navigation, Users, ExternalLink, Zap, CheckCircle, AlertTriangle, MoreVertical, Map, Phone, Flag, ChevronRight, X } from 'lucide-react';
 
+function formatTripPickupTime(puTime) {
+  if (puTime === null || puTime === undefined) return '';
+  const raw = String(puTime).trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    }
+  }
+  return raw;
+}
+
 export default function TripBottomSheet({
   state, trip, open, onToggle,
   onRequestRides, onAccept, onReject,
@@ -218,7 +237,9 @@ export default function TripBottomSheet({
                     <div>
                       <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>PICKUP</p>
                       <p className="text-sm font-500" style={{ color: '#e5e7eb' }}>{trip.puAddress || 'Loading...'}</p>
-                      {trip.puTime && <p className="text-xs mt-0.5" style={{ color: '#c9a84c' }}>{trip.puTime}</p>}
+                      {trip.puTime && (
+                        <p className="text-xs mt-0.5" style={{ color: '#c9a84c' }}>{formatTripPickupTime(trip.puTime)}</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>DROPOFF</p>

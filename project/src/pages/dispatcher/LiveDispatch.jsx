@@ -454,21 +454,44 @@ export default function LiveDispatch() {
     }
 
     if (sentryApi.enabled && sentryApi.features.tripAcceptReject) {
-      const processedResult = await sentryApi.reportTripProcessed(trip.sentry_trip_id, lastModifiedAt);
-      await supabase.from('sentry_sync_log').insert({
-        sync_type: 'trip_processed',
-        direction: 'export',
-        record_type: 'trip',
-        external_id: trip.sentry_trip_id,
-        status: processedResult.ok ? 'success' : 'failed',
-        error_message: processedResult.ok ? '' : (processedResult.error || `HTTP ${processedResult.status}`),
-        payload: { driver_id: driver.id, driver_name: driver.full_name, trip_processing_status_id: 0 },
-      });
-      if (!processedResult.ok) {
-        showToast(
-          `Trip was assigned locally, but Sentry did not confirm the processed status. ${extractSentryError(processedResult)}`,
-          'error'
-        );
+      if (testTakeBypassed) {
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'trip_processed_skipped',
+          direction: 'internal',
+          record_type: 'trip',
+          external_id: trip.sentry_trip_id,
+          status: 'success',
+          error_message: 'Marketplace take did not succeed on Sentry; skipping processed sync.',
+          payload: { driver_id: driver.id, driver_name: driver.full_name },
+        });
+      } else {
+        let processedResult = await sentryApi.reportTripProcessed(trip.sentry_trip_id, lastModifiedAt);
+        if (!processedResult.ok && lastModifiedAt) {
+          processedResult = await sentryApi.reportTripProcessed(trip.sentry_trip_id, null);
+        }
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'trip_processed',
+          direction: 'export',
+          record_type: 'trip',
+          external_id: trip.sentry_trip_id,
+          status: processedResult.ok ? 'success' : 'failed',
+          error_message: processedResult.ok ? '' : (processedResult.error || `HTTP ${processedResult.status}`),
+          payload: { driver_id: driver.id, driver_name: driver.full_name, trip_processing_status_id: 0 },
+        });
+        if (!processedResult.ok) {
+          const detail = extractSentryError(processedResult);
+          if (options.isTestTrip) {
+            showToast(
+              `Trip assigned locally. Sentry processed sync failed (${detail}) — safe to ignore for sandbox test flows; the driver can still accept.`,
+              'warning'
+            );
+          } else {
+            showToast(
+              `Trip was assigned locally, but Sentry did not confirm the processed status. ${detail}`,
+              'error'
+            );
+          }
+        }
       }
     }
 
@@ -821,12 +844,28 @@ export default function LiveDispatch() {
     <div className="flex h-full overflow-hidden relative mobile-safe-bottom">
       {deleteToast && (
         <div
-          className="fixed top-4 left-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-600 shadow-lg"
+          className="fixed top-4 left-1/2 z-50 px-4 py-2.5 rounded-xl text-sm font-600 shadow-lg max-w-[min(520px,calc(100vw-24px))]"
           style={{
             transform: 'translateX(-50%)',
-            background: deleteToast.type === 'error' ? 'rgba(255,71,87,0.15)' : 'rgba(0,229,160,0.12)',
-            border: `1px solid ${deleteToast.type === 'error' ? 'rgba(255,71,87,0.3)' : 'rgba(0,229,160,0.3)'}`,
-            color: deleteToast.type === 'error' ? '#ff4757' : '#00e5a0',
+            background:
+              deleteToast.type === 'error'
+                ? 'rgba(255,71,87,0.15)'
+                : deleteToast.type === 'warning'
+                  ? 'rgba(201,168,76,0.12)'
+                  : 'rgba(0,229,160,0.12)',
+            border: `1px solid ${
+              deleteToast.type === 'error'
+                ? 'rgba(255,71,87,0.3)'
+                : deleteToast.type === 'warning'
+                  ? 'rgba(201,168,76,0.35)'
+                  : 'rgba(0,229,160,0.3)'
+            }`,
+            color:
+              deleteToast.type === 'error'
+                ? '#ff4757'
+                : deleteToast.type === 'warning'
+                  ? '#c9a84c'
+                  : '#00e5a0',
             fontWeight: 600,
           }}
         >

@@ -1559,7 +1559,7 @@ export default function DriverApp() {
         </div>
       )}
 
-      {countdown !== null && (
+      {countdown !== null && sheetState === 'new_trip' && !sheetOpen && (
         <div className="absolute z-30 left-1/2" style={{ top: 'calc(var(--safe-top) + 144px)', transform: 'translateX(-50%)' }}>
           <div className="flex flex-col items-center gap-1 px-6 py-4 rounded-2xl"
             style={{ background: 'rgba(13,17,23,0.97)', border: '1px solid rgba(255,71,87,0.4)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
