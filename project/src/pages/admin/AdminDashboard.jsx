@@ -97,6 +97,7 @@ function AdminPlatformHome() {
       items: [
         { path: '/admin/hub', label: 'Integration Hub', desc: 'Partner/provider health, credentials, and connection status.' },
         { path: '/admin/api-keys', label: 'API Keys', desc: 'Manage internal API access and downstream integrations.' },
+        { path: '/admin/incentives', label: 'Incentives', desc: 'Driver bonus goals, enrollments, and celebrations. Open a company preview first to scope programs to that fleet.' },
         { path: '/admin/sandbox', label: 'Test Mode', desc: 'Seed test trips, test drivers, and scheduler scenarios.' },
       ],
     },
