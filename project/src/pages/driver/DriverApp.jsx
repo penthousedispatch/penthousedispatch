@@ -240,6 +240,8 @@ export default function DriverApp() {
   const [zoneSaving, setZoneSaving] = useState(false);
   const [zoneSavedMessage, setZoneSavedMessage] = useState('');
   const [driverInstruction, setDriverInstruction] = useState(null);
+  const [statusDockDismissed, setStatusDockDismissed] = useState(false);
+  const [testChecklistDismissed, setTestChecklistDismissed] = useState(false);
   const [ridePreferences, setRidePreferences] = useState(DEFAULT_RIDE_PREFERENCES);
   const [driverWaitMins, setDriverWaitMins] = useState(5);
   const [waitRemaining, setWaitRemaining] = useState(null);
@@ -258,6 +260,28 @@ export default function DriverApp() {
 
   useEffect(() => { sheetStateRef.current = sheetState; }, [sheetState]);
   useEffect(() => { locationRef.current = location; }, [location]);
+
+  useEffect(() => {
+    setStatusDockDismissed(false);
+  }, [sheetState]);
+
+  useEffect(() => {
+    setTestChecklistDismissed(false);
+  }, [currentTrip?.tripId]);
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key !== 'Escape') return;
+      setShowMenu(false);
+      setDriverInstruction(null);
+      setPostTripSummary(null);
+      setMotivationToast(null);
+      setStatusDockDismissed(true);
+      setTestChecklistDismissed(true);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -1413,111 +1437,139 @@ export default function DriverApp() {
 
   return (
     <div className="fixed inset-0 flex flex-col mobile-safe-bottom" style={{ background: '#07090d', fontFamily: 'Inter,sans-serif' }}>
-      <div className="flex items-center justify-between px-4 py-3 z-10 absolute left-0 right-0 gap-2"
-        style={{ top: 'calc(var(--safe-top) + 8px)', background: 'linear-gradient(to bottom, rgba(7,9,13,0.95), transparent)' }}>
-        <div className="flex items-center gap-2.5 min-w-0">
-          {role === 'admin' && (
-            <Link
-              to="/admin/platform"
-              className="px-3 h-9 flex items-center justify-center gap-1.5 rounded-full flex-shrink-0"
-              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#e5e7eb', textDecoration: 'none' }}
-            >
-              <X className="w-4 h-4" />
-              <span className="text-xs font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>Exit</span>
-            </Link>
-          )}
-          <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-700"
-            style={{ background: 'rgba(201,168,76,0.2)', color: '#c9a84c', border: '2px solid rgba(201,168,76,0.4)', fontWeight: 700 }}>
-            {driverData?.name?.charAt(0).toUpperCase() || 'D'}
-          </div>
-          <div>
-            <p className="text-sm font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>{driverData?.name || 'Driver'}</p>
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#00e5a0', boxShadow: '0 0 4px #00e5a0' }} />
-              <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                {location ? 'GPS Active' : 'Getting GPS...'}
-              </span>
-              {gpsIssue && (
-                <button
-                  type="button"
-                  onClick={retryGpsLocation}
-                  className="text-[10px] px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(255,71,87,0.14)', color: '#ff8a95', border: '1px solid rgba(255,71,87,0.25)' }}
-                  title={gpsIssue}
-                >
-                  Fix GPS
-                </button>
-              )}
-              {driverData?.adminPreview && (
-                <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(201,168,76,0.14)', color: '#c9a84c' }}>
-                  ADMIN TEST DRIVER
+      <div
+        className="relative z-[100] shrink-0 px-4 pt-[calc(var(--safe-top)+8px)] pb-2"
+        style={{ background: 'rgba(7,9,13,0.98)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {role === 'admin' && (
+              <Link
+                to="/admin/platform"
+                className="px-3 h-9 flex items-center justify-center gap-1.5 rounded-full flex-shrink-0"
+                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#e5e7eb', textDecoration: 'none' }}
+              >
+                <X className="w-4 h-4" />
+                <span className="text-xs font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>Exit</span>
+              </Link>
+            )}
+            <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-700 flex-shrink-0"
+              style={{ background: 'rgba(201,168,76,0.2)', color: '#c9a84c', border: '2px solid rgba(201,168,76,0.4)', fontWeight: 700 }}>
+              {driverData?.name?.charAt(0).toUpperCase() || 'D'}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{driverData?.name || 'Driver'}</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#00e5a0', boxShadow: '0 0 4px #00e5a0' }} />
+                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  {location ? 'GPS Active' : 'Getting GPS...'}
                 </span>
-              )}
+                {gpsIssue && (
+                  <button
+                    type="button"
+                    onClick={retryGpsLocation}
+                    className="text-[10px] px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(255,71,87,0.14)', color: '#ff8a95', border: '1px solid rgba(255,71,87,0.25)' }}
+                    title={gpsIssue}
+                  >
+                    Fix GPS
+                  </button>
+                )}
+                {driverData?.adminPreview && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(201,168,76,0.14)', color: '#c9a84c' }}>
+                    ADMIN TEST DRIVER
+                  </span>
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full"
-            style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.2)' }}>
-            <DollarSign className="w-3.5 h-3.5" style={{ color: '#c9a84c' }} />
-            <span className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>
-              ${typeof displayEarnings.today === 'number' ? displayEarnings.today.toFixed(2) : '0.00'}
-            </span>
-          </div>
-          <button
-            onClick={() => setShowMenu(true)}
-            className="px-3 h-10 flex items-center justify-center gap-1.5 rounded-full"
-            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
-          >
-            <Menu className="w-4 h-4" style={{ color: '#e5e7eb' }} />
-            <span className="text-xs font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>Menu</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="absolute z-10 left-0 right-0 flex gap-2 px-4"
-        style={{ top: 'calc(var(--safe-top) + 78px)', pointerEvents: 'none' }}>
-        <div className="flex-1 flex items-center justify-between gap-3 px-3 py-2 rounded-2xl text-xs"
-          style={{ background: 'rgba(13,17,23,0.92)', border: '1px solid rgba(255,255,255,0.08)', pointerEvents: 'auto' }}>
-          <div>
-            <p style={{ color: '#e5e7eb', fontWeight: 700 }}>{statusMeta.label}</p>
-            <p style={{ color: 'rgba(255,255,255,0.42)' }}>{statusMeta.hint}</p>
-          </div>
-          <div className="px-2.5 py-1 rounded-full" style={{ background: 'rgba(201,168,76,0.12)', color: '#c9a84c', fontWeight: 700 }}>
-            {sheetState === 'waiting' ? 'Ready' : sheetState === 'new_trip' ? 'Respond' : 'Active'}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+              style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <TrendingUp className="w-3 h-3" style={{ color: '#00e5a0' }} />
+              <span style={{ color: '#e5e7eb' }}>{displayEarnings.trips || 0} trips</span>
+              <span style={{ color: 'rgba(255,255,255,0.25)' }}>·</span>
+              <Clock className="w-3 h-3" style={{ color: '#0ea5e9' }} />
+              <span style={{ color: '#e5e7eb' }}>{hoursWorked}h</span>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full"
+              style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.2)' }}>
+              <DollarSign className="w-3.5 h-3.5" style={{ color: '#c9a84c' }} />
+              <span className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>
+                ${typeof displayEarnings.today === 'number' ? displayEarnings.today.toFixed(2) : '0.00'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowMenu(true)}
+              className="px-3 h-10 flex items-center justify-center gap-1.5 rounded-full"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
+            >
+              <Menu className="w-4 h-4" style={{ color: '#e5e7eb' }} />
+              <span className="text-xs font-600 hidden sm:inline" style={{ color: '#e5e7eb', fontWeight: 600 }}>Menu</span>
+            </button>
           </div>
         </div>
-      </div>
 
-      <div className="absolute z-10 left-0 right-0 flex gap-2 px-4"
-        style={{ top: 'calc(var(--safe-top) + 150px)', pointerEvents: 'none' }}>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
-          style={{ background: 'rgba(13,17,23,0.9)', border: '1px solid rgba(255,255,255,0.08)', pointerEvents: 'auto' }}>
-          <TrendingUp className="w-3 h-3" style={{ color: '#00e5a0' }} />
-          <span style={{ color: '#e5e7eb' }}>{displayEarnings.trips || 0} trips</span>
-        </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
-          style={{ background: 'rgba(13,17,23,0.9)', border: '1px solid rgba(255,255,255,0.08)', pointerEvents: 'auto' }}>
-          <Clock className="w-3 h-3" style={{ color: '#0ea5e9' }} />
-          <span style={{ color: '#e5e7eb' }}>{hoursWorked}h shift</span>
-        </div>
+        {!statusDockDismissed && (
+          <div className="mt-2 flex flex-col sm:flex-row sm:items-stretch gap-2">
+            <div className="flex-1 flex items-start justify-between gap-2 px-3 py-2 rounded-xl text-xs min-w-0"
+              style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="min-w-0 pr-1">
+                <p className="truncate" style={{ color: '#e5e7eb', fontWeight: 700 }}>{statusMeta.label}</p>
+                <p className="text-[11px] leading-snug line-clamp-2 sm:line-clamp-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{statusMeta.hint}</p>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <span className="px-2 py-0.5 rounded-full text-[10px]" style={{ background: 'rgba(201,168,76,0.12)', color: '#c9a84c', fontWeight: 700 }}>
+                  {sheetState === 'waiting' ? 'Ready' : sheetState === 'new_trip' ? 'Respond' : 'Active'}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Dismiss status"
+                  title="Dismiss (Esc)"
+                  onClick={() => setStatusDockDismissed(true)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full text-base leading-none"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.65)' }}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="flex sm:hidden items-center gap-2">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs flex-1 justify-center"
+                style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <TrendingUp className="w-3 h-3" style={{ color: '#00e5a0' }} />
+                <span style={{ color: '#e5e7eb' }}>{displayEarnings.trips || 0} trips</span>
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs flex-1 justify-center"
+                style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <Clock className="w-3 h-3" style={{ color: '#0ea5e9' }} />
+                <span style={{ color: '#e5e7eb' }}>{hoursWorked}h</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {driverInstruction?.message && (
-        <div className="absolute z-20 left-0 right-0 px-4" style={{ top: 'calc(var(--safe-top) + 198px)' }}>
+        <div className="relative z-[100] shrink-0 px-4 pb-2 pointer-events-auto">
           <div
-            className="rounded-2xl px-4 py-3 flex items-start gap-3"
-            style={{ background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(56,189,248,0.22)', backdropFilter: 'blur(18px)' }}
+            className="mx-auto max-w-3xl md:max-w-xl md:ml-auto md:mr-0 rounded-xl px-3 py-2.5 flex items-start gap-3"
+            style={{ background: 'rgba(14,165,233,0.14)', border: '1px solid rgba(56,189,248,0.35)', boxShadow: '0 4px 24px rgba(0,0,0,0.35)' }}
           >
             <BellRing className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#38bdf8' }} />
-            <div className="flex-1">
-              <p className="text-xs font-700" style={{ color: '#38bdf8', fontWeight: 700 }}>Dispatch note</p>
-              <p className="text-sm mt-1" style={{ color: '#e5e7eb' }}>{driverInstruction.message}</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-700 uppercase tracking-wider" style={{ color: '#38bdf8', fontWeight: 700 }}>Dispatch note</p>
+              <p className="text-sm mt-0.5 leading-snug" style={{ color: '#e5e7eb' }}>{driverInstruction.message}</p>
             </div>
             <button
+              type="button"
+              aria-label="Dismiss dispatch note"
+              title="Dismiss (Esc)"
               onClick={() => setDriverInstruction(null)}
-              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)' }}
+              className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full"
+              style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)', color: '#e5e7eb', cursor: 'pointer' }}
             >
               <X className="w-4 h-4" />
             </button>
@@ -1525,17 +1577,29 @@ export default function DriverApp() {
         </div>
       )}
 
-      {(currentTrip?.isTestTrip || currentTrip?.testingNote) && (
-        <div className="absolute z-20 left-0 right-0 px-4" style={{ top: driverInstruction?.message ? 'calc(var(--safe-top) + 286px)' : 'calc(var(--safe-top) + 198px)' }}>
+      {(currentTrip?.isTestTrip || currentTrip?.testingNote) && !testChecklistDismissed && (
+        <div className="relative z-[100] shrink-0 px-4 pb-2 max-h-[34vh] overflow-y-auto pointer-events-auto">
           <div
-            className="rounded-2xl px-4 py-3"
-            style={{ background: 'rgba(13,17,23,0.92)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(18px)' }}
+            className="mx-auto max-w-3xl rounded-xl px-3 py-2.5"
+            style={{ background: 'rgba(13,17,23,0.96)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 4px 24px rgba(0,0,0,0.35)' }}
           >
-            <div className="flex items-center gap-2">
-              <ClipboardList className="w-4 h-4" style={{ color: '#c9a84c' }} />
-              <p className="text-xs font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>Test trip checklist</p>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <ClipboardList className="w-4 h-4 flex-shrink-0" style={{ color: '#c9a84c' }} />
+                <p className="text-xs font-700 truncate" style={{ color: '#c9a84c', fontWeight: 700 }}>Test trip checklist</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Hide checklist"
+                title="Hide (Esc)"
+                onClick={() => setTestChecklistDismissed(true)}
+                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full text-base leading-none"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.65)', cursor: 'pointer' }}
+              >
+                ×
+              </button>
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {testChecklist.map(item => (
                 <div
                   key={item.label}
@@ -1551,7 +1615,7 @@ export default function DriverApp() {
               ))}
             </div>
             {currentTrip?.testingNote && (
-              <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,0.6)' }}>
+              <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
                 Dispatch note: {currentTrip.testingNote}
               </p>
             )}
@@ -1559,11 +1623,24 @@ export default function DriverApp() {
         </div>
       )}
 
+      <div className="flex-1 min-h-0 relative z-0">
+      <DriverMapView location={location} trip={currentTrip} sheetState={sheetState} />
+
       {countdown !== null && sheetState === 'new_trip' && !sheetOpen && (
-        <div className="absolute z-30 left-1/2" style={{ top: 'calc(var(--safe-top) + 144px)', transform: 'translateX(-50%)' }}>
-          <div className="flex flex-col items-center gap-1 px-6 py-4 rounded-2xl"
+        <div className="absolute z-50 left-1/2 top-3 pointer-events-none" style={{ transform: 'translateX(-50%)' }}>
+          <div className="flex flex-col items-center gap-1 px-6 py-4 rounded-2xl pointer-events-auto"
             style={{ background: 'rgba(13,17,23,0.97)', border: '1px solid rgba(255,71,87,0.4)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
-            <div className="w-14 h-14 rounded-full flex items-center justify-center relative">
+            <button
+              type="button"
+              aria-label="Dismiss countdown"
+              title="Dismiss"
+              onClick={stopCountdown}
+              className="self-end -mr-1 -mt-1 w-7 h-7 flex items-center justify-center rounded-full text-xs"
+              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', cursor: 'pointer' }}
+            >
+              ×
+            </button>
+            <div className="w-14 h-14 rounded-full flex items-center justify-center relative -mt-1">
               <svg className="absolute inset-0" viewBox="0 0 56 56" style={{ transform: 'rotate(-90deg)' }}>
                 <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="4" />
                 <circle cx="28" cy="28" r="24" fill="none"
@@ -1583,9 +1660,18 @@ export default function DriverApp() {
       )}
 
       {postTripSummary && (
-        <div className="absolute z-30 top-24 left-4 right-4">
-          <div className="rounded-2xl p-4" style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.3)', backdropFilter: 'blur(20px)' }}>
-            <div className="flex items-center gap-2 mb-3">
+        <div className="absolute z-50 top-3 left-4 right-4 max-w-lg mx-auto pointer-events-auto">
+          <div className="rounded-2xl p-4 relative" style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.3)', backdropFilter: 'blur(20px)' }}>
+            <button
+              type="button"
+              aria-label="Close summary"
+              onClick={() => setPostTripSummary(null)}
+              className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full"
+              style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', color: '#e5e7eb', cursor: 'pointer' }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-2 mb-3 pr-8">
               <CheckCircle className="w-5 h-5" style={{ color: '#00e5a0' }} />
               <p className="font-700 text-sm" style={{ color: '#00e5a0', fontWeight: 700 }}>Trip #{postTripSummary.tripNumber} Complete!</p>
             </div>
@@ -1619,7 +1705,7 @@ export default function DriverApp() {
               <p className="text-xs font-700 mb-0.5" style={{ color: '#c9a84c', fontWeight: 700 }}>PENTHOUSE AI</p>
               <p className="text-sm" style={{ color: '#e5e7eb', lineHeight: 1.4 }}>{motivationToast}</p>
             </div>
-            <button onClick={() => setMotivationToast(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: 2 }}>
+            <button type="button" aria-label="Dismiss" onClick={() => setMotivationToast(null)} className="w-8 h-8 flex items-center justify-center rounded-full flex-shrink-0" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', cursor: 'pointer' }}>
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -1627,7 +1713,7 @@ export default function DriverApp() {
       )}
 
       {sosActive && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center"
+        <div className="absolute inset-0 z-[60] flex items-center justify-center"
           style={{ background: 'rgba(255,71,87,0.12)', backdropFilter: 'blur(4px)' }}>
           <div className="px-8 py-6 rounded-2xl text-center mx-6"
             style={{ background: 'rgba(13,17,23,0.97)', border: '2px solid #ff4757', boxShadow: '0 0 40px rgba(255,71,87,0.4)' }}>
@@ -1645,8 +1731,7 @@ export default function DriverApp() {
           </div>
         </div>
       )}
-
-      <DriverMapView location={location} trip={currentTrip} sheetState={sheetState} />
+      </div>
 
         <TripBottomSheet
         state={sheetState}
@@ -1752,7 +1837,7 @@ export default function DriverApp() {
       )}
 
       {showMenu && (
-        <div className="fixed inset-0 z-50 flex" onClick={() => setShowMenu(false)}>
+        <div className="fixed inset-0 z-[200] flex" onClick={() => setShowMenu(false)}>
           <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} />
           <div
             className="absolute right-0 top-0 bottom-0 flex flex-col"

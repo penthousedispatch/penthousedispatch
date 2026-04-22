@@ -215,9 +215,9 @@ export default function DriverMapView({ location, trip, sheetState }) {
   }, [sheetState, location, trip, mapsLoaded]);
 
   return (
-    <div className="absolute inset-0">
+    <div className="absolute inset-0 z-0">
       <div ref={mapRef} className="w-full h-full" />
-      <div className="absolute left-4 right-4 top-4 z-20 flex items-start justify-between gap-3" style={{ top: 'calc(var(--safe-top) + 208px)' }}>
+      <div className="absolute left-3 right-3 z-20 flex flex-wrap items-start justify-between gap-2 pointer-events-auto" style={{ top: 12, maxWidth: '100%' }}>
         <div className="flex flex-wrap gap-2">
           {[
             { id: 'route', label: 'Route', icon: Route },
@@ -261,7 +261,7 @@ export default function DriverMapView({ location, trip, sheetState }) {
         </div>
       </div>
       {navSummary && activeDestination && (
-        <div className="absolute left-4 right-4 z-20" style={{ top: 'calc(var(--safe-top) + 260px)' }}>
+        <div className="absolute left-3 right-3 z-20 max-w-full pointer-events-auto" style={{ top: 64 }}>
           <div
             className="rounded-2xl px-4 py-3"
             style={{ background: 'rgba(13,17,23,0.9)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(16px)' }}
