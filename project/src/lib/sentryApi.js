@@ -91,6 +91,33 @@ async function parseResponsePayload(res) {
   }
 }
 
+/** Edge function `sentry-outbound` wraps upstream JSON as `{ latencyMs, status, data }`. */
+function unwrapEdgeOutboundSuccessPayload(parsed) {
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  if (
+    'latencyMs' in parsed &&
+    'data' in parsed &&
+    !('phase' in parsed) &&
+    !('error_type' in parsed)
+  ) {
+    return parsed.data;
+  }
+  return parsed;
+}
+
+/** Normalize Sentry trip list shapes (array root, or `trips` / `marketplace_trips` / etc.). */
+export function extractSentryTripArray(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (typeof payload !== 'object') return [];
+  const keys = ['trips', 'marketplace_trips', 'trip', 'items', 'records'];
+  for (const k of keys) {
+    const v = payload[k];
+    if (Array.isArray(v)) return v;
+  }
+  return [];
+}
+
 async function wait(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -217,7 +244,8 @@ class SentryApiClient {
 
           if (res.ok || !shouldRetryStatus(res.status) || attempt === 1) {
             if (res.ok) {
-              return { ok: true, status: res.status, data, latency };
+              const unwrapped = unwrapEdgeOutboundSuccessPayload(data);
+              return { ok: true, status: res.status, data: unwrapped, latency };
             }
 
             const { error, errorType } = extractErrorFromPayload(data, res.status, 'edge');
@@ -364,7 +392,9 @@ class SentryApiClient {
       ...params,
     };
     const qs = new URLSearchParams(query).toString();
-    return this.request('GET', `/rest/transportation_provider_facade/v4.0/trips.json${qs ? '?' + qs : ''}`);
+    const result = await this.request('GET', `/rest/transportation_provider_facade/v4.0/trips.json${qs ? '?' + qs : ''}`);
+    if (!result.ok) return result;
+    return { ...result, data: extractSentryTripArray(result.data) };
   }
 
   // Alias kept for backward compat
@@ -383,7 +413,9 @@ class SentryApiClient {
       ...params,
     };
     const qs = new URLSearchParams(query).toString();
-    return this.request('GET', `/rest/transportation_provider_facade/v4.0/marketplace_trips.json${qs ? '?' + qs : ''}`);
+    const result = await this.request('GET', `/rest/transportation_provider_facade/v4.0/marketplace_trips.json${qs ? '?' + qs : ''}`);
+    if (!result.ok) return result;
+    return { ...result, data: extractSentryTripArray(result.data) };
   }
 
   async takeMarketplaceTrip(tripId, data = {}) {
