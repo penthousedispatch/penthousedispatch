@@ -56,6 +56,8 @@ export function AppProvider({ children }) {
   const autoPullRef = useRef(null);
   const schedRunningRef = useRef(false);
   const orgIdRef = useRef(null);
+  /** Always-current company id for Sentry poll (interval closures were stale vs React state). */
+  const sentryPollCompanyIdRef = useRef(null);
   const billingSyncRef = useRef(0);
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
@@ -63,6 +65,16 @@ export function AppProvider({ children }) {
   const normalizedRole = normalizeAppRole(profile?.role);
   const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
   const isCompanyRole = normalizedRole === 'company';
+
+  useEffect(() => {
+    if (normalizedRole === 'admin') {
+      sentryPollCompanyIdRef.current = adminPreviewCompany?.id ?? null;
+    } else if (isCompanyRole) {
+      sentryPollCompanyIdRef.current = company?.id ?? profile?.company_id ?? null;
+    } else {
+      sentryPollCompanyIdRef.current = null;
+    }
+  }, [normalizedRole, isCompanyRole, company?.id, adminPreviewCompany?.id, profile?.company_id]);
 
   async function fetchProfileWithRetry(userId, attempts = 2) {
     let lastError = null;
@@ -317,6 +329,7 @@ export function AppProvider({ children }) {
         setOrg(null);
         setCompany(null);
         setAdminPreviewCompany(null);
+        sentryPollCompanyIdRef.current = null;
         setLoading(false);
       }
     }
@@ -334,6 +347,7 @@ export function AppProvider({ children }) {
         setOrg(null);
         setCompany(null);
         setAdminPreviewCompany(null);
+        sentryPollCompanyIdRef.current = null;
         setLoading(false);
         if (autoPullRef.current) { clearInterval(autoPullRef.current); autoPullRef.current = null; }
       }
@@ -566,12 +580,7 @@ export function AppProvider({ children }) {
       if (!autoPullRef.current) {
         autoPullRef.current = setInterval(async () => {
           if (!sentryApi.enabled) return;
-          const scopedCompanyId =
-            isCompanyRole
-              ? activeCompany?.id || null
-              : normalizedRole === 'admin'
-                ? adminPreviewCompany?.id || null
-                : null;
+          const scopedCompanyId = sentryPollCompanyIdRef.current;
 
           function mapTrip(t) {
             const pickup = t.pick_up_location || {};
@@ -864,10 +873,18 @@ export function AppProvider({ children }) {
     let lastError = null;
     const scopedCompanyId =
       isCompanyRole
-        ? activeCompany?.id || null
+        ? activeCompany?.id || profile?.company_id || sentryPollCompanyIdRef.current || null
         : normalizedRole === 'admin'
           ? adminPreviewCompany?.id || null
           : null;
+
+    if (isCompanyRole && !scopedCompanyId) {
+      await loadTrips();
+      return {
+        count: 0,
+        error: 'Company scope is not ready (no company id). Reload the page or finish company onboarding.',
+      };
+    }
 
     if (sentryApi.features.marketplaceTrips) {
       const result = await sentryApi.getMarketplaceTrips();
@@ -963,7 +980,7 @@ export function AppProvider({ children }) {
     let updated = 0;
     const scopedCompanyId =
       isCompanyRole
-        ? activeCompany?.id || null
+        ? activeCompany?.id || profile?.company_id || sentryPollCompanyIdRef.current || null
         : normalizedRole === 'admin'
           ? adminPreviewCompany?.id || null
           : null;
