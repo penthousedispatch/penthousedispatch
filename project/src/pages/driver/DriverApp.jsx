@@ -125,12 +125,18 @@ function buildLifecycleRetryPayload(payload = {}) {
   };
 }
 
-function shouldDowngradeLifecycleFailure(statusId, result) {
+function shouldDowngradeLifecycleFailure(statusId, result, trip = null) {
   const status = Number(result?.status || 0);
-  // Upstream validation noise can return 422 even when local lifecycle is valid.
-  if (status === 422) return true;
-  // Completion/no-show can race with broker closure on sandbox rows.
-  if (status === 404 && [6, 7, 8].includes(Number(statusId))) return true;
+  const lifecycleId = Number(statusId || 0);
+  const localTestTrip = shouldSkipUpstreamSentryForDriverTestTrip(trip || {});
+
+  // Never mask acceptance / en-route failures: Sentry proof depends on these.
+  if ([2, 3].includes(lifecycleId)) return false;
+
+  // Only tolerate known sandbox noise on local test trips.
+  if (localTestTrip && status === 422) return true;
+  // Completion/no-show can race with broker closure on local sandbox rows.
+  if (localTestTrip && status === 404 && [6, 7, 8].includes(lifecycleId)) return true;
   return false;
 }
 
@@ -1215,7 +1221,10 @@ export default function DriverApp() {
       }
     }
 
-    const downgradedFailure = !sentryResult.ok && shouldDowngradeLifecycleFailure(statusId, sentryResult);
+    const downgradedFailure = !sentryResult.ok && shouldDowngradeLifecycleFailure(statusId, sentryResult, {
+      ...currentTrip,
+      tripId,
+    });
     const effectiveResult = downgradedFailure
       ? {
           ...sentryResult,
