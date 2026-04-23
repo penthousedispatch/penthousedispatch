@@ -122,8 +122,13 @@ export async function runAutoScheduler({ drivers, trips, assignments, config, or
   }
 
   if (!dryRun && config.auto_assign) {
+    const claimedTripIds = new Set(assignedTripIds);
     for (const { driver, trips: tripList } of results) {
       for (const trip of tripList) {
+        const tripId = String(trip.sentry_trip_id || '');
+        if (!tripId || claimedTripIds.has(tripId)) {
+          continue;
+        }
         const schedulerMeta = trip._meta || {};
         const driverLat = Number(driver.current_lat);
         const driverLng = Number(driver.current_lng);
@@ -132,7 +137,7 @@ export async function runAutoScheduler({ drivers, trips, assignments, config, or
           : null;
 
         const { error: assignmentError } = await supabase.from('trip_assignments').insert({
-          trip_id: trip.sentry_trip_id,
+          trip_id: tripId,
           driver_id: driver.id,
           company_id: driver.company_id || trip.company_id || null,
           driver_name: driver.full_name,
@@ -155,6 +160,7 @@ export async function runAutoScheduler({ drivers, trips, assignments, config, or
           logFailure('runAutoScheduler:insertAssignment', assignmentError);
           continue;
         }
+        claimedTripIds.add(tripId);
 
         const { error: tripUpdateError } = await supabase
           .from('marketplace_trips')
@@ -163,7 +169,7 @@ export async function runAutoScheduler({ drivers, trips, assignments, config, or
             taken_by: driver.id,
             company_id: driver.company_id || trip.company_id || null,
           })
-          .eq('sentry_trip_id', trip.sentry_trip_id);
+          .eq('sentry_trip_id', tripId);
         if (tripUpdateError) {
           logFailure('runAutoScheduler:updateMarketplaceTrip', tripUpdateError);
         }

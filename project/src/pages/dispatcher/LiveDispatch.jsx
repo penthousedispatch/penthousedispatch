@@ -29,6 +29,8 @@ const TEST_NOTE_PREFIX = '[TEST_NOTE]';
 const LOCAL_ACTIVE_ASSIGNMENT_STATUSES = new Set(['pending', 'accepted', 'arrived', 'picked_up', 'completed']);
 /** Trip rows in these states still "hold" the trip for dispatch (no second assign). */
 const TRIP_LOCK_STATUSES = new Set(['pending', 'accepted', 'arrived', 'picked_up']);
+const IN_PROGRESS_TRIP_STATUSES = new Set(['accepted', 'arrived', 'picked_up']);
+const QUEUE_WINDOW_MINS = 20;
 
 function normalizeTripId(value) {
   return value === null || value === undefined ? '' : String(value);
@@ -36,6 +38,24 @@ function normalizeTripId(value) {
 
 function isTripLockStatus(status) {
   return TRIP_LOCK_STATUSES.has(String(status || '').toLowerCase());
+}
+
+function parseScheduleEpoch(value) {
+  const parsed = new Date(value || '').getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function deriveActiveTripCompletionEpoch(assignment) {
+  const direct = parseScheduleEpoch(
+    assignment?.actual_dropoff_time ||
+    assignment?.scheduled_dropoff_time ||
+    assignment?.do_time
+  );
+  if (direct) return direct;
+  const pickup = parseScheduleEpoch(assignment?.actual_pickup_time || assignment?.accepted_at || assignment?.assigned_at);
+  if (!pickup) return null;
+  const fallbackDurationMins = Math.max(12, Math.round((Number(assignment?.mileage || 0) || 0) * 3));
+  return pickup + fallbackDurationMins * 60 * 1000;
 }
 
 function tripOfferFingerprintFromTrip(t) {
@@ -191,9 +211,11 @@ function buildMarketplaceTakePayload(tripId, driver) {
   return payload;
 }
 
-function buildLocalOnlyTestTrip({ companyId, driver, testingNote = '' } = {}) {
+function buildLocalOnlyTestTrip({ companyId, driver, testingNote = '', scheduledPickupAt = null } = {}) {
   const now = new Date();
-  const pickup = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+  const pickupEpoch = parseScheduleEpoch(scheduledPickupAt) || (now.getTime() + 10 * 60 * 1000);
+  const pickup = new Date(pickupEpoch).toISOString();
+  const dropoff = new Date(pickupEpoch + 25 * 60 * 1000).toISOString();
   const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
   return {
     id: `local-test-${Date.now()}-${suffix}`,
@@ -210,7 +232,7 @@ function buildLocalOnlyTestTrip({ companyId, driver, testingNote = '' } = {}) {
     do_address: '350 Jay St, Brooklyn, NY 11201',
     do_city: 'Brooklyn',
     do_zip: '11201',
-    do_time: new Date(now.getTime() + 35 * 60 * 1000).toISOString(),
+    do_time: dropoff,
     delivery_price: '98.00',
     status: 'available',
     company_id: companyId || driver?.company_id || null,
@@ -888,8 +910,8 @@ export default function LiveDispatch() {
     driverHasLockConflict(selectedDriver.id);
 
   const assignTestTripReady = useMemo(
-    () => companyOpenTrips.length > 0 && Boolean(getBestAvailableDriver()),
-    [companyOpenTrips, drivers, assignments, selectedDriver?.id]
+    () => Boolean(getBestAvailableDriver()),
+    [drivers, assignments, selectedDriver?.id, allowMultiTripTake]
   );
 
   function showToast(msg, type = 'success') {

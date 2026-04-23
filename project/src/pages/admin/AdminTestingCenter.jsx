@@ -33,7 +33,7 @@ const TEST_DEFS = [
   {
     id: 'sentry_strict_partials',
     label: 'Sentry checklist §17–20 (was PARTIAL)',
-    desc: 'Assignment-type reference log, outbound driver/vehicle GET harness, broker-cancel trips_receiver simulation, and replay reminder.',
+    desc: 'Assignment-type reference log, outbound driver/vehicle GET harness, trip copy probe, broker-cancel trips_receiver simulation, and replay reminder.',
   },
   { id: 'webhook', label: 'Webhook Test', desc: 'Send test payloads to all 3 webhook endpoints' },
   { id: 'trip_flow', label: 'Trip Flow Proof Prep', desc: 'Creates a driver-visible pending trip; finish the proof inside Driver App' },
@@ -465,6 +465,32 @@ export default function AdminTestingCenter() {
         if (!vone.ok) allPassed = false;
       } else {
         addLog(testId, 'getVehicle: skipped (empty list)', 'warn');
+      }
+    }
+
+    addLog(testId, '§31 — Trip copy endpoint probe...', 'info');
+    const marketplaceProbe = await sentryApi.getMarketplaceTrips();
+    if (!marketplaceProbe.ok) {
+      addLog(testId, `trip copy probe skipped — marketplace list unavailable (${marketplaceProbe.error || `HTTP ${marketplaceProbe.status}`})`, 'warn');
+    } else {
+      const marketplaceTrips = Array.isArray(marketplaceProbe.data) ? marketplaceProbe.data : [];
+      const sourceTripId = marketplaceTrips[0]?.trip_id || marketplaceTrips[0]?.id || null;
+      if (!sourceTripId) {
+        addLog(testId, 'trip copy probe skipped — no marketplace trips available to use as a source.', 'warn');
+      } else {
+        const copyResult = await sentryApi.copyTrip(sourceTripId, { source_trip_id: sourceTripId });
+        if (copyResult.ok) {
+          addLog(testId, `trip copy probe PASS for trip ${sourceTripId}`, 'success');
+        } else if ([400, 404, 405].includes(Number(copyResult.status || 0))) {
+          addLog(
+            testId,
+            `trip copy endpoint reachable but not accepted for this source/context (${copyResult.error || `HTTP ${copyResult.status}`}).`,
+            'warn',
+          );
+        } else {
+          addLog(testId, `trip copy probe FAIL — ${copyResult.error || `HTTP ${copyResult.status}`}`, 'error');
+          allPassed = false;
+        }
       }
     }
 
