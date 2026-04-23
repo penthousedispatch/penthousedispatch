@@ -1,0 +1,11 @@
+first_name,last_name,phone,gender,dob,license_number,license_state,license_class,tlc_number,status
+Aiden,Rowe,9175552001,Male,01/12/1989,NY2003001,New York,E,TLC9001001,Active
+Maya,Patel,9175552002,Female,04/03/1991,NY2003002,New York,E,TLC9001002,Active
+Noah,Bennett,9175552003,Male,07/22/1985,NY2003003,New York,C,TLC9001003,Active
+Zoe,Campbell,9175552004,Female,11/09/1994,NY2003004,New York,E,TLC9001004,Inactive
+Liam,Diaz,9175552005,Male,09/30/1988,NY2003005,New York,E,TLC9001005,Active
+Emma,Singh,9175552006,Female,02/14/1990,NY2003006,New York,E,TLC9001006,Active
+Ethan,Walker,9175552007,Male,05/28/1987,NY2003007,New York,C,TLC9001007,Active
+Olivia,Reed,9175552008,Female,12/19/1992,NY2003008,New York,E,TLC9001008,Active
+Lucas,Morris,9175552009,Male,08/05/1984,NY2003009,New York,E,TLC9001009,Inactive
+Ava,Hughes,9175552010,Female,03/17/1993,NY2003010,New York,E,TLC9001010,Active

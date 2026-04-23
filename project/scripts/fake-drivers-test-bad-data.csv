@@ -1,0 +1,11 @@
+first_name,last_name,phone,gender,dob,license_number,license_state,license_class,tlc_number,status
+Kai,Lopez,9175553001,Male,02/11/1990,NY3004001,New York,E,TLC9102001,Active
+Nora,Shaw,9175553002,Female,05/22/1992,NY3004002,New York,E,,Active
+,,9175553003,Female,07/14/1988,NY3004003,New York,E,TLC9102003,Active
+Milo,Grant,,Male,13/40/1991,NY3004004,New York,E,TLC9102004,Active
+Ivy,Stone,9175553005,Female,03/10/1993,,New York,E,TLC9102005,Active
+Owen,Brooks,9175553006,Male,08/08/1987,NY3004006,New York,,TLC9102006,Inactive
+Leah,Kim,9175553007,Female,10/30/1994,NY3004007,New York,E,TLC9102007,Yes
+Jude,Price,not-a-phone,Male,01/01/1985,NY3004008,New York,E,TLC9102008,No
+Aria,Quinn,9175553009,Female,04/12/1996,NY3004009,New York,E,TLC9102001,Active
+Eli,Hayes,9175553010,Male,11/18/1989,NY3004010,New York,E,TLC9102010,1
