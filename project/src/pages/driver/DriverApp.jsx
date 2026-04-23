@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight, Trophy, MapPin, ClipboardList, BellRing } from 'lucide-react';
 import { fbSet, fbGet, fbUpdate } from '../../lib/firebase';
 import { supabase } from '../../lib/supabase';
@@ -40,10 +40,14 @@ function getDriverOnboardingKey(driverId) {
 
 /** Persists admin/company embedded driver preview (and driver-role logins) across tab sleep / soft reloads. */
 const DRIVER_EMBED_SESSION_KEY = 'pd_driver_embed_session_v1';
+/** Persists direct driver-login sessions so refresh does not drop active trip context. */
+const DRIVER_LAST_SESSION_KEY = 'pd_driver_last_session_v1';
 
 const DRIVER_TEST_TRIP_MARKER = '[TEST_TRIP]';
 const CLAIMED_ASSIGNMENT_STATUSES = ['accepted', 'arrived', 'picked_up', 'completed', 'no_show'];
 const ACTIVE_DRIVER_ASSIGNMENT_STATUSES = ['accepted', 'arrived', 'picked_up'];
+const OFFER_ASSIGNMENT_STATUSES = ['pending', 'assigned'];
+const RESUMABLE_ASSIGNMENT_STATUSES = [...ACTIVE_DRIVER_ASSIGNMENT_STATUSES, ...OFFER_ASSIGNMENT_STATUSES];
 
 function isLocalOnlyTestTripId(tripId) {
   return String(tripId || '').startsWith('LOCAL-TEST-');
@@ -294,6 +298,7 @@ function DriverAccessChooser({ role, company, onSelectDriver, onExit, companyIdF
 export default function DriverApp() {
   const { user, role, company } = useApp();
   const routerLocation = useLocation();
+  const navigate = useNavigate();
   const [driverData, setDriverData] = useState(null);
   const [driverRecord, setDriverRecord] = useState(null);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -310,6 +315,7 @@ export default function DriverApp() {
   const [chatThreadId, setChatThreadId] = useState(null);
   const [showPaymentSetup, setShowPaymentSetup] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [resumingTrip, setResumingTrip] = useState(false);
   const [sosActive, setSosActive] = useState(false);
   const [sosPressed, setSosPressed] = useState(false);
   const [sosProgress, setSosProgress] = useState(0);
@@ -423,6 +429,12 @@ export default function DriverApp() {
     setShowOnboarding(!onboardingSeen && !onboardingComplete);
 
     try {
+      if (data?.id) {
+        localStorage.setItem(
+          DRIVER_LAST_SESSION_KEY,
+          JSON.stringify({ driverId: data.id, savedAt: Date.now() })
+        );
+      }
       if (user?.id && data?.id) {
         localStorage.setItem(
           DRIVER_EMBED_SESSION_KEY,
@@ -459,6 +471,37 @@ export default function DriverApp() {
     // launchDriverSession identity changes each render; we only want restore on auth/role/loggedIn edges.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [user?.id, role, loggedIn, routerLocation.search]);
+
+  useEffect(() => {
+    if (loggedIn || user?.id) return;
+    const params = new URLSearchParams(routerLocation.search);
+    if (params.get('driverId')) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = localStorage.getItem(DRIVER_LAST_SESSION_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed?.driverId) return;
+        const { data: row, error } = await supabase
+          .from('drivers')
+          .select('*')
+          .eq('id', parsed.driverId)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (cancelled || error || !row?.id) return;
+        await launchDriverSession(row);
+      } catch (e) {
+        logFailure('DriverApp:restoreDriverLastSession', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restore only when auth/loading edge changes
+  }, [loggedIn, user?.id, routerLocation.search]);
 
   useEffect(() => {
     if (loggedIn || !user?.id) return;
@@ -525,6 +568,7 @@ export default function DriverApp() {
     setGpsIssue('');
     try {
       localStorage.removeItem(DRIVER_EMBED_SESSION_KEY);
+      localStorage.removeItem(DRIVER_LAST_SESSION_KEY);
     } catch {}
     setLoggedIn(false);
     setDriverData(null);
@@ -774,11 +818,18 @@ export default function DriverApp() {
     fbSet(`drivers/${driverId}/coords`, coords);
     fbSet(`drivers/${driverId}/lastSeen`, Date.now());
     if (driverId) {
+      const inActiveTripFlow = Boolean(
+        currentTrip?.tripId && (
+          currentTrip?.acceptedAt ||
+          currentTrip?.arrivedAt ||
+          currentTrip?.pickedUpAt
+        )
+      );
       supabase.from('drivers').update({
         current_lat: coords.lat,
         current_lng: coords.lng,
         last_location_update: new Date().toISOString(),
-        status: 'online',
+        status: inActiveTripFlow ? 'on_trip' : 'online',
       }).eq('id', driverId).then(({ error }) => {
         if (error) logFailure('DriverApp:applyDriverLocation', error);
       });
@@ -853,18 +904,21 @@ export default function DriverApp() {
     }
 
     if (!surfacedTripFromFirebase && ['waiting', 'suggestions'].includes(sheetStateRef.current) && driver?.id) {
-      const { data: pendingRow, error: pendingErr } = await supabase
+      const { data: pendingRows, error: pendingErr } = await supabase
         .from('trip_assignments')
         .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, created_at')
         .eq('driver_id', driver.id)
-        .eq('status', 'pending')
+        .in('status', OFFER_ASSIGNMENT_STATUSES)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(5);
 
       if (pendingErr) {
         logFailure('DriverApp:pollForNotifications:pending_assignment', pendingErr);
-      } else if (pendingRow?.trip_id) {
+      } else {
+        const pendingRow = (pendingRows || [])[0];
+        if (!pendingRow?.trip_id) {
+          // no-op: no pending/assigned offers to surface
+        } else {
         const { data: mtRow } = await supabase
           .from('marketplace_trips')
           .select('status, sentry_last_modified_at, raw_payload, assignment_type_code')
@@ -911,48 +965,12 @@ export default function DriverApp() {
         setSheetState('new_trip');
         startTripCountdown(15);
         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+        }
       }
     }
 
     if (driver?.id && (!currentTrip?.tripId || ['waiting', 'suggestions'].includes(sheetStateRef.current))) {
-      const { data: activeRow, error: activeErr } = await supabase
-        .from('trip_assignments')
-        .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, created_at')
-        .eq('driver_id', driver.id)
-        .in('status', ACTIVE_DRIVER_ASSIGNMENT_STATUSES)
-        .order('accepted_at', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (activeErr) {
-        logFailure('DriverApp:pollForNotifications:active_assignment', activeErr);
-      } else if (activeRow?.trip_id) {
-        const { data: mtRow } = await supabase
-          .from('marketplace_trips')
-          .select('sentry_last_modified_at, raw_payload, assignment_type_code')
-          .eq('sentry_trip_id', String(activeRow.trip_id))
-          .maybeSingle();
-        const parsedNotes = parseTripAssignmentNotesForOffer(activeRow.notes);
-        const restoredTrip = {
-          type: 'active_trip',
-          tripId: activeRow.trip_id,
-          lastModifiedAt: mtRow?.sentry_last_modified_at || '',
-          puAddress: activeRow.pu_address || '',
-          doAddress: activeRow.do_address || '',
-          puTime: activeRow.pu_time || '',
-          ...(perTripPay ? { deliveryPrice: activeRow.delivery_price } : {}),
-          mileage: activeRow.mileage,
-          acceptedAt: activeRow.accepted_at || null,
-          arrivedAt: String(activeRow.status || '').toLowerCase() === 'arrived' ? (activeRow.accepted_at || null) : null,
-          pickedUpAt: String(activeRow.status || '').toLowerCase() === 'picked_up' ? (activeRow.actual_pickup_time || activeRow.accepted_at || null) : null,
-          testingNote: parsedNotes.testingNote,
-          isTestTrip: parsedNotes.isTestTrip,
-          ...deriveMtaFareInfo(mtRow || {}),
-        };
-        setCurrentTrip(restoredTrip);
-        setSheetState(deriveSheetStateFromAssignmentStatus(activeRow.status));
-        setSheetOpen(true);
-      }
+      await restoreActiveTripFromDb(driver, { openSheet: false });
     }
 
     const instructionResult = await fbGet(`driver_testing_messages/${driver.id}`);
@@ -989,7 +1007,20 @@ export default function DriverApp() {
         clearInterval(countdownRef.current);
         setCountdown(null);
         if (sheetStateRef.current === 'new_trip') {
-          rejectTrip();
+          (async () => {
+            const tripId = currentTrip?.tripId || null;
+            const driverId = driverRecord?.id || driverData?.id || null;
+            if (!tripId || !driverId) return;
+            const { data: row } = await supabase
+              .from('trip_assignments')
+              .select('status')
+              .eq('trip_id', tripId)
+              .eq('driver_id', driverId)
+              .maybeSingle();
+            if (String(row?.status || '').toLowerCase() === 'pending') {
+              rejectTrip();
+            }
+          })();
         }
       }
     }, 1000);
@@ -1678,6 +1709,14 @@ export default function DriverApp() {
       showToast('Finish your active trip first, then request your next ride.');
       return;
     }
+    const restoredTrip = await restoreActiveTripFromDb(
+      driverRecord || { id: driverData?.id, pay_rate_type: driverRecord?.pay_rate_type || 'hourly' },
+      { openSheet: false }
+    );
+    if (restoredTrip?.tripId) {
+      showToast('You already have a trip in progress. Tap Resume to continue it.');
+      return;
+    }
     if (!location) {
       showToast('GPS is still loading. Enable location and tap Request Rides again.');
       retryGpsLocation();
@@ -1702,17 +1741,208 @@ export default function DriverApp() {
     await pollForNotifications(driverRecord || { id: driverData.id, pay_rate_type: driverRecord?.pay_rate_type || 'hourly' });
   }
 
+  async function restoreActiveTripFromDb(driver, { openSheet = true } = {}) {
+    if (!driver?.id) return null;
+    let driverCtx = driver;
+    if (!driverCtx?.company_id || !driverCtx?.full_name) {
+      const { data: ctxRow } = await supabase
+        .from('drivers')
+        .select('id, company_id, full_name, tlc_number, login_username, pay_rate_type')
+        .eq('id', driver.id)
+        .maybeSingle();
+      if (ctxRow?.id) {
+        driverCtx = { ...driverCtx, ...ctxRow };
+      }
+    }
+    const perTripPay = String(driverRecord?.pay_rate_type || driverCtx?.pay_rate_type || 'hourly').toLowerCase() === 'per_trip';
+    const isResumableStatus = (value) => RESUMABLE_ASSIGNMENT_STATUSES.includes(String(value || '').toLowerCase());
+
+    let { data: primaryRows, error: activeErr } = await supabase
+      .from('trip_assignments')
+      .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, created_at')
+      .eq('driver_id', driverCtx.id)
+      .order('accepted_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(25);
+    let activeRow = (primaryRows || []).find(row => isResumableStatus(row?.status)) || null;
+    if (!activeRow?.trip_id && !activeErr && driverCtx?.company_id && (driverCtx?.full_name || driverData?.name)) {
+      const driverName = String(driverCtx.full_name || driverData?.name || '').trim();
+      if (driverName) {
+        const fallback = await supabase
+          .from('trip_assignments')
+          .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, created_at, driver_name')
+          .eq('company_id', driverCtx.company_id)
+          .order('accepted_at', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false })
+          .limit(25);
+        activeErr = fallback.error || null;
+        if (!activeErr) {
+          const normalizeName = (value) => String(value || '').trim().toLowerCase();
+          const expected = normalizeName(driverName);
+          const rows = (fallback.data || []).filter(row => isResumableStatus(row?.status));
+          activeRow = rows.find(row => normalizeName(row.driver_name) === expected) || null;
+          if (!activeRow) {
+            activeRow = rows.find(row => normalizeName(row.driver_name).includes(expected) || expected.includes(normalizeName(row.driver_name))) || null;
+          }
+        }
+      }
+    }
+    if (!activeRow?.trip_id && !activeErr && driverCtx?.company_id) {
+      const normalizeIdentity = (value) => String(value || '').trim().toLowerCase();
+      const targetName = normalizeIdentity(driverCtx.full_name || driverData?.name || '');
+      const targetTlc = normalizeIdentity(driverCtx.tlc_number || '');
+      const targetLogin = normalizeIdentity(driverCtx.login_username || '');
+
+      const { data: siblingDrivers, error: siblingErr } = await supabase
+        .from('drivers')
+        .select('id, full_name, tlc_number, login_username')
+        .eq('company_id', driverCtx.company_id)
+        .eq('is_active', true)
+        .limit(200);
+
+      if (!siblingErr) {
+        const aliasIds = (siblingDrivers || [])
+          .filter(row => {
+            const rowName = normalizeIdentity(row.full_name);
+            const rowTlc = normalizeIdentity(row.tlc_number);
+            const rowLogin = normalizeIdentity(row.login_username);
+            return (
+              (targetTlc && rowTlc && rowTlc === targetTlc) ||
+              (targetLogin && rowLogin && rowLogin === targetLogin) ||
+              (targetName && rowName && rowName === targetName)
+            );
+          })
+          .map(row => row.id)
+          .filter(Boolean);
+
+        if (aliasIds.length > 0) {
+          const aliasLookup = await supabase
+            .from('trip_assignments')
+            .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, created_at')
+            .in('driver_id', aliasIds)
+            .order('accepted_at', { ascending: false, nullsFirst: false })
+            .order('created_at', { ascending: false })
+            .limit(25);
+          if (!aliasLookup.error) {
+            const aliasRow = (aliasLookup.data || []).find(row => isResumableStatus(row?.status));
+            if (aliasRow?.trip_id) activeRow = aliasRow;
+          }
+        }
+      }
+    }
+    if (activeErr) {
+      logFailure('DriverApp:restoreActiveTripFromDb', activeErr);
+      return null;
+    }
+    if (!activeRow?.trip_id && !activeErr && driverCtx?.id) {
+      const { data: marketplaceRow, error: marketplaceErr } = await supabase
+        .from('marketplace_trips')
+        .select('sentry_trip_id, status, sentry_last_modified_at, raw_payload, assignment_type_code, pu_address, do_address, pu_time, delivery_price, mileage, loaded_at')
+        .eq('taken_by', driverCtx.id)
+        .in('status', ['assigned', 'accepted', 'arrived', 'picked_up'])
+        .order('loaded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (marketplaceErr) {
+        logFailure('DriverApp:restoreActiveTripFromDb:marketplaceFallback', marketplaceErr);
+      } else if (marketplaceRow?.sentry_trip_id) {
+        const fallbackStatus = String(marketplaceRow.status || '').toLowerCase();
+        const fallbackTrip = {
+          type: 'active_trip',
+          tripId: marketplaceRow.sentry_trip_id,
+          lastModifiedAt: marketplaceRow.sentry_last_modified_at || '',
+          puAddress: marketplaceRow.pu_address || '',
+          doAddress: marketplaceRow.do_address || '',
+          puTime: marketplaceRow.pu_time || '',
+          ...(perTripPay ? { deliveryPrice: marketplaceRow.delivery_price } : {}),
+          mileage: marketplaceRow.mileage,
+          acceptedAt: ['accepted', 'arrived', 'picked_up'].includes(fallbackStatus) ? new Date().toISOString() : null,
+          arrivedAt: fallbackStatus === 'arrived' ? new Date().toISOString() : null,
+          pickedUpAt: fallbackStatus === 'picked_up' ? new Date().toISOString() : null,
+          testingNote: '',
+          isTestTrip: false,
+          ...deriveMtaFareInfo(marketplaceRow || {}),
+        };
+        setCurrentTrip(fallbackTrip);
+        setSheetState(deriveSheetStateFromAssignmentStatus(fallbackStatus));
+        if (openSheet) setSheetOpen(true);
+        return fallbackTrip;
+      }
+    }
+    if (!activeRow?.trip_id) return null;
+
+    const { data: mtRow } = await supabase
+      .from('marketplace_trips')
+      .select('sentry_last_modified_at, raw_payload, assignment_type_code')
+      .eq('sentry_trip_id', String(activeRow.trip_id))
+      .maybeSingle();
+    const parsedNotes = parseTripAssignmentNotesForOffer(activeRow.notes);
+    const restoredTrip = {
+      type: 'active_trip',
+      tripId: activeRow.trip_id,
+      lastModifiedAt: mtRow?.sentry_last_modified_at || '',
+      puAddress: activeRow.pu_address || '',
+      doAddress: activeRow.do_address || '',
+      puTime: activeRow.pu_time || '',
+      ...(perTripPay ? { deliveryPrice: activeRow.delivery_price } : {}),
+      mileage: activeRow.mileage,
+      acceptedAt: activeRow.accepted_at || null,
+      arrivedAt: String(activeRow.status || '').toLowerCase() === 'arrived' ? (activeRow.accepted_at || null) : null,
+      pickedUpAt: String(activeRow.status || '').toLowerCase() === 'picked_up' ? (activeRow.actual_pickup_time || activeRow.accepted_at || null) : null,
+      testingNote: parsedNotes.testingNote,
+      isTestTrip: parsedNotes.isTestTrip,
+      ...deriveMtaFareInfo(mtRow || {}),
+    };
+    setCurrentTrip(restoredTrip);
+    setSheetState(deriveSheetStateFromAssignmentStatus(activeRow.status));
+    if (openSheet) setSheetOpen(true);
+    if (String(activeRow.status || '').toLowerCase() !== 'pending' && driverCtx?.id) {
+      supabase.from('drivers').update({ status: 'on_trip' }).eq('id', driverCtx.id).then(({ error }) => {
+        if (error) logFailure('DriverApp:restoreActiveTripFromDb:setOnTrip', error);
+      });
+    }
+    if (String(activeRow.status || '').toLowerCase() === 'accepted') {
+      const acceptedAt = activeRow.accepted_at || new Date().toISOString();
+      sendSentryLifecycleStatus(activeRow.trip_id, 2, {
+        assigned_at: acceptedAt,
+        accepted_at: acceptedAt,
+      }).then(result => {
+        toastSentryLifecycleFailure('Trip restored, but Sentry status 2 sync failed.', result, {
+          isTestTrip: Boolean(parsedNotes.isTestTrip),
+        });
+      }).catch(err => {
+        logFailure('DriverApp:restoreActiveTripFromDb:status2Retry', err);
+      });
+    }
+    return restoredTrip;
+  }
+
   function resumeActiveTrip() {
-    if (!currentTrip?.tripId) return;
-    const nextState = currentTrip?.pickedUpAt
-      ? 'to_dropoff'
-      : (currentTrip?.acceptedAt || currentTrip?.arrivedAt)
-        ? 'navigation'
-        : 'new_trip';
-    setSheetState(nextState);
-    setSheetOpen(true);
-    setShowSchedule(false);
-    setShowMenu(false);
+    (async () => {
+      if (resumingTrip) return;
+      setResumingTrip(true);
+      try {
+        let trip = currentTrip;
+        if (!trip?.tripId) {
+          trip = await restoreActiveTripFromDb(driverRecord || { id: driverData?.id, pay_rate_type: driverRecord?.pay_rate_type || 'hourly' });
+          if (!trip?.tripId) {
+            showToast('No active ride found to resume right now.');
+            return;
+          }
+        }
+        const nextState = trip?.pickedUpAt
+          ? 'to_dropoff'
+          : (trip?.acceptedAt || trip?.arrivedAt)
+            ? 'navigation'
+            : 'new_trip';
+        setSheetState(nextState);
+        setSheetOpen(true);
+        setShowSchedule(false);
+        setShowMenu(false);
+      } finally {
+        setResumingTrip(false);
+      }
+    })();
   }
 
   function cycleShortTripPreference() {
@@ -1776,6 +2006,7 @@ export default function DriverApp() {
       done: false,
     },
   ];
+  const shouldLockTripSheet = Boolean(currentTrip?.tripId) && ['new_trip', 'navigation', 'to_dropoff'].includes(sheetState);
 
   if (showOnboarding) {
     return <OnboardingSlides onDone={completeDriverOnboarding} />;
@@ -1798,14 +2029,14 @@ export default function DriverApp() {
               localStorage.removeItem(DRIVER_EMBED_SESSION_KEY);
             } catch {}
             if (role === 'admin') {
-              window.location.assign('/admin/platform');
+              navigate('/admin/platform', { replace: true });
               return;
             }
             if (role === 'company') {
-              window.location.assign('/company/dashboard');
+              navigate('/company/dashboard', { replace: true });
               return;
             }
-            window.history.back();
+            navigate(-1);
           }}
         />
       );
@@ -1886,6 +2117,32 @@ export default function DriverApp() {
             >
               <Menu className="w-4 h-4" style={{ color: '#e5e7eb' }} />
               <span className="text-xs font-600 hidden sm:inline" style={{ color: '#e5e7eb', fontWeight: 600 }}>Menu</span>
+            </button>
+            <button
+              type="button"
+              onClick={endShiftAndLogout}
+              className="px-2.5 h-9 flex items-center justify-center gap-1.5 rounded-full"
+              style={{ background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.24)', color: '#ff7a7a' }}
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-xs font-700 hidden sm:inline" style={{ fontWeight: 700 }}>Logout</span>
+            </button>
+            <button
+              type="button"
+              onClick={resumeActiveTrip}
+              disabled={resumingTrip}
+              className="px-3 h-9 flex items-center justify-center gap-1.5 rounded-full"
+              style={{
+                background: 'rgba(0,229,160,0.14)',
+                border: '1px solid rgba(0,229,160,0.28)',
+                color: '#00e5a0',
+                opacity: resumingTrip ? 0.7 : 1,
+              }}
+            >
+              <ChevronRight className="w-4 h-4" />
+              <span className="text-xs font-700" style={{ fontWeight: 700 }}>
+                {resumingTrip ? 'Loading...' : 'Resume'}
+              </span>
             </button>
           </div>
         </div>
@@ -2109,11 +2366,34 @@ export default function DriverApp() {
       )}
       </div>
 
+      {loggedIn && driverData && !sheetOpen && (
+        <div className="absolute z-40 left-4 right-4 pointer-events-none" style={{ bottom: 'calc(var(--safe-bottom) + 94px)' }}>
+          <div className="max-w-md mx-auto pointer-events-auto">
+            <button
+              type="button"
+              onClick={resumeActiveTrip}
+              className="w-full rounded-2xl px-4 py-3 flex items-center justify-center gap-2"
+              style={{ background: 'rgba(0,229,160,0.16)', border: '1px solid rgba(0,229,160,0.35)', color: '#00e5a0' }}
+            >
+              <Navigation className="w-4 h-4" />
+              <span className="text-sm font-700" style={{ fontWeight: 700 }}>Resume Active Ride</span>
+            </button>
+          </div>
+        </div>
+      )}
+
         <TripBottomSheet
         state={sheetState}
         trip={currentTrip}
         open={sheetOpen}
-        onToggle={() => setSheetOpen(!sheetOpen)}
+        onToggle={() => {
+          if (shouldLockTripSheet) {
+            setSheetOpen(true);
+            showToast('Finish or reject this trip step before closing the trip panel.');
+            return;
+          }
+          setSheetOpen(!sheetOpen);
+        }}
         onRequestRides={requestRides}
         onAccept={acceptTrip}
         onReject={rejectTrip}
@@ -2266,15 +2546,15 @@ export default function DriverApp() {
 
             <div className="flex-1 py-3 overflow-y-auto">
               {[
-                ...(currentTrip?.tripId
-                  ? [{
-                      icon: <Navigation className="w-5 h-5" />,
-                      color: '#00e5a0',
-                      label: 'Resume Active Trip',
-                      sub: currentTrip?.pickedUpAt ? 'Continue to dropoff' : 'Continue current trip flow',
-                      action: resumeActiveTrip,
-                    }]
-                  : []),
+                {
+                  icon: <Navigation className="w-5 h-5" />,
+                  color: '#00e5a0',
+                  label: 'Resume Active Trip',
+                  sub: currentTrip?.tripId
+                    ? (currentTrip?.pickedUpAt ? 'Continue to dropoff' : 'Continue current trip flow')
+                    : 'Find and reopen your active ride',
+                  action: resumeActiveTrip,
+                },
                 { icon: <Calendar className="w-5 h-5" />, color: '#00e5a0', label: 'My Schedule', sub: 'View today\'s trips', action: () => { setShowSchedule(true); setShowMenu(false); } },
                 { icon: <CreditCard className="w-5 h-5" />, color: '#c9a84c', label: 'Earnings & Pay', sub: 'Bank account & payouts', action: () => { setShowPaymentSetup(true); setShowMenu(false); } },
                 {

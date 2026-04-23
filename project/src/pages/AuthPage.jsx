@@ -528,6 +528,16 @@ export default function AuthPage() {
           </Link>
         </p>
 
+        <p className="text-center mt-2 text-xs" style={{ color: 'rgba(255,255,255,0.42)' }}>
+          Driver account?{' '}
+          <Link
+            to="/driver"
+            style={{ color: '#c9a84c', textDecoration: 'none', fontWeight: 600 }}
+          >
+            Open driver app login
+          </Link>
+        </p>
+
         <p className="text-center mt-4 text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
           {APP_VARIANT_META[APP_VARIANT].label} v1.0
         </p>

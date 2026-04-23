@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { handleSupabaseError } from '../../utils/errorHandler';
 import { loadCompanyBranding, DEFAULT_BRANDING } from '../../lib/companyBranding';
@@ -255,6 +256,12 @@ export default function DriverLogin({ onLogin }) {
           <div className="text-center px-2">
             <p className="text-sm" style={{ color: 'rgba(255,255,255,0.36)', lineHeight: 1.6 }}>
               {credentialHint}
+            </p>
+            <p className="text-xs mt-3" style={{ color: 'rgba(255,255,255,0.42)' }}>
+              Company or admin user?{' '}
+              <Link to="/auth" style={{ color: '#c9a84c', textDecoration: 'none', fontWeight: 600 }}>
+                Go to company login
+              </Link>
             </p>
           </div>
         </div>

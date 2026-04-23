@@ -349,6 +349,52 @@ export default function LiveDispatch() {
     );
   }
 
+  function getDriverActiveTripContext(driverId) {
+    if (!driverId) return { active: null, queuedCount: 0, completionEpoch: null };
+    const scoped = (assignments || []).filter(a => String(a.driver_id || '') === String(driverId || ''));
+    const active = scoped
+      .filter(a => IN_PROGRESS_TRIP_STATUSES.has(String(a.status || '').toLowerCase()))
+      .sort((a, b) => toEpoch(b.accepted_at || b.assigned_at) - toEpoch(a.accepted_at || a.assigned_at))[0] || null;
+    const queuedCount = scoped.filter(a => String(a.status || '').toLowerCase() === 'pending').length;
+    return {
+      active,
+      queuedCount,
+      completionEpoch: deriveActiveTripCompletionEpoch(active),
+    };
+  }
+
+  function validateQueueAssignmentTiming(driver, trip, tripIdKey) {
+    const context = getDriverActiveTripContext(driver?.id);
+    if (!context.active) return { ok: true };
+    if (context.queuedCount > 0) {
+      return { ok: false, reason: `${driver?.full_name || 'Driver'} already has a queued next trip.` };
+    }
+    if (!context.completionEpoch) {
+      return { ok: false, reason: 'Cannot queue next trip yet because active trip ETA is not available.' };
+    }
+    const minsToComplete = Math.ceil((context.completionEpoch - Date.now()) / 60000);
+    if (minsToComplete > QUEUE_WINDOW_MINS) {
+      return { ok: false, reason: `Queue next trip only near end of the ride (${QUEUE_WINDOW_MINS} min window).` };
+    }
+    const pickupEpoch = parseScheduleEpoch(trip?.pu_time);
+    if (!pickupEpoch) {
+      return { ok: false, reason: 'Queued next trip must have a valid scheduled pickup time.' };
+    }
+    if (pickupEpoch < context.completionEpoch + 2 * 60 * 1000) {
+      return { ok: false, reason: 'Next trip pickup must be scheduled after current trip completion.' };
+    }
+    const duplicate = (assignments || []).find(
+      a =>
+        String(a.driver_id || '') === String(driver?.id || '') &&
+        String(a.status || '').toLowerCase() === 'pending' &&
+        normalizeTripId(a.trip_id) !== normalizeTripId(tripIdKey)
+    );
+    if (duplicate) {
+      return { ok: false, reason: `${driver?.full_name || 'Driver'} already has a queued next trip.` };
+    }
+    return { ok: true };
+  }
+
   function canAssignAnotherTrip(driverId) {
     if (!driverId) return false;
     return allowMultiTripTake || !driverHasLockConflict(driverId);
@@ -488,6 +534,13 @@ export default function LiveDispatch() {
           `${driver?.full_name || 'Driver'} already has an active trip. Finish or reject it before assigning another.`,
           'error'
         );
+        return;
+      }
+    }
+    if (allowMultiTripTake) {
+      const queueTiming = validateQueueAssignmentTiming(driver, trip, tripIdKey);
+      if (!queueTiming.ok) {
+        showToast(queueTiming.reason, 'error');
         return;
       }
     }
@@ -801,10 +854,40 @@ export default function LiveDispatch() {
       return;
     }
 
-    const trip = companyOpenTrips[0] || buildLocalOnlyTestTrip({
+    const activeContext = allowMultiTripTake ? getDriverActiveTripContext(driver.id) : { active: null, completionEpoch: null };
+    if (allowMultiTripTake && activeContext.active) {
+      if (activeContext.queuedCount > 0) {
+        showToast(`${driver.full_name} already has a queued next trip.`, 'error');
+        return;
+      }
+      if (!activeContext.completionEpoch) {
+        showToast('Cannot queue next trip yet because active trip ETA is unavailable.', 'error');
+        return;
+      }
+      const minsToComplete = Math.ceil((activeContext.completionEpoch - Date.now()) / 60000);
+      if (minsToComplete > QUEUE_WINDOW_MINS) {
+        showToast(`Queue next trip only near end of the ride (${QUEUE_WINDOW_MINS} min window).`, 'error');
+        return;
+      }
+    }
+    const eligibleTrips = activeContext.active
+      ? companyOpenTrips.filter(trip => {
+          const pickupEpoch = parseScheduleEpoch(trip?.pu_time);
+          return Boolean(
+            pickupEpoch &&
+            activeContext.completionEpoch &&
+            pickupEpoch >= activeContext.completionEpoch + 2 * 60 * 1000
+          );
+        })
+      : companyOpenTrips;
+
+    const trip = eligibleTrips[0] || buildLocalOnlyTestTrip({
       companyId: scopedCompanyId || driver.company_id || null,
       driver,
       testingNote: testNoteDraft,
+      scheduledPickupAt: activeContext.completionEpoch
+        ? new Date(activeContext.completionEpoch + 5 * 60 * 1000).toISOString()
+        : null,
     });
     if (trip.localOnlyTestTrip) {
       showToast(

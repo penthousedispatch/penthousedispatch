@@ -53,6 +53,8 @@ export default function AdminTestingCenter() {
   const [runningAll, setRunningAll] = useState(false);
   const [sandboxStatus, setSandboxStatus] = useState({ active: false, companyId: null, resetAt: '' });
   const [recentWebhookLogs, setRecentWebhookLogs] = useState([]);
+  const [recentTripRouting, setRecentTripRouting] = useState([]);
+  const [routingLoading, setRoutingLoading] = useState(false);
   const [resolvedOrgId, setResolvedOrgId] = useState(null);
   const [approvedCompanies, setApprovedCompanies] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
@@ -98,6 +100,11 @@ export default function AdminTestingCenter() {
     loadOpsHelpers();
   }, []);
 
+  useEffect(() => {
+    loadRecentTripRouting();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh routing when scope changes
+  }, [selectedCompanyId, adminPreviewCompany?.id, sandboxStatus.companyId, company?.id]);
+
   async function loadOpsHelpers() {
     const [sandboxRes, webhookRes, companyRes] = await Promise.all([
       supabase
@@ -127,6 +134,52 @@ export default function AdminTestingCenter() {
     setApprovedCompanies(
       (companyRes.data || []).filter(companyRow => isApprovedCompanyRecord(companyRow) && !companyRow.is_suspended)
     );
+    await loadRecentTripRouting();
+  }
+
+  async function loadRecentTripRouting() {
+    setRoutingLoading(true);
+    try {
+      const { data: assignments } = await supabase
+        .from('trip_assignments')
+        .select('trip_id, status, assigned_at, created_at, driver_id, company_id, notes')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const rows = assignments || [];
+      if (!rows.length) {
+        setRecentTripRouting([]);
+        return;
+      }
+
+      const driverIds = [...new Set(rows.map(row => row.driver_id).filter(Boolean))];
+      const companyIds = [...new Set(rows.map(row => row.company_id).filter(Boolean))];
+
+      const [driversRes, companiesRes] = await Promise.all([
+        driverIds.length
+          ? supabase.from('drivers').select('id, full_name, driver_number, login_username').in('id', driverIds)
+          : Promise.resolve({ data: [] }),
+        companyIds.length
+          ? supabase.from('companies').select('id, company_name').in('id', companyIds)
+          : Promise.resolve({ data: [] }),
+      ]);
+
+      const driverMap = new Map((driversRes.data || []).map(driver => [driver.id, driver]));
+      const companyMap = new Map((companiesRes.data || []).map(companyRow => [companyRow.id, companyRow]));
+
+      const scopedCompanyId = selectedCompanyId || adminPreviewCompany?.id || sandboxStatus.companyId || company?.id || null;
+      const normalized = rows
+        .map(row => ({
+          ...row,
+          driver: driverMap.get(row.driver_id) || null,
+          company: companyMap.get(row.company_id) || null,
+        }))
+        .filter(row => !scopedCompanyId || String(row.company_id || '') === String(scopedCompanyId));
+
+      setRecentTripRouting(normalized);
+    } finally {
+      setRoutingLoading(false);
+    }
   }
 
   async function loadLatestSentryConfig() {
@@ -1286,6 +1339,60 @@ Judge whether the app is ready for a partner-facing Sentry compliance review rig
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="rounded-xl p-4 md:col-span-2" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div>
+                <p className="text-sm font-600" style={{ fontWeight: 600 }}>Recent Sentry Trip Routing</p>
+                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  See which company and driver each newly routed trip was sent to for live Sentry testing.
+                </p>
+              </div>
+              <button onClick={loadRecentTripRouting} className="btn-ghost px-3 py-1.5 text-xs">
+                Refresh
+              </button>
+            </div>
+            {routingLoading ? (
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>Loading routing events...</p>
+            ) : recentTripRouting.length === 0 ? (
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                No recent trip assignment routing found in the current company scope.
+              </p>
+            ) : (
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {recentTripRouting.map((row, idx) => {
+                  const routedAt = row.assigned_at || row.created_at;
+                  const driverLabel = row.driver?.full_name || row.driver?.login_username || row.driver?.driver_number || row.driver_id || 'Unknown driver';
+                  const companyLabel = row.company?.company_name || row.company_id || 'Unknown company';
+                  return (
+                    <div key={`${row.trip_id}-${row.driver_id}-${idx}`} className="rounded-lg px-3 py-2" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-mono" style={{ color: '#c9a84c' }}>{row.trip_id}</p>
+                        <span
+                          className="text-[11px] px-2 py-0.5 rounded-full"
+                          style={{
+                            background: String(row.status || '').toLowerCase() === 'pending' ? 'rgba(201,168,76,0.14)' : 'rgba(14,165,233,0.14)',
+                            color: String(row.status || '').toLowerCase() === 'pending' ? '#c9a84c' : '#0ea5e9',
+                          }}
+                        >
+                          {row.status || 'unknown'}
+                        </span>
+                      </div>
+                      <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.72)' }}>
+                        Company: <strong>{companyLabel}</strong>
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.72)' }}>
+                        Driver: <strong>{driverLabel}</strong>
+                      </p>
+                      <p className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                        Routed at: {routedAt ? new Date(routedAt).toLocaleString() : 'unknown'}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 

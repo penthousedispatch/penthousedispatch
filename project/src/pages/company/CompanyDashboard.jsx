@@ -14,7 +14,7 @@ import CSVImportModal, { CSV_DRIVERS } from '../../components/drivers/CSVImportM
 import {
   Users, Navigation, FileText, Settings, LogOut,
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck, Trophy,
-  Upload, Link2, Headphones, RefreshCw, Send, ClipboardList, Menu, X
+  Upload, Link2, Headphones, RefreshCw, Send, ClipboardList, Menu, X, Clock
 } from 'lucide-react';
 import { handleSupabaseError, toastError, toastSuccess } from '../../utils/errorHandler';
 import { toastFleetImportSummary } from '../../utils/fleetImportSummaryToast';
@@ -284,30 +284,49 @@ function CompanyDrivers({ company }) {
 
   function sendDriverApp(driver) {
     const driverName = driver.full_name || 'Driver';
+    const inviteUrl = `${driverAppUrl}?onboarding=1`;
+    const loginId = String(driver.login_username || driver.email || driver.tlc_number || '').trim();
+    const loginPassword = String(driver.login_password || driver.tlc_number || '').trim();
+    const hasCredentials = Boolean(loginId && loginPassword);
     const body = [
       `Hi ${driverName},`,
       '',
       'Use this link to open the Penthouse Dispatch driver app and complete onboarding:',
-      driverAppUrl,
+      inviteUrl,
       '',
-      'Please review the onboarding slides, guide audio, and profile requirements before starting your shift.',
+      ...(hasCredentials
+        ? [
+            'Your driver login:',
+            `- Username: ${loginId}`,
+            `- Password: ${loginPassword}`,
+            '',
+          ]
+        : [
+            'Your company has not finished assigning login credentials yet.',
+            'Contact dispatch to receive your driver username and password before signing in.',
+            '',
+          ]),
+      'After login, onboarding slides and setup steps will open automatically.',
+      'Please complete onboarding before starting your shift.',
     ].join('\n');
 
     if (driver.email) {
       window.location.href = `mailto:${encodeURIComponent(driver.email)}?subject=${encodeURIComponent('Your Penthouse Dispatch Driver App Access')}&body=${encodeURIComponent(body)}`;
-      toastSuccess('Driver app invite prepared in email.');
+      toastSuccess(hasCredentials ? 'Driver onboarding invite prepared in email.' : 'Invite sent, but driver credentials are missing.');
       return;
     }
 
     const cleanPhone = String(driver.phone || '').replace(/[^\d+]/g, '');
     if (cleanPhone) {
       window.location.href = `sms:${cleanPhone}?&body=${encodeURIComponent(body)}`;
-      toastSuccess('Driver app invite prepared in text message.');
+      toastSuccess(hasCredentials ? 'Driver onboarding invite prepared in text message.' : 'Invite sent, but driver credentials are missing.');
       return;
     }
 
     navigator.clipboard?.writeText(body).catch(() => {});
-    toastSuccess('Driver app invite copied. No email or phone was saved for this driver.');
+    toastSuccess(hasCredentials
+      ? 'Driver onboarding invite copied. No email or phone was saved for this driver.'
+      : 'Invite copied, but driver credentials are missing.');
   }
 
   function onboardingSummary(driver) {
@@ -1033,7 +1052,39 @@ function CompanyTrips({ company }) {
     });
   }, [company?.id]);
 
-  const statusColor = { pending: '#c9a84c', accepted: '#0ea5e9', completed: '#00e5a0', rejected: '#ff4757' };
+  const statusColor = {
+    pending: '#c9a84c',
+    accepted: '#0ea5e9',
+    arrived: '#0ea5e9',
+    picked_up: '#0ea5e9',
+    in_progress: '#0ea5e9',
+    on_trip: '#0ea5e9',
+    completed: '#00e5a0',
+    rejected: '#ff4757',
+  };
+  const activeStatuses = new Set(['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip']);
+  const activeAssignments = assignments.filter(a => activeStatuses.has(String(a.status || '').toLowerCase()));
+  const historyAssignments = assignments.filter(a => !activeStatuses.has(String(a.status || '').toLowerCase()));
+
+  function formatTime(value) {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString();
+  }
+
+  function destinationTimeLabel(assignment) {
+    if (assignment.actual_dropoff_time || assignment.completed_at) {
+      return {
+        label: 'Reached destination',
+        value: formatTime(assignment.actual_dropoff_time || assignment.completed_at),
+      };
+    }
+    return {
+      label: 'ETA destination',
+      value: formatTime(assignment.do_time),
+    };
+  }
 
   return (
     <div className="p-6 pb-48 max-w-4xl mx-auto">
@@ -1048,21 +1099,63 @@ function CompanyTrips({ company }) {
           <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>No trips yet</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {assignments.map(a => (
-            <div key={a.id} className="flex items-center gap-4 p-4 rounded-xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-500 truncate" style={{ color: '#e5e7eb' }}>{a.pu_address || 'Unknown pickup'}</p>
-                <p className="text-xs mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.do_address || 'Unknown dropoff'}</p>
+        <div className="space-y-4">
+          <div className="rounded-xl p-3" style={{ background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.16)' }}>
+            <p className="text-xs font-700 uppercase tracking-wider mb-2" style={{ color: '#0ea5e9', fontWeight: 700 }}>
+              Active Trips ({activeAssignments.length})
+            </p>
+            {activeAssignments.length === 0 ? (
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>No drivers currently on an active trip.</p>
+            ) : (
+              <div className="space-y-2">
+                {activeAssignments.map(a => {
+                  const dest = destinationTimeLabel(a);
+                  return (
+                    <div key={`active-${a.id}`} className="flex items-center gap-4 p-3 rounded-lg" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{a.drivers?.full_name || a.driver_name || 'Driver'}</p>
+                        <p className="text-xs mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.55)' }}>{a.pu_address || 'Unknown pickup'} → {a.do_address || 'Unknown dropoff'}</p>
+                        <p className="text-xs mt-1 flex items-center gap-1.5" style={{ color: '#0ea5e9' }}>
+                          <Clock className="w-3 h-3" />
+                          {dest.label}: {dest.value}
+                        </p>
+                      </div>
+                      <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: `${statusColor[a.status] || '#0ea5e9'}15`, color: statusColor[a.status] || '#0ea5e9' }}>
+                        {a.status}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="text-right">
-                <p className="text-sm font-700" style={{ fontWeight: 700, color: '#c9a84c' }}>${parseFloat(a.delivery_price || 0).toFixed(2)}</p>
-                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: `${statusColor[a.status] || '#c9a84c'}15`, color: statusColor[a.status] || '#c9a84c' }}>
-                  {a.status}
-                </span>
-              </div>
-            </div>
-          ))}
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-700 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.45)', fontWeight: 700 }}>
+              Trip History
+            </p>
+            {historyAssignments.map(a => {
+              const dest = destinationTimeLabel(a);
+              return (
+                <div key={a.id} className="flex items-center gap-4 p-4 rounded-xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-500 truncate" style={{ color: '#e5e7eb' }}>{a.pu_address || 'Unknown pickup'}</p>
+                    <p className="text-xs mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.do_address || 'Unknown dropoff'}</p>
+                    <p className="text-xs mt-1 flex items-center gap-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                      <Clock className="w-3 h-3" />
+                      {dest.label}: {dest.value}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-700" style={{ fontWeight: 700, color: '#c9a84c' }}>${parseFloat(a.delivery_price || 0).toFixed(2)}</p>
+                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: `${statusColor[a.status] || '#c9a84c'}15`, color: statusColor[a.status] || '#c9a84c' }}>
+                      {a.status}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

@@ -10,7 +10,12 @@ function minToTime(min) {
   return `${displayH}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-function TripRow({ trip, index, onAcceptShared, isShared }) {
+function safeMiles(value) {
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n.toFixed(1) : '0.0';
+}
+
+function TripRow({ trip, index, onAcceptShared, isShared, onActivateTrip = null }) {
   const timingLabel = trip.doTime
     ? `${trip.puTime || (trip.scheduledStart ? minToTime(trip.scheduledStart) : '--')} - ${trip.doTime}`
     : (trip.puTime || (trip.scheduledStart ? minToTime(trip.scheduledStart) : '--'));
@@ -94,27 +99,43 @@ function TripRow({ trip, index, onAcceptShared, isShared }) {
                 {trip.driveTimeFromPrev}min drive
               </span>
             )}
-            {trip.mileage && (
+            {trip.mileage !== null && trip.mileage !== undefined && String(trip.mileage).trim() !== '' && (
               <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                {parseFloat(trip.mileage).toFixed(1)} mi
+                {safeMiles(trip.mileage)} mi
               </span>
             )}
           </div>
         </div>
 
-        {isShared && onAcceptShared && (
-          <button
-            onClick={() => onAcceptShared(trip)}
-            className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-700"
-            style={{
-              background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
-              color: '#fff',
-              fontWeight: 700,
-            }}
-          >
-            Add
-          </button>
-        )}
+        <div className="flex-shrink-0 flex flex-col gap-2">
+          {isShared && onAcceptShared && (
+            <button
+              onClick={() => onAcceptShared(trip)}
+              className="px-3 py-1.5 rounded-lg text-xs font-700"
+              style={{
+                background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                color: '#fff',
+                fontWeight: 700,
+              }}
+            >
+              Add
+            </button>
+          )}
+          {!isShared && onActivateTrip && ['accepted', 'arrived', 'picked_up', 'pending'].includes(String(trip.status || '').toLowerCase()) && (
+            <button
+              onClick={() => onActivateTrip(trip)}
+              className="px-3 py-1.5 rounded-lg text-xs font-700"
+              style={{
+                background: 'rgba(0,229,160,0.14)',
+                border: '1px solid rgba(0,229,160,0.28)',
+                color: '#00e5a0',
+                fontWeight: 700,
+              }}
+            >
+              Open
+            </button>
+          )}
+        </div>
       </div>
 
       {!isShared && index > 0 && trip.driveTimeFromPrev > 0 && (
@@ -140,6 +161,13 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
   const [shiftSaved, setShiftSaved] = useState('');
 
   useEffect(() => {
+    if (!driverId) {
+      setLoading(false);
+      setSchedule([]);
+      setSharedCandidates([]);
+      return undefined;
+    }
+
     loadSchedule();
 
     const channel = supabase
@@ -158,31 +186,31 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
   async function loadSchedule() {
     if (!driverId) return;
     setLoading(true);
+    try {
+      const { data: driverRow } = await supabase
+        .from('drivers')
+        .select('shift_hours')
+        .eq('id', driverId)
+        .maybeSingle();
 
-    const { data: driverRow } = await supabase
-      .from('drivers')
-      .select('shift_hours')
-      .eq('id', driverId)
-      .maybeSingle();
+      if (driverRow?.shift_hours) {
+        setShiftHours(driverRow.shift_hours);
+      }
 
-    if (driverRow?.shift_hours) {
-      setShiftHours(driverRow.shift_hours);
-    }
+      const { data: assignments } = await supabase
+        .from('trip_assignments')
+        .select('*')
+        .eq('driver_id', driverId)
+        .in('status', ['pending', 'accepted'])
+        .order('scheduled_order', { ascending: true, nullsFirst: false });
 
-    const { data: assignments } = await supabase
-      .from('trip_assignments')
-      .select('*')
-      .eq('driver_id', driverId)
-      .in('status', ['pending', 'accepted'])
-      .order('scheduled_order', { ascending: true, nullsFirst: false });
-
-    if (assignments) {
-      const sorted = [...assignments].sort((a, b) => {
+      const safeAssignments = assignments || [];
+      const sorted = [...safeAssignments].sort((a, b) => {
         if (a.scheduled_order != null && b.scheduled_order != null) return a.scheduled_order - b.scheduled_order;
         return (a.pu_time || '').localeCompare(b.pu_time || '');
       });
 
-      const enriched = sorted.map((a, i) => ({
+      const enriched = sorted.map(a => ({
         tripId: a.trip_id,
         puAddress: a.pu_address,
         doAddress: a.do_address,
@@ -199,8 +227,8 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
 
       setSchedule(enriched);
 
-      const total = enriched.reduce((s, t) => s + (parseFloat(t.deliveryPrice) || 0), 0);
-      const totalMiles = enriched.reduce((sum, t) => sum + (parseFloat(t.mileage) || 0), 0);
+      const total = enriched.reduce((s, t) => s + (Number.parseFloat(t.deliveryPrice) || 0), 0);
+      const totalMiles = enriched.reduce((sum, t) => sum + (Number.parseFloat(t.mileage) || 0), 0);
       const avgBuffer =
         enriched.length > 0
           ? Math.round(enriched.reduce((sum, t) => sum + (Number(t.driveTimeFromPrev) || 0), 0) / enriched.length)
@@ -212,45 +240,49 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
         revenuePerHour: enriched.length > 0 ? total / Math.max(1, enriched.length / 2) : 0,
         tripCount: enriched.length,
       });
-    }
 
-    const { data: available } = await supabase
-      .from('marketplace_trips')
-      .select('*')
-      .eq('status', 'available')
-      .limit(20);
+      const { data: available } = await supabase
+        .from('marketplace_trips')
+        .select('*')
+        .eq('status', 'available')
+        .limit(20);
 
-    if (available && assignments) {
-      const tripIds = (available || []).map(t => t.sentry_trip_id).filter(Boolean);
-      let lockedTripIds = new Set();
-      if (tripIds.length > 0) {
-        const { data: activeTripRows } = await supabase
-          .from('trip_assignments')
-          .select('trip_id, status')
-          .in('trip_id', tripIds)
-          .in('status', ['pending', 'accepted', 'arrived', 'picked_up']);
-        lockedTripIds = new Set((activeTripRows || []).map(row => row.trip_id).filter(Boolean));
+      if (available && safeAssignments.length >= 0) {
+        const tripIds = (available || []).map(t => t.sentry_trip_id).filter(Boolean);
+        let lockedTripIds = new Set();
+        if (tripIds.length > 0) {
+          const { data: activeTripRows } = await supabase
+            .from('trip_assignments')
+            .select('trip_id, status')
+            .in('trip_id', tripIds)
+            .in('status', ['pending', 'accepted', 'arrived', 'picked_up']);
+          lockedTripIds = new Set((activeTripRows || []).map(row => row.trip_id).filter(Boolean));
+        }
+        const assignedIds = new Set(safeAssignments.map(a => a.trip_id));
+        const candidates = (available || [])
+          .filter(t => !assignedIds.has(t.sentry_trip_id) && !lockedTripIds.has(t.sentry_trip_id))
+          .slice(0, 3)
+          .map(t => ({
+            tripId: t.sentry_trip_id,
+            puAddress: t.pu_address,
+            doAddress: t.do_address,
+            puTime: t.pu_time,
+            doTime: t.do_time || null,
+            deliveryPrice: String(t.delivery_price || ''),
+            mileage: String(t.mileage || ''),
+            driveTimeFromPrev: 0,
+            tightBuffer: false,
+            raw: t,
+          }));
+        setSharedCandidates(candidates);
       }
-      const assignedIds = new Set(assignments.map(a => a.trip_id));
-      const candidates = (available || [])
-        .filter(t => !assignedIds.has(t.sentry_trip_id) && !lockedTripIds.has(t.sentry_trip_id))
-        .slice(0, 3)
-        .map(t => ({
-          tripId: t.sentry_trip_id,
-          puAddress: t.pu_address,
-          doAddress: t.do_address,
-        puTime: t.pu_time,
-        doTime: t.do_time || null,
-        deliveryPrice: String(t.delivery_price || ''),
-          mileage: String(t.mileage || ''),
-          driveTimeFromPrev: 0,
-          tightBuffer: false,
-          raw: t,
-        }));
-      setSharedCandidates(candidates);
+    } catch {
+      setSchedule([]);
+      setSharedCandidates([]);
+      setStats({ totalMiles: 0, tripCount: 0, avgBufferMin: 0 });
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   async function handleSaveShift() {
@@ -319,7 +351,7 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {hasActiveTrip && onResumeTrip && (
+          {onResumeTrip && (
             <button
               type="button"
               onClick={onResumeTrip}
@@ -327,7 +359,7 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
               style={{ background: 'rgba(0,229,160,0.12)', border: '1px solid rgba(0,229,160,0.24)', color: '#00e5a0', fontWeight: 700 }}
             >
               <ChevronRight className="w-3.5 h-3.5" />
-              Active Trip
+              Resume Trip
             </button>
           )}
           <button
@@ -430,7 +462,7 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
           </div>
         ) : (
           schedule.map((trip, i) => (
-            <TripRow key={trip.tripId} trip={trip} index={i} isShared={false} />
+            <TripRow key={trip.tripId} trip={trip} index={i} isShared={false} onActivateTrip={onResumeTrip} />
           ))
         )}
 
@@ -459,7 +491,7 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
       <div className="px-4 pb-4 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <button
           type="button"
-          onClick={hasActiveTrip && onResumeTrip ? onResumeTrip : onClose}
+          onClick={onResumeTrip ? onResumeTrip : onClose}
           className="w-full py-3 rounded-xl text-sm font-700"
           style={{
             background: hasActiveTrip ? 'rgba(0,229,160,0.12)' : 'rgba(255,255,255,0.06)',
@@ -468,7 +500,7 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
             fontWeight: 700,
           }}
         >
-          {hasActiveTrip ? 'Back To Active Trip' : 'Close Schedule'}
+          {onResumeTrip ? 'Back To Active Trip' : 'Close Schedule'}
         </button>
       </div>
     </div>
