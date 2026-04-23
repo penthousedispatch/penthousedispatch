@@ -464,6 +464,15 @@ class SentryApiClient {
     return this.request('POST', `/rest/transportation_provider_facade/v4.0/trips/${tripId}/update_status`, body);
   }
 
+  // Request broker-side trip copy/clone behavior when supported by the TP API.
+  async copyTrip(tripId, data = {}) {
+    return this.request(
+      'POST',
+      `/rest/transportation_provider_facade/v4.0/trips/${tripId}/copy`,
+      data
+    );
+  }
+
   // ─── Trips stored on TP side ─────────────────────────────────────────────
   // Returns trips data that the TP has stored on their end.
   async retrieveTrips(params = {}) {

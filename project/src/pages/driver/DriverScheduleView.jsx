@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, MapPin, DollarSign, AlertTriangle, ChevronRight, Zap, CheckCircle, X } from 'lucide-react';
+import { Clock, MapPin, AlertTriangle, ChevronRight, Zap, CheckCircle, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 function minToTime(min) {
@@ -94,12 +94,6 @@ function TripRow({ trip, index, onAcceptShared, isShared }) {
                 {trip.driveTimeFromPrev}min drive
               </span>
             )}
-            {trip.deliveryPrice && (
-              <span className="flex items-center gap-1 text-xs font-700" style={{ color: '#00e5a0', fontWeight: 700 }}>
-                <DollarSign className="w-3 h-3" />
-                {parseFloat(trip.deliveryPrice).toFixed(2)}
-              </span>
-            )}
             {trip.mileage && (
               <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>
                 {parseFloat(trip.mileage).toFixed(1)} mi
@@ -135,11 +129,11 @@ function TripRow({ trip, index, onAcceptShared, isShared }) {
   );
 }
 
-export default function DriverScheduleView({ driverId, onClose }) {
+export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = false, onResumeTrip = null }) {
   const [schedule, setSchedule] = useState([]);
   const [sharedCandidates, setSharedCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ totalRevenue: 0, revenuePerHour: 0, tripCount: 0 });
+  const [stats, setStats] = useState({ totalMiles: 0, tripCount: 0, avgBufferMin: 0 });
   const [dismissedShared, setDismissedShared] = useState(new Set());
   const [shiftHours, setShiftHours] = useState('7am-5pm');
   const [savingShift, setSavingShift] = useState(false);
@@ -206,7 +200,14 @@ export default function DriverScheduleView({ driverId, onClose }) {
       setSchedule(enriched);
 
       const total = enriched.reduce((s, t) => s + (parseFloat(t.deliveryPrice) || 0), 0);
+      const totalMiles = enriched.reduce((sum, t) => sum + (parseFloat(t.mileage) || 0), 0);
+      const avgBuffer =
+        enriched.length > 0
+          ? Math.round(enriched.reduce((sum, t) => sum + (Number(t.driveTimeFromPrev) || 0), 0) / enriched.length)
+          : 0;
       setStats({
+        totalMiles,
+        avgBufferMin: avgBuffer,
         totalRevenue: total,
         revenuePerHour: enriched.length > 0 ? total / Math.max(1, enriched.length / 2) : 0,
         tripCount: enriched.length,
@@ -220,9 +221,19 @@ export default function DriverScheduleView({ driverId, onClose }) {
       .limit(20);
 
     if (available && assignments) {
+      const tripIds = (available || []).map(t => t.sentry_trip_id).filter(Boolean);
+      let lockedTripIds = new Set();
+      if (tripIds.length > 0) {
+        const { data: activeTripRows } = await supabase
+          .from('trip_assignments')
+          .select('trip_id, status')
+          .in('trip_id', tripIds)
+          .in('status', ['pending', 'accepted', 'arrived', 'picked_up']);
+        lockedTripIds = new Set((activeTripRows || []).map(row => row.trip_id).filter(Boolean));
+      }
       const assignedIds = new Set(assignments.map(a => a.trip_id));
       const candidates = (available || [])
-        .filter(t => !assignedIds.has(t.sentry_trip_id))
+        .filter(t => !assignedIds.has(t.sentry_trip_id) && !lockedTripIds.has(t.sentry_trip_id))
         .slice(0, 3)
         .map(t => ({
           tripId: t.sentry_trip_id,
@@ -307,13 +318,27 @@ export default function DriverScheduleView({ driverId, onClose }) {
             AI-built schedule
           </p>
         </div>
-        <button
-          onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center rounded-full"
-          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-        >
-          <X className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />
-        </button>
+        <div className="flex items-center gap-2">
+          {hasActiveTrip && onResumeTrip && (
+            <button
+              type="button"
+              onClick={onResumeTrip}
+              className="px-3 py-1.5 rounded-lg text-xs font-700 flex items-center gap-1.5"
+              style={{ background: 'rgba(0,229,160,0.12)', border: '1px solid rgba(0,229,160,0.24)', color: '#00e5a0', fontWeight: 700 }}
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+              Active Trip
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="w-9 h-9 flex items-center justify-center rounded-full"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+            title="Close schedule"
+          >
+            <X className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.6)' }} />
+          </button>
+        </div>
       </div>
 
       <div
@@ -321,9 +346,9 @@ export default function DriverScheduleView({ driverId, onClose }) {
         style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
       >
         <div className="flex-1 rounded-xl px-3 py-2.5" style={{ background: 'rgba(0,229,160,0.07)', border: '1px solid rgba(0,229,160,0.15)' }}>
-          <p className="text-xs mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>Today's Revenue</p>
+          <p className="text-xs mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>Est. miles</p>
           <p className="font-700 text-base" style={{ color: '#00e5a0', fontWeight: 700 }}>
-            ${stats.totalRevenue.toFixed(2)}
+            {Number(stats.totalMiles || 0).toFixed(1)}
           </p>
         </div>
         <div className="flex-1 rounded-xl px-3 py-2.5" style={{ background: 'rgba(201,168,76,0.07)', border: '1px solid rgba(201,168,76,0.15)' }}>
@@ -333,9 +358,9 @@ export default function DriverScheduleView({ driverId, onClose }) {
           </p>
         </div>
         <div className="flex-1 rounded-xl px-3 py-2.5" style={{ background: 'rgba(14,165,233,0.07)', border: '1px solid rgba(14,165,233,0.15)' }}>
-          <p className="text-xs mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>/hr Est.</p>
+          <p className="text-xs mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>Avg gap</p>
           <p className="font-700 text-base" style={{ color: '#0ea5e9', fontWeight: 700 }}>
-            ${stats.revenuePerHour.toFixed(0)}
+            {stats.avgBufferMin ? `${stats.avgBufferMin}m` : '—'}
           </p>
         </div>
       </div>
@@ -430,6 +455,21 @@ export default function DriverScheduleView({ driverId, onClose }) {
             </div>
           </div>
         )}
+      </div>
+      <div className="px-4 pb-4 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <button
+          type="button"
+          onClick={hasActiveTrip && onResumeTrip ? onResumeTrip : onClose}
+          className="w-full py-3 rounded-xl text-sm font-700"
+          style={{
+            background: hasActiveTrip ? 'rgba(0,229,160,0.12)' : 'rgba(255,255,255,0.06)',
+            border: `1px solid ${hasActiveTrip ? 'rgba(0,229,160,0.24)' : 'rgba(255,255,255,0.12)'}`,
+            color: hasActiveTrip ? '#00e5a0' : '#e5e7eb',
+            fontWeight: 700,
+          }}
+        >
+          {hasActiveTrip ? 'Back To Active Trip' : 'Close Schedule'}
+        </button>
       </div>
     </div>
   );

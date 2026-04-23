@@ -296,6 +296,7 @@ export default function LiveDispatch() {
   const [copyingSteps, setCopyingSteps] = useState(false);
   const [takeConfirmState, setTakeConfirmState] = useState(null);
   const [assignmentNoteDrafts, setAssignmentNoteDrafts] = useState({});
+  const [allowMultiTripTake, setAllowMultiTripTake] = useState(false);
   const schedulerPrefs = readCompanySchedulerPrefs(company);
 
   /** Mirrors AppContext normalization (e.g. dispatcher → company) so scoped test assigns always get isTestTrip. */
@@ -325,6 +326,28 @@ export default function LiveDispatch() {
       a => String(a.driver_id || '') === String(driverId) && isTripLockStatus(a?.status)
     );
   }
+
+  function canAssignAnotherTrip(driverId) {
+    if (!driverId) return false;
+    return allowMultiTripTake || !driverHasLockConflict(driverId);
+  }
+
+  useEffect(() => {
+    const scopeKey = scopedCompanyId || 'global';
+    try {
+      const raw = localStorage.getItem(`dispatch_allow_multi_trip_take:${scopeKey}`);
+      setAllowMultiTripTake(raw === '1');
+    } catch {
+      setAllowMultiTripTake(false);
+    }
+  }, [scopedCompanyId]);
+
+  useEffect(() => {
+    const scopeKey = scopedCompanyId || 'global';
+    try {
+      localStorage.setItem(`dispatch_allow_multi_trip_take:${scopeKey}`, allowMultiTripTake ? '1' : '0');
+    } catch {}
+  }, [scopedCompanyId, allowMultiTripTake]);
 
   const availableTrips = trips.filter(t => {
     if (t.status !== 'available') return false;
@@ -431,18 +454,20 @@ export default function LiveDispatch() {
       return;
     }
 
-    const driverBusy = (assignments || []).find(
-      a =>
-        String(a.driver_id || '') === String(driver?.id || '') &&
-        normalizeTripId(a.trip_id) !== tripIdKey &&
-        isTripLockStatus(a?.status)
-    );
-    if (driverBusy) {
-      showToast(
-        `${driver?.full_name || 'Driver'} already has an active trip. Finish or reject it before assigning another.`,
-        'error'
+    if (!allowMultiTripTake) {
+      const driverBusy = (assignments || []).find(
+        a =>
+          String(a.driver_id || '') === String(driver?.id || '') &&
+          normalizeTripId(a.trip_id) !== tripIdKey &&
+          isTripLockStatus(a?.status)
       );
-      return;
+      if (driverBusy) {
+        showToast(
+          `${driver?.full_name || 'Driver'} already has an active trip. Finish or reject it before assigning another.`,
+          'error'
+        );
+        return;
+      }
     }
 
     const offerFp = tripOfferFingerprintFromTrip(trip);
@@ -724,12 +749,12 @@ export default function LiveDispatch() {
   }
 
   function getBestAvailableDriver() {
-    if (selectedDriver?.id && !driverHasLockConflict(selectedDriver.id)) return selectedDriver;
+    if (selectedDriver?.id && canAssignAnotherTrip(selectedDriver.id)) return selectedDriver;
 
-    const onlineDrivers = drivers.filter(d => d.status === 'online' && !driverHasLockConflict(d.id));
+    const onlineDrivers = drivers.filter(d => d.status === 'online' && canAssignAnotherTrip(d.id));
     if (onlineDrivers.length > 0) return onlineDrivers[0];
 
-    const activeDrivers = drivers.filter(d => d.is_active !== false && !driverHasLockConflict(d.id));
+    const activeDrivers = drivers.filter(d => d.is_active !== false && canAssignAnotherTrip(d.id));
     return activeDrivers[0] || null;
   }
 
@@ -746,7 +771,7 @@ export default function LiveDispatch() {
       );
       return;
     }
-    if (driverHasLockConflict(driver.id)) {
+    if (!allowMultiTripTake && driverHasLockConflict(driver.id)) {
       showToast(
         `${driver.full_name} already has an active trip. Finish or reject it before assigning another.`,
         'error'
@@ -774,7 +799,7 @@ export default function LiveDispatch() {
       ? getBestAvailableDriver()
       : (preferredDriver || selectedDriver || getBestAvailableDriver());
     if (!driver) return;
-    if (driverHasLockConflict(driver.id)) {
+    if (!allowMultiTripTake && driverHasLockConflict(driver.id)) {
       showToast(
         `${driver.full_name} already has an active trip. Finish or reject it before taking another test trip.`,
         'error'
@@ -857,6 +882,10 @@ export default function LiveDispatch() {
            (a.trip_id || '').toLowerCase().includes(q);
   });
   const companyOpenTrips = scoredTrips.filter(trip => !lockedTripIdSet.has(normalizeTripId(trip.sentry_trip_id)));
+  const selectedDriverHasActiveTrip =
+    Boolean(selectedDriver?.id) &&
+    !allowMultiTripTake &&
+    driverHasLockConflict(selectedDriver.id);
 
   const assignTestTripReady = useMemo(
     () => companyOpenTrips.length > 0 && Boolean(getBestAvailableDriver()),
@@ -1365,6 +1394,14 @@ export default function LiveDispatch() {
               }
             }}
             onAssignTrip={(trip) => {
+              if (!selectedDriver) return;
+              if (!allowMultiTripTake && driverHasLockConflict(selectedDriver.id)) {
+                showToast(
+                  `${selectedDriver.full_name} already has an active trip. Finish or reject it before assigning another.`,
+                  'error'
+                );
+                return;
+              }
               assignTrip(trip, selectedDriver, scopedTestAssignOptions());
             }}
           />
@@ -1496,6 +1533,20 @@ export default function LiveDispatch() {
               color: '#e5e7eb',
             }}
           />
+          <button
+            type="button"
+            onClick={() => setAllowMultiTripTake(value => !value)}
+            className="w-full mt-2 px-2.5 py-2 rounded-lg text-xs flex items-center justify-between"
+            style={{
+              background: allowMultiTripTake ? 'rgba(0,229,160,0.12)' : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${allowMultiTripTake ? 'rgba(0,229,160,0.28)' : 'rgba(255,255,255,0.08)'}`,
+              color: allowMultiTripTake ? '#00e5a0' : 'rgba(255,255,255,0.72)',
+            }}
+            title="Allow multiple active trips per driver when upstream Sentry accepts the take"
+          >
+            <span>Allow multi-trip take if Sentry allows</span>
+            <span>{allowMultiTripTake ? 'ON' : 'OFF'}</span>
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
@@ -1523,7 +1574,7 @@ export default function LiveDispatch() {
                     trip={trip}
                     selected={selectedTrip?.id === trip.id}
                     onClick={() => setSelectedTrip(prev => prev?.id === trip.id ? null : trip)}
-                    onAssign={selectedDriver ? () => assignTrip(trip, selectedDriver, scopedTestAssignOptions()) : null}
+                    onAssign={selectedDriver && !selectedDriverHasActiveTrip ? () => assignTrip(trip, selectedDriver, scopedTestAssignOptions()) : null}
                     assigning={normalizeTripId(assigning) === normalizeTripId(trip.sentry_trip_id)}
                     assigned={lockedTripIdSet.has(normalizeTripId(trip.sentry_trip_id))}
                     syncStatus={tripSyncMap[String(trip.sentry_trip_id || '')] || null}
@@ -1663,7 +1714,7 @@ export default function LiveDispatch() {
                 trip={trip}
                 selected={selectedTrip?.id === trip.id}
                 onClick={() => setSelectedTrip(prev => prev?.id === trip.id ? null : trip)}
-                onAssign={selectedDriver ? () => assignTrip(trip, selectedDriver, scopedTestAssignOptions()) : null}
+                onAssign={selectedDriver && !selectedDriverHasActiveTrip ? () => assignTrip(trip, selectedDriver, scopedTestAssignOptions()) : null}
                 assigning={normalizeTripId(assigning) === normalizeTripId(trip.sentry_trip_id)}
                 assigned={lockedTripIdSet.has(normalizeTripId(trip.sentry_trip_id))}
                 syncStatus={tripSyncMap[String(trip.sentry_trip_id || '')] || null}

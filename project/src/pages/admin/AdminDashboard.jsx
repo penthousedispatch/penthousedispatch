@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Routes, Route, NavLink, Link, useLocation, useParams } from 'react-router-dom';
+import { Routes, Route, NavLink, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
@@ -300,14 +300,82 @@ function AdminCompanyPreview() {
 }
 
 export default function AdminDashboard() {
-  const { sentryStatus, drivers, adminPreviewCompany } = useApp();
+  const { sentryStatus, drivers, adminPreviewCompany, setAdminPreviewCompany } = useApp();
   const [mobileNav, setMobileNav] = useState(false);
+  const [assistCompanies, setAssistCompanies] = useState([]);
+  const [assistDrivers, setAssistDrivers] = useState([]);
+  const [assistCompanyId, setAssistCompanyId] = useState('');
+  const [assistDriverId, setAssistDriverId] = useState('');
   const location = useLocation();
+  const navigate = useNavigate();
 
   const onlineDrivers = drivers.filter(d => d.status === 'online' || d.status === 'on_trip').length;
   const isPlatformActive =
     location.pathname === '/admin/platform' ||
     PLATFORM_TABS.some(t => t.exact ? location.pathname === t.path : location.pathname.startsWith(t.path));
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadAssistCompanies() {
+      const { data } = await supabase
+        .from('companies')
+        .select('id, company_name, is_approved, onboarding_status, is_suspended')
+        .order('company_name');
+      if (!mounted) return;
+      const approved = (data || []).filter(companyRow => (
+        !companyRow.is_suspended &&
+        (companyRow.is_approved || String(companyRow.onboarding_status || '').toLowerCase() === 'approved')
+      ));
+      setAssistCompanies(approved);
+    }
+    loadAssistCompanies();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setAssistCompanyId(adminPreviewCompany?.id || '');
+  }, [adminPreviewCompany?.id]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadAssistDrivers() {
+      let query = supabase
+        .from('drivers')
+        .select('id, full_name, company_id, status, is_active')
+        .eq('is_active', true)
+        .order('full_name');
+      if (assistCompanyId) {
+        query = query.eq('company_id', assistCompanyId);
+      }
+      const { data } = await query.limit(200);
+      if (!mounted) return;
+      const nextDrivers = data || [];
+      setAssistDrivers(nextDrivers);
+      if (assistDriverId && !nextDrivers.some(d => d.id === assistDriverId)) {
+        setAssistDriverId('');
+      }
+    }
+    loadAssistDrivers();
+    return () => {
+      mounted = false;
+    };
+  }, [assistCompanyId, assistDriverId]);
+
+  function openAssistCompany() {
+    if (!assistCompanyId) return;
+    const selected = assistCompanies.find(c => c.id === assistCompanyId) || null;
+    setAdminPreviewCompany(selected);
+    navigate(`/admin/company-preview/${assistCompanyId}`);
+  }
+
+  function openAssistDriver() {
+    const params = new URLSearchParams();
+    if (assistCompanyId) params.set('companyId', assistCompanyId);
+    if (assistDriverId) params.set('driverId', assistDriverId);
+    navigate(`/driver${params.toString() ? `?${params.toString()}` : ''}`);
+  }
 
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: '#07090d', paddingTop: 'calc(var(--safe-top) + 6px)' }}>
@@ -366,6 +434,51 @@ export default function AdminDashboard() {
         </nav>
 
         <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="hidden 2xl:flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <select
+              value={assistCompanyId}
+              onChange={event => {
+                const nextId = event.target.value;
+                setAssistCompanyId(nextId);
+                setAssistDriverId('');
+              }}
+              className="text-xs"
+              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#e5e7eb', borderRadius: 8, padding: '6px 8px' }}
+            >
+              <option value="">Select company</option>
+              {assistCompanies.map(companyRow => (
+                <option key={companyRow.id} value={companyRow.id}>{companyRow.company_name}</option>
+              ))}
+            </select>
+            <select
+              value={assistDriverId}
+              onChange={event => setAssistDriverId(event.target.value)}
+              className="text-xs"
+              style={{ minWidth: 160, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#e5e7eb', borderRadius: 8, padding: '6px 8px' }}
+            >
+              <option value="">Any driver (picker)</option>
+              {assistDrivers.map(driverRow => (
+                <option key={driverRow.id} value={driverRow.id}>{driverRow.full_name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={openAssistCompany}
+              disabled={!assistCompanyId}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+              style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', opacity: assistCompanyId ? 1 : 0.5 }}
+            >
+              Assist Company
+            </button>
+            <button
+              type="button"
+              onClick={openAssistDriver}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+              style={{ background: 'rgba(0,229,160,0.1)', border: '1px solid rgba(0,229,160,0.25)', color: '#00e5a0' }}
+            >
+              Assist Driver
+            </button>
+          </div>
           {adminPreviewCompany && (
             <Link
               to={`/admin/company-preview/${adminPreviewCompany.id}`}
