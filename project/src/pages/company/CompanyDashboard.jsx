@@ -3,6 +3,7 @@ import { NavLink, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 import LiveDispatch from '../dispatcher/LiveDispatch';
+import IncentivesPanel from '../dispatcher/IncentivesPanel';
 import PayoutsTab from '../dispatcher/PayoutsTab';
 import PayRatesSection from '../dispatcher/PayRatesSection';
 import ModuleBoundary from '../../components/app/ModuleBoundary';
@@ -12,7 +13,7 @@ import AddDriverModal from '../../components/drivers/AddDriverModal';
 import CSVImportModal, { CSV_DRIVERS } from '../../components/drivers/CSVImportModal';
 import {
   Users, Navigation, FileText, Settings, LogOut,
-  DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck,
+  DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck, Trophy,
   Upload, Link2, Headphones, RefreshCw, Send, ClipboardList, Menu, X
 } from 'lucide-react';
 import { handleSupabaseError, toastError, toastSuccess } from '../../utils/errorHandler';
@@ -3067,6 +3068,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
     { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
     { path: `${basePath}/invoices`, routePath: 'invoices', label: 'Invoices', icon: FileText },
     { path: `${basePath}/payouts`, routePath: 'payouts', label: 'Driver Pay', icon: CreditCard },
+    { path: `${basePath}/incentives`, routePath: 'incentives', label: 'Incentives', icon: Trophy },
     { path: `${basePath}/ai-controls`, routePath: 'ai-controls', label: 'AI Settings', icon: Bot },
     { path: `${basePath}/guides`, routePath: 'guides', label: 'Guides', icon: BookOpen },
     { path: `${basePath}/settings`, routePath: 'settings', label: 'Settings', icon: Settings },
@@ -3257,6 +3259,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
           <Route path="trips" element={renderCompanyModule('Trip History', <CompanyTrips company={activeCompany} />)} />
           <Route path="invoices" element={renderCompanyModule('Invoices', <CompanyInvoices company={activeCompany} />)} />
           <Route path="payouts" element={renderCompanyModule('Driver Pay', <CompanyDriverPay company={activeCompany} />)} />
+          <Route path="incentives" element={renderCompanyModule('Incentives', <IncentivesPanel />)} />
           <Route path="ai-controls" element={renderCompanyModule('AI Controls', <CompanyAIControls company={activeCompany} setCompany={setCompany} />)} />
           <Route path="guides" element={renderCompanyModule('Guides', <CompanyGuides />)} />
           <Route path="settings" element={renderCompanyModule('Settings', <CompanySettings company={activeCompany} setCompany={setCompany} />)} />

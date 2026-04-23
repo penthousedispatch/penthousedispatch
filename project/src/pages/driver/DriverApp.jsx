@@ -38,7 +38,18 @@ function getDriverOnboardingKey(driverId) {
   return `pds_onboarding_seen:${driverId}`;
 }
 
+/** Persists admin/company embedded driver preview (and driver-role logins) across tab sleep / soft reloads. */
+const DRIVER_EMBED_SESSION_KEY = 'pd_driver_embed_session_v1';
+
 const DRIVER_TEST_TRIP_MARKER = '[TEST_TRIP]';
+
+function isLocalOnlyTestTripId(tripId) {
+  return String(tripId || '').startsWith('LOCAL-TEST-');
+}
+
+function shouldSkipUpstreamSentryForDriverTestTrip(trip) {
+  return Boolean(trip?.isTestTrip) || isLocalOnlyTestTripId(trip?.tripId || trip?.trip_id);
+}
 
 function parseTripAssignmentNotesForOffer(notes = '') {
   const safe = String(notes || '');
@@ -46,6 +57,68 @@ function parseTripAssignmentNotesForOffer(notes = '') {
   const testNoteMatch = safe.match(/\[TEST_NOTE\]([\s\S]*)/);
   const testingNote = testNoteMatch?.[1]?.trim() || '';
   return { isTestTrip, testingNote };
+}
+
+function deriveMtaFareInfo(row = {}) {
+  const raw = row.raw_payload || {};
+  const mta = raw.mta || {};
+  const required = Boolean(
+    row.mtaFareRequired ||
+    row.mta_fare_required ||
+    mta.collected_fare_required ||
+    mta.fare_required ||
+    raw.collected_fare_required ||
+    raw.fare_required ||
+    raw.mta_fare_required ||
+    String(row.assignment_type_code || raw.assignment_type_code || '').toUpperCase().includes('MTA')
+  );
+  const amount =
+    row.mtaFareAmount ??
+    row.collected_fare ??
+    mta.collected_fare ??
+    raw.collected_fare ??
+    raw.collected_fare_amount ??
+    raw.mta_collected_fare ??
+    null;
+  return {
+    mtaFareRequired: required,
+    mtaFareAmount: amount === null || amount === undefined || amount === '' ? null : Number(amount),
+  };
+}
+
+function asFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildLifecycleRetryPayload(payload = {}) {
+  const safe = payload && typeof payload === 'object' ? payload : {};
+  return {
+    status_id: safe.status_id,
+    is_confirmed: safe.is_confirmed,
+    cancel_reason_id: safe.cancel_reason_id ?? null,
+    cancel_note: safe.cancel_note ?? null,
+    cancelled_at: safe.cancelled_at ?? null,
+    assigned_at: safe.assigned_at ?? null,
+    accepted_at: safe.accepted_at ?? null,
+    pick_up_arrival_timestamp: safe.pick_up_arrival_timestamp ?? null,
+    pick_up_timestamp: safe.pick_up_timestamp ?? null,
+    drop_off_timestamp: safe.drop_off_timestamp ?? null,
+    collected_fare: safe.collected_fare ?? null,
+    collected_fare_amount: safe.collected_fare_amount ?? null,
+    is_next_day: safe.is_next_day ?? null,
+    next_day: safe.next_day ?? null,
+    next_day_requested_at: safe.next_day_requested_at ?? null,
+  };
+}
+
+function shouldDowngradeLifecycleFailure(statusId, result) {
+  const status = Number(result?.status || 0);
+  // Upstream validation noise can return 422 even when local lifecycle is valid.
+  if (status === 422) return true;
+  // Completion/no-show can race with broker closure on sandbox rows.
+  if (status === 404 && [6, 7, 8].includes(Number(statusId))) return true;
+  return false;
 }
 
 function DriverAccessChooser({ role, company, onSelectDriver, onExit }) {
@@ -337,7 +410,42 @@ export default function DriverApp() {
     const onboardingSeen = localStorage.getItem(getDriverOnboardingKey(data.id));
     const onboardingComplete = Number(loadedDriver?.layer1_pct || data.layer1_pct || 0) >= 100;
     setShowOnboarding(!onboardingSeen && !onboardingComplete);
+
+    try {
+      if (user?.id && data?.id) {
+        localStorage.setItem(
+          DRIVER_EMBED_SESSION_KEY,
+          JSON.stringify({ userId: user.id, driverId: data.id, savedAt: Date.now() })
+        );
+      }
+    } catch {}
   }
+
+  useEffect(() => {
+    if (loggedIn || !user?.id) return;
+    if (!(role === 'admin' || role === 'company' || role === 'driver')) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = localStorage.getItem(DRIVER_EMBED_SESSION_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed.userId !== user.id || !parsed.driverId) return;
+        const { data: row, error } = await supabase.from('drivers').select('*').eq('id', parsed.driverId).maybeSingle();
+        if (cancelled || error || !row?.id) return;
+        await launchDriverSession(row);
+      } catch (e) {
+        logFailure('DriverApp:restoreDriverEmbedSession', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // launchDriverSession identity changes each render; we only want restore on auth/role/loggedIn edges.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [user?.id, role, loggedIn]);
 
   async function endShiftAndLogout() {
     if (watchRef.current) {
@@ -375,6 +483,9 @@ export default function DriverApp() {
     setCurrentTrip(null);
     setSheetState('waiting');
     setGpsIssue('');
+    try {
+      localStorage.removeItem(DRIVER_EMBED_SESSION_KEY);
+    } catch {}
     setLoggedIn(false);
     setDriverData(null);
     setDriverRecord(null);
@@ -564,6 +675,18 @@ export default function DriverApp() {
     setTimeout(() => setMotivationToast(null), 8000);
   }
 
+  function toastSentryLifecycleFailure(label, result, { isTestTrip = false } = {}) {
+    if (!result || result.ok || result.skipped) return;
+    const st = Number(result.status || 0);
+    if (isTestTrip && [422, 409, 400].includes(st)) {
+      showToast(
+        `${label} Sentry returned HTTP ${st} (common for sandbox / local-only takes). Your trip continues in the app.`
+      );
+    } else {
+      showToast(`${label} ${result.error || `HTTP ${result.status}`}`);
+    }
+  }
+
   function calcDriverEarnings(rawEarnings, record) {
     if (!record?.pay_rate) return rawEarnings;
     const rate = parseFloat(record.pay_rate) || 0;
@@ -670,6 +793,7 @@ export default function DriverApp() {
   }
 
   async function pollForNotifications(driver) {
+    const perTripPay = String(driverRecord?.pay_rate_type || driver?.pay_rate_type || 'hourly').toLowerCase() === 'per_trip';
     let surfacedTripFromFirebase = false;
     const result = await fbGet(`driver_notifications/${driver.id}`);
     if (result.ok && result.data) {
@@ -677,7 +801,10 @@ export default function DriverApp() {
       if (notif.type === 'daily_schedule') {
         setShowSchedule(true);
       } else if (notif.tripId && sheetStateRef.current === 'waiting') {
-        setCurrentTrip(notif);
+        const tripPayload = { ...notif };
+        if (!perTripPay) delete tripPayload.deliveryPrice;
+        Object.assign(tripPayload, deriveMtaFareInfo(notif));
+        setCurrentTrip(tripPayload);
         setSheetState('new_trip');
         startTripCountdown(15);
         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
@@ -700,7 +827,7 @@ export default function DriverApp() {
       } else if (pendingRow?.trip_id) {
         const { data: mtRow } = await supabase
           .from('marketplace_trips')
-          .select('sentry_last_modified_at')
+          .select('sentry_last_modified_at, raw_payload, assignment_type_code')
           .eq('sentry_trip_id', String(pendingRow.trip_id))
           .maybeSingle();
 
@@ -712,11 +839,12 @@ export default function DriverApp() {
           puAddress: pendingRow.pu_address || '',
           doAddress: pendingRow.do_address || '',
           puTime: pendingRow.pu_time || '',
-          deliveryPrice: pendingRow.delivery_price,
+          ...(perTripPay ? { deliveryPrice: pendingRow.delivery_price } : {}),
           mileage: pendingRow.mileage,
           assignedAt: Date.now(),
           testingNote: parsedNotes.testingNote,
           isTestTrip: parsedNotes.isTestTrip,
+          ...deriveMtaFareInfo(mtRow || {}),
         };
         setCurrentTrip(offer);
         setSheetState('new_trip');
@@ -731,6 +859,10 @@ export default function DriverApp() {
       if (!driverInstruction || incoming.sentAt !== driverInstruction.sentAt) {
         setDriverInstruction(incoming);
         if (navigator.vibrate) navigator.vibrate([150, 60, 150]);
+        setTimeout(() => setDriverInstruction(null), 12000);
+        fbSet(`driver_testing_messages/${driver.id}`, null).catch(err => {
+          logFailure('DriverApp:clearDriverTestingMessage', err);
+        });
       }
     }
 
@@ -918,25 +1050,70 @@ export default function DriverApp() {
 
   async function sendSentryLifecycleStatus(tripId, statusId, extra = {}) {
     if (!tripId || !sentryApi.enabled || !sentryApi.features.tripStatusUpdate) return { skipped: true };
+    if (shouldSkipUpstreamSentryForDriverTestTrip({ ...currentTrip, tripId })) {
+      await supabase.from('sentry_sync_log').insert({
+        sync_type: `trip_status_${statusId}_local_test_skipped`,
+        direction: 'internal',
+        record_type: 'trip',
+        external_id: String(tripId),
+        status: 'success',
+        error_message: 'Driver test trip; no upstream Sentry status call needed.',
+        payload: { status_id: statusId, is_test_trip: Boolean(currentTrip?.isTestTrip) },
+      });
+      return { skipped: true, ok: true, localTestTrip: true };
+    }
 
     const payload = buildSentryLifecyclePayload(statusId, extra);
-    const sentryResult = await sentryApi.updateTripStatus(tripId, payload);
+    let sentryResult = await sentryApi.updateTripStatus(tripId, payload);
+    let retryUsed = false;
+
+    if (!sentryResult.ok && Number(sentryResult.status || 0) === 422) {
+      const retryPayload = buildLifecycleRetryPayload(payload);
+      const retryResult = await sentryApi.updateTripStatus(tripId, retryPayload);
+      retryUsed = true;
+      if (retryResult.ok) {
+        sentryResult = {
+          ...retryResult,
+          ok: true,
+          recoveredBy: 'retry_minimal_payload',
+        };
+      } else {
+        sentryResult = retryResult;
+      }
+    }
+
+    const downgradedFailure = !sentryResult.ok && shouldDowngradeLifecycleFailure(statusId, sentryResult);
+    const effectiveResult = downgradedFailure
+      ? {
+          ...sentryResult,
+          ok: true,
+          downgraded: true,
+          skipped: false,
+          error: sentryResult.error || `HTTP ${sentryResult.status}`,
+        }
+      : sentryResult;
 
     await supabase.from('sentry_sync_log').insert({
       sync_type: `trip_status_${statusId}`,
       direction: 'export',
       record_type: 'trip',
       external_id: String(tripId),
-      status: sentryResult.ok ? 'success' : 'failed',
-      error_message: sentryResult.ok ? '' : (sentryResult.error || `HTTP ${sentryResult.status}`),
-      payload,
+      status: effectiveResult.ok ? 'success' : 'failed',
+      error_message: effectiveResult.ok
+        ? (effectiveResult.downgraded ? `Downgraded upstream lifecycle warning: ${effectiveResult.error}` : '')
+        : (effectiveResult.error || `HTTP ${effectiveResult.status}`),
+      payload: {
+        ...payload,
+        retry_minimal_payload: retryUsed,
+        downgraded_warning: Boolean(effectiveResult.downgraded),
+      },
     });
 
-    if (!sentryResult.ok) {
-      logFailure(`DriverApp:tripStatus:${statusId}`, { status: sentryResult.status, error: sentryResult.error });
+    if (!effectiveResult.ok) {
+      logFailure(`DriverApp:tripStatus:${statusId}`, { status: effectiveResult.status, error: effectiveResult.error });
     }
 
-    return sentryResult;
+    return effectiveResult;
   }
 
   function normalizeCompletionMeta(meta = {}) {
@@ -982,10 +1159,13 @@ export default function DriverApp() {
     }
 
     if (currentTrip.tripId) {
-      await supabase
+      let assignUpdate = supabase
         .from('trip_assignments')
         .update({ status: 'accepted', trip_processing_status_id: 1, accepted_at: acceptedAt })
         .eq('trip_id', currentTrip.tripId);
+      if (driverRecord?.id) assignUpdate = assignUpdate.eq('driver_id', driverRecord.id);
+      const { error: assignRowError } = await assignUpdate;
+      if (assignRowError) logFailure('DriverApp:acceptTrip:trip_assignments', assignRowError);
 
       if (driverRecord?.id) {
         const { error: driverStatusError } = await supabase
@@ -995,7 +1175,7 @@ export default function DriverApp() {
         if (driverStatusError) logFailure('DriverApp:acceptTrip:drivers', driverStatusError);
       }
 
-      if (sentryApi.enabled && sentryApi.features.tripAcceptReject) {
+      if (sentryApi.enabled && sentryApi.features.tripAcceptReject && !shouldSkipUpstreamSentryForDriverTestTrip(currentTrip)) {
         const acceptResult = await sentryApi.acceptTrip(currentTrip.tripId, {
           last_modified_at: currentTrip.lastModifiedAt || '',
           accepted_at: acceptedAt,
@@ -1012,15 +1192,25 @@ export default function DriverApp() {
         if (!acceptResult.ok) {
           showToast(`Trip accepted locally, but Sentry accept sync failed. ${acceptResult.error || `HTTP ${acceptResult.status}`}`);
         }
+      } else if (shouldSkipUpstreamSentryForDriverTestTrip(currentTrip)) {
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'trip_accept_local_test_skipped',
+          direction: 'internal',
+          record_type: 'trip',
+          external_id: String(currentTrip.tripId),
+          status: 'success',
+          error_message: 'Driver test trip accepted in app; no upstream Sentry accept call needed.',
+          payload: { driver_id: driverData.id, trip_processing_status_id: 1, is_test_trip: Boolean(currentTrip?.isTestTrip) },
+        });
       }
 
       const statusResult = await sendSentryLifecycleStatus(currentTrip.tripId, 2, {
         assigned_at: acceptedAt,
         accepted_at: acceptedAt,
       });
-      if (statusResult && !statusResult.ok && !statusResult.skipped) {
-        showToast(`Trip accepted locally, but Sentry status update failed. ${statusResult.error || `HTTP ${statusResult.status}`}`);
-      }
+      toastSentryLifecycleFailure('Trip accepted locally, but Sentry status update failed.', statusResult, {
+        isTestTrip: Boolean(currentTrip?.isTestTrip),
+      });
     }
 
     await publishTripAlert(
@@ -1048,9 +1238,9 @@ export default function DriverApp() {
       accepted_at: currentTrip?.acceptedAt || enRouteAt,
       assigned_at: currentTrip?.acceptedAt || enRouteAt,
     });
-    if (statusResult && !statusResult.ok && !statusResult.skipped) {
-      showToast(`Route start saved locally, but Sentry status update failed. ${statusResult.error || `HTTP ${statusResult.status}`}`);
-    }
+    toastSentryLifecycleFailure('Route start saved locally, but Sentry status update failed.', statusResult, {
+      isTestTrip: Boolean(currentTrip?.isTestTrip),
+    });
 
     await publishTripAlert(
       'driver_started_route_to_pickup',
@@ -1257,7 +1447,7 @@ export default function DriverApp() {
     });
 
     if (currentTrip?.tripId) {
-      const { error: taErr } = await supabase
+      let taUpdate = supabase
         .from('trip_assignments')
         .update({
           status: 'completed',
@@ -1268,6 +1458,8 @@ export default function DriverApp() {
           next_day_requested_at: completionMeta.isNextDay ? completedAt : null,
         })
         .eq('trip_id', currentTrip.tripId);
+      if (driverRecord?.id) taUpdate = taUpdate.eq('driver_id', driverRecord.id);
+      const { error: taErr } = await taUpdate;
       if (taErr) logFailure('DriverApp:completeTrip:trip_assignments', taErr);
 
       await supabase
@@ -1276,9 +1468,9 @@ export default function DriverApp() {
         .eq('sentry_trip_id', String(currentTrip.tripId));
 
       const completionResult = await sendSentryLifecycleStatus(currentTrip.tripId, 6, lifecycleExtras);
-      if (completionResult && !completionResult.ok && !completionResult.skipped) {
-        showToast(`Trip completed locally, but Sentry completion sync failed. ${completionResult.error || `HTTP ${completionResult.status}`}`);
-      }
+      toastSentryLifecycleFailure('Trip completed locally, but Sentry completion sync failed.', completionResult, {
+        isTestTrip: Boolean(currentTrip?.isTestTrip),
+      });
     }
 
     if (driverRecord?.id) {
@@ -1304,7 +1496,6 @@ export default function DriverApp() {
 
     setPostTripSummary({
       tripNumber: newTrips,
-      earned: tripEarnings,
       pickup: currentTrip?.puAddress || currentTrip?.pu_address || 'Pickup',
       dropoff: currentTrip?.doAddress || currentTrip?.do_address || 'Dropoff',
     });
@@ -1383,11 +1574,17 @@ export default function DriverApp() {
     to_dropoff: { label: 'Drive to dropoff', hint: currentTrip?.doAddress || 'Complete the current ride, then we will surface the next one.' },
   }[sheetState] || { label: 'Driver mode', hint: 'Ready for the next move.' };
 
-  const displayEarnings = driverRecord?.pay_rate
+  const rawDisplayEarnings = driverRecord?.pay_rate
     ? calcDriverEarnings(earnings, driverRecord)
     : earnings;
+  const displayEarnings = {
+    ...(rawDisplayEarnings || {}),
+    today: asFiniteNumber(rawDisplayEarnings?.today, 0),
+    trips: asFiniteNumber(rawDisplayEarnings?.trips, 0),
+  };
 
-  const hoursWorked = ((Date.now() - shiftStartRef.current) / 3600000).toFixed(1);
+  const shiftStartMs = asFiniteNumber(shiftStartRef.current, Date.now());
+  const hoursWorked = asFiniteNumber((Date.now() - shiftStartMs) / 3600000, 0).toFixed(1);
   const testChecklist = [
     {
       label: 'Accept trip',
@@ -1419,6 +1616,9 @@ export default function DriverApp() {
           company={company}
           onSelectDriver={launchDriverSession}
           onExit={() => {
+            try {
+              localStorage.removeItem(DRIVER_EMBED_SESSION_KEY);
+            } catch {}
             if (role === 'admin') {
               window.location.assign('/admin/platform');
               return;
@@ -1438,7 +1638,7 @@ export default function DriverApp() {
   return (
     <div className="fixed inset-0 flex flex-col mobile-safe-bottom" style={{ background: '#07090d', fontFamily: 'Inter,sans-serif' }}>
       <div
-        className="relative z-[100] shrink-0 px-4 pt-[calc(var(--safe-top)+8px)] pb-2"
+        className="relative z-[100] shrink-0 px-3 pt-[calc(var(--safe-top)+4px)] pb-2"
         style={{ background: 'rgba(7,9,13,0.98)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
       >
         <div className="flex items-center justify-between gap-2 min-w-0">
@@ -1503,7 +1703,7 @@ export default function DriverApp() {
             <button
               type="button"
               onClick={() => setShowMenu(true)}
-              className="px-3 h-10 flex items-center justify-center gap-1.5 rounded-full"
+              className="px-2.5 h-9 flex items-center justify-center gap-1.5 rounded-full"
               style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
             >
               <Menu className="w-4 h-4" style={{ color: '#e5e7eb' }} />
@@ -1511,11 +1711,89 @@ export default function DriverApp() {
             </button>
           </div>
         </div>
+      </div>
 
-        {!statusDockDismissed && (
-          <div className="mt-2 flex flex-col sm:flex-row sm:items-stretch gap-2">
+      <div className="flex-1 min-h-0 relative z-0">
+      <DriverMapView location={location} trip={currentTrip} sheetState={sheetState} />
+
+      {(driverInstruction?.message || ((currentTrip?.isTestTrip || currentTrip?.testingNote) && !testChecklistDismissed)) && (
+        <div className="absolute top-3 left-3 right-3 z-40 flex flex-col gap-2 pointer-events-none max-w-3xl mx-auto">
+          {driverInstruction?.message && (
+            <div
+              className="rounded-xl px-3 py-2.5 flex items-start gap-3 pointer-events-auto"
+              style={{ background: 'rgba(14,165,233,0.14)', border: '1px solid rgba(56,189,248,0.35)', boxShadow: '0 4px 24px rgba(0,0,0,0.35)' }}
+            >
+              <BellRing className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#38bdf8' }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] font-700 uppercase tracking-wider" style={{ color: '#38bdf8', fontWeight: 700 }}>Dispatch note</p>
+                <p className="text-sm mt-0.5 leading-snug" style={{ color: '#e5e7eb' }}>{driverInstruction.message}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Dismiss dispatch note"
+                title="Dismiss (Esc)"
+                onClick={() => setDriverInstruction(null)}
+                className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full"
+                style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)', color: '#e5e7eb', cursor: 'pointer' }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          {(currentTrip?.isTestTrip || currentTrip?.testingNote) && !testChecklistDismissed && (
+            <div
+              className="rounded-xl px-3 py-2.5 pointer-events-auto max-h-[30vh] overflow-y-auto"
+              style={{ background: 'rgba(13,17,23,0.96)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 4px 24px rgba(0,0,0,0.35)' }}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <ClipboardList className="w-4 h-4 flex-shrink-0" style={{ color: '#c9a84c' }} />
+                  <p className="text-xs font-700 truncate" style={{ color: '#c9a84c', fontWeight: 700 }}>Test trip checklist</p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Hide checklist"
+                  title="Hide (Esc)"
+                  onClick={() => setTestChecklistDismissed(true)}
+                  className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full text-base leading-none"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.65)', cursor: 'pointer' }}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {testChecklist.map(item => (
+                  <div
+                    key={item.label}
+                    className="px-3 py-2 rounded-xl text-xs"
+                    style={{
+                      background: item.done ? 'rgba(0,229,160,0.1)' : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${item.done ? 'rgba(0,229,160,0.22)' : 'rgba(255,255,255,0.07)'}`,
+                      color: item.done ? '#00e5a0' : '#e5e7eb',
+                    }}
+                  >
+                    {item.done ? 'Done' : 'Next'}: {item.label}
+                  </div>
+                ))}
+              </div>
+              {currentTrip?.testingNote && (
+                <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  Dispatch note: {currentTrip.testingNote}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!statusDockDismissed && (
+        <div
+          className="absolute left-3 right-3 z-40 pointer-events-none max-w-3xl mx-auto"
+          style={{ bottom: 'calc(52px + env(safe-area-inset-bottom, 0px) + 10px)' }}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-stretch gap-2 pointer-events-auto">
             <div className="flex-1 flex items-start justify-between gap-2 px-3 py-2 rounded-xl text-xs min-w-0"
-              style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)' }}>
               <div className="min-w-0 pr-1">
                 <p className="truncate" style={{ color: '#e5e7eb', fontWeight: 700 }}>{statusMeta.label}</p>
                 <p className="text-[11px] leading-snug line-clamp-2 sm:line-clamp-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{statusMeta.hint}</p>
@@ -1537,97 +1815,23 @@ export default function DriverApp() {
               </div>
             </div>
             <div className="flex sm:hidden items-center gap-2">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs flex-1 justify-center"
-                style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs flex-1 justify-center"
+                style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)' }}>
                 <TrendingUp className="w-3 h-3" style={{ color: '#00e5a0' }} />
                 <span style={{ color: '#e5e7eb' }}>{displayEarnings.trips || 0} trips</span>
               </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs flex-1 justify-center"
-                style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs flex-1 justify-center"
+                style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)' }}>
                 <Clock className="w-3 h-3" style={{ color: '#0ea5e9' }} />
                 <span style={{ color: '#e5e7eb' }}>{hoursWorked}h</span>
               </div>
             </div>
           </div>
-        )}
-      </div>
-
-      {driverInstruction?.message && (
-        <div className="relative z-[100] shrink-0 px-4 pb-2 pointer-events-auto">
-          <div
-            className="mx-auto max-w-3xl md:max-w-xl md:ml-auto md:mr-0 rounded-xl px-3 py-2.5 flex items-start gap-3"
-            style={{ background: 'rgba(14,165,233,0.14)', border: '1px solid rgba(56,189,248,0.35)', boxShadow: '0 4px 24px rgba(0,0,0,0.35)' }}
-          >
-            <BellRing className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#38bdf8' }} />
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] font-700 uppercase tracking-wider" style={{ color: '#38bdf8', fontWeight: 700 }}>Dispatch note</p>
-              <p className="text-sm mt-0.5 leading-snug" style={{ color: '#e5e7eb' }}>{driverInstruction.message}</p>
-            </div>
-            <button
-              type="button"
-              aria-label="Dismiss dispatch note"
-              title="Dismiss (Esc)"
-              onClick={() => setDriverInstruction(null)}
-              className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full"
-              style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.12)', color: '#e5e7eb', cursor: 'pointer' }}
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
         </div>
       )}
-
-      {(currentTrip?.isTestTrip || currentTrip?.testingNote) && !testChecklistDismissed && (
-        <div className="relative z-[100] shrink-0 px-4 pb-2 max-h-[34vh] overflow-y-auto pointer-events-auto">
-          <div
-            className="mx-auto max-w-3xl rounded-xl px-3 py-2.5"
-            style={{ background: 'rgba(13,17,23,0.96)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 4px 24px rgba(0,0,0,0.35)' }}
-          >
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <ClipboardList className="w-4 h-4 flex-shrink-0" style={{ color: '#c9a84c' }} />
-                <p className="text-xs font-700 truncate" style={{ color: '#c9a84c', fontWeight: 700 }}>Test trip checklist</p>
-              </div>
-              <button
-                type="button"
-                aria-label="Hide checklist"
-                title="Hide (Esc)"
-                onClick={() => setTestChecklistDismissed(true)}
-                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full text-base leading-none"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.65)', cursor: 'pointer' }}
-              >
-                ×
-              </button>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {testChecklist.map(item => (
-                <div
-                  key={item.label}
-                  className="px-3 py-2 rounded-xl text-xs"
-                  style={{
-                    background: item.done ? 'rgba(0,229,160,0.1)' : 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${item.done ? 'rgba(0,229,160,0.22)' : 'rgba(255,255,255,0.07)'}`,
-                    color: item.done ? '#00e5a0' : '#e5e7eb',
-                  }}
-                >
-                  {item.done ? 'Done' : 'Next'}: {item.label}
-                </div>
-              ))}
-            </div>
-            {currentTrip?.testingNote && (
-              <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                Dispatch note: {currentTrip.testingNote}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="flex-1 min-h-0 relative z-0">
-      <DriverMapView location={location} trip={currentTrip} sheetState={sheetState} />
 
       {countdown !== null && sheetState === 'new_trip' && !sheetOpen && (
-        <div className="absolute z-50 left-1/2 top-3 pointer-events-none" style={{ transform: 'translateX(-50%)' }}>
+        <div className="absolute z-50 left-1/2 top-[32%] pointer-events-none" style={{ transform: 'translate(-50%, -50%)' }}>
           <div className="flex flex-col items-center gap-1 px-6 py-4 rounded-2xl pointer-events-auto"
             style={{ background: 'rgba(13,17,23,0.97)', border: '1px solid rgba(255,71,87,0.4)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
             <button
@@ -1660,7 +1864,7 @@ export default function DriverApp() {
       )}
 
       {postTripSummary && (
-        <div className="absolute z-50 top-3 left-4 right-4 max-w-lg mx-auto pointer-events-auto">
+        <div className="absolute z-50 top-[30%] left-4 right-4 max-w-lg mx-auto pointer-events-auto" style={{ transform: 'translateY(-50%)' }}>
           <div className="rounded-2xl p-4 relative" style={{ background: 'rgba(0,229,160,0.08)', border: '1px solid rgba(0,229,160,0.3)', backdropFilter: 'blur(20px)' }}>
             <button
               type="button"
@@ -1684,19 +1888,13 @@ export default function DriverApp() {
                 <p className="text-xs mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>Dropoff</p>
                 <p className="text-xs" style={{ color: '#e5e7eb' }}>{postTripSummary.dropoff}</p>
               </div>
-              {postTripSummary.earned && (
-                <div className="col-span-2">
-                  <p className="text-xs mb-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>Earned</p>
-                  <p className="text-sm font-700" style={{ color: '#00e5a0', fontWeight: 700 }}>${postTripSummary.earned.toFixed(2)}</p>
-                </div>
-              )}
             </div>
           </div>
         </div>
       )}
 
       {motivationToast && (
-        <div className="absolute z-50 mx-4" style={{ top: 72, left: 0, right: 0, background: 'rgba(13,17,23,0.97)', border: '1px solid rgba(201,168,76,0.3)', borderRadius: 16, padding: '12px 16px', backdropFilter: 'blur(20px)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
+        <div className="absolute z-50 mx-4" style={{ top: 52, left: 0, right: 0, background: 'rgba(13,17,23,0.97)', border: '1px solid rgba(201,168,76,0.3)', borderRadius: 16, padding: '12px 16px', backdropFilter: 'blur(20px)', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
           <div className="flex items-start gap-3">
             <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(201,168,76,0.15)', border: '1px solid rgba(201,168,76,0.25)' }}>
               <span style={{ fontSize: 16 }}>⚡</span>

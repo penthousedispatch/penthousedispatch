@@ -6,7 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 };
 
-const providerVersion = '2026-04-22-sentry-provider-v3';
+const providerVersion = '2026-04-22-sentry-provider-v5';
 
 const DEFAULT_LAT = 40.7128;
 const DEFAULT_LNG = -74.006;
@@ -101,6 +101,19 @@ const defaultVehicleLocationPayload = (licensePlateNumber = 'X777777C', driverLi
   expected_availability: null,
 });
 
+/** Trip assignment → Sentry-style status_id (must be module scope: used by normalizeTripSidePayload). */
+const mapTripStatusId = (status: unknown) => {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'completed') return 6;
+  if (normalized === 'no_show') return 7;
+  if (normalized === 'cancelled') return 8;
+  if (normalized === 'picked_up') return 5;
+  if (normalized === 'arrived') return 4;
+  if (normalized === 'accepted' || normalized === 'en_route') return 3;
+  if (normalized === 'pending' || normalized === 'assigned') return 2;
+  return 3;
+};
+
 const defaultRetrieveTripPayload = (tripId: string) => ({
   trip_id: tripId,
   status_id: 6,
@@ -154,12 +167,25 @@ const normalizeTripSidePayload = (
   const rawDropOff = (raw.drop_off_location as Record<string, unknown>) || {};
   const rawMta = (raw.mta as Record<string, unknown>) || {};
 
+  const collectedFromAssignment = asNumber(assignment?.collected_fare, null);
+  const collectedFromMta = asNumber(rawMta.collected_fare, null);
+  const collectedFareResolved =
+    collectedFromAssignment != null && Number.isFinite(collectedFromAssignment)
+      ? collectedFromAssignment
+      : (collectedFromMta != null && Number.isFinite(collectedFromMta)
+        ? collectedFromMta
+        : (fallback.mta.collected_fare as number));
+
+  const nextDayFlag = Boolean(
+    assignment?.is_next_day ?? raw.next_day ?? raw.is_next_day ?? false,
+  );
+
   return {
     trip_id: tripId,
-    status_id: asNumber(
-      raw.status_id,
-      assignment ? mapTripStatusId(assignment.status) : fallback.status_id,
-    ) ?? fallback.status_id,
+    /** When a TP assignment row exists, lifecycle read-back follows Penthouse (not stale inbound raw.status_id). */
+    status_id: assignment
+      ? mapTripStatusId(assignment.status)
+      : (asNumber(raw.status_id, fallback.status_id) ?? fallback.status_id),
     cancel_reason_id: raw.cancel_reason_id ?? null,
     cancel_note: raw.cancel_note ?? null,
     pick_up_arrival_timestamp: firstText(raw.pick_up_arrival_timestamp, fallback.pick_up_arrival_timestamp),
@@ -219,15 +245,16 @@ const normalizeTripSidePayload = (
       tripRow?.do_lng,
     ),
     mta: {
-      collected_fare: asNumber(
-        rawMta.collected_fare,
-        asNumber(assignment?.collected_fare, fallback.mta.collected_fare),
-      ),
+      collected_fare: collectedFareResolved,
       dispatch_base_ein: asNumber(
         rawMta.dispatch_base_ein,
         fallback.mta.dispatch_base_ein,
       ),
     },
+    collected_fare: collectedFareResolved,
+    collected_fare_amount: collectedFareResolved,
+    is_next_day: nextDayFlag,
+    next_day: nextDayFlag,
   };
 };
 
@@ -316,18 +343,6 @@ Deno.serve(async (req: Request) => {
       if (normalized === 'break') return 3;
       if (normalized === 'offline') return 0;
       return 1;
-    };
-
-    const mapTripStatusId = (status: unknown) => {
-      const normalized = String(status || '').trim().toLowerCase();
-      if (normalized === 'completed') return 6;
-      if (normalized === 'no_show') return 7;
-      if (normalized === 'cancelled') return 8;
-      if (normalized === 'picked_up') return 5;
-      if (normalized === 'arrived') return 4;
-      if (normalized === 'accepted' || normalized === 'en_route') return 3;
-      if (normalized === 'pending' || normalized === 'assigned') return 2;
-      return 3;
     };
 
     // GET /rest/gc/vehicle_locations.json — all online driver locations

@@ -10,6 +10,7 @@
     "build:driver": "VITE_APP_VARIANT=driver VITE_MOBILE_APP_SCHEME=penthousedriver VITE_BUILD_OUTDIR=dist-driver vite build",
     "build:rider": "VITE_APP_VARIANT=rider VITE_MOBILE_APP_SCHEME=penthouserider VITE_BUILD_OUTDIR=dist-rider vite build",
     "preview": "vite preview",
+    "verify:edge": "node scripts/verify-supabase-edge-smoke.mjs",
     "shots:appstore": "node scripts/capture-store-shots.mjs",
     "mobile:build": "APP_VARIANT=ops node scripts/write-capacitor-config.mjs && APP_VARIANT=ops node scripts/clean-native-bundles.mjs && npm run build:ops && APP_VARIANT=ops npx cap sync",
     "mobile:build:driver": "APP_VARIANT=driver node scripts/write-capacitor-config.mjs && APP_VARIANT=driver node scripts/clean-native-bundles.mjs && npm run build:driver && APP_VARIANT=driver npx cap sync",

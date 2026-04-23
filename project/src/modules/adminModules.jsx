@@ -3,7 +3,6 @@ import AdminOpsCenter from '../pages/admin/AdminOpsCenter';
 import AdminCompanies from '../pages/admin/AdminCompanies';
 import AdminBilling from '../pages/admin/AdminBilling';
 import AdminPayroll from '../pages/admin/AdminPayroll';
-import AdminIncentives from '../pages/admin/AdminIncentives';
 import AdminSentryConfig from '../pages/admin/AdminSentryConfig';
 import AdminSentryGuide from '../pages/admin/AdminSentryGuide';
 import AdminTestingCenter from '../pages/admin/AdminTestingCenter';
@@ -43,10 +42,6 @@ export const adminModules = {
   payroll: {
     name: 'Payroll',
     component: AdminPayroll,
-  },
-  incentives: {
-    name: 'Incentives',
-    component: AdminIncentives,
   },
   sentry: {
     name: 'Sentry',

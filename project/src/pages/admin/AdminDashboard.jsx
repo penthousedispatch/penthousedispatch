@@ -47,7 +47,6 @@ const PLATFORM_TABS = [
   { path: '/admin/rider-preview', label: 'Rider Preview', icon: Eye },
   { path: '/admin/security', label: 'Security', icon: Shield },
   { path: '/admin/payroll', label: 'Payroll', icon: Banknote },
-  { path: '/admin/incentives', label: 'Incentives', icon: Zap },
   { path: '/admin/sentry-guide', label: 'Setup Guide', icon: BookOpen },
   { path: '/admin/chatbot', label: 'Chat AI', icon: MessageSquare },
   { path: '/admin/auto-scheduler', label: 'Auto-Scheduler', icon: Zap },
@@ -426,7 +425,6 @@ export default function AdminDashboard() {
           <Route path="/admin/company-preview/:companyId/*" element={<AdminCompanyPreview />} />
           <Route path="/admin/billing" element={renderAdminModule('billing')} />
           <Route path="/admin/payroll" element={renderAdminModule('payroll')} />
-          <Route path="/admin/incentives" element={renderAdminModule('incentives')} />
           <Route path="/admin/sentry" element={renderAdminModule('sentry')} />
           <Route path="/admin/sentry-guide" element={renderAdminModule('sentryGuide')} />
           <Route path="/admin/testing" element={renderAdminModule('testing')} />

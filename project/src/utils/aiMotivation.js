@@ -108,26 +108,91 @@ function stripMarkdownFences(text = '') {
   return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 }
 
-export function parseAIJson(text = '') {
-  const cleaned = stripMarkdownFences(text);
+/** If the model returns a one-element array of objects, unwrap for structured-plan parsers. */
+function unwrapStructuredJsonRoot(parsed) {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  if (Array.isArray(parsed) && parsed.length === 1 && parsed[0] && typeof parsed[0] === 'object' && !Array.isArray(parsed[0])) {
+    return parsed[0];
+  }
+  return null;
+}
+
+function parseJsonCandidate(candidate) {
+  if (!candidate) return null;
   try {
-    return JSON.parse(cleaned);
+    return unwrapStructuredJsonRoot(JSON.parse(candidate));
+  } catch {
+    return null;
+  }
+}
+
+function extractFencedJson(text = '') {
+  const match = String(text || '').match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return match ? parseJsonCandidate(match[1].trim()) : null;
+}
+
+function extractBalancedJsonObject(text = '') {
+  const start = text.search(/[\{\[]/);
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  const opener = text[start];
+  const closer = opener === '[' ? ']' : '}';
+
+  for (let i = start; i < text.length; i += 1) {
+    const c = text[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (c === opener) depth += 1;
+    else if (c === closer) {
+      depth -= 1;
+      if (depth === 0) {
+        return parseJsonCandidate(text.slice(start, i + 1));
+      }
+    }
+  }
+  return null;
+}
+
+export function parseAIJson(text = '') {
+  const cleaned = stripMarkdownFences(String(text || '').replace(/^\uFEFF/, '').trim());
+  const fenced = extractFencedJson(cleaned);
+  if (fenced) return fenced;
+
+  try {
+    return unwrapStructuredJsonRoot(JSON.parse(cleaned));
   } catch {
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
     if (start !== -1 && end !== -1 && end > start) {
       try {
-        return JSON.parse(cleaned.slice(start, end + 1));
+        return unwrapStructuredJsonRoot(JSON.parse(cleaned.slice(start, end + 1)));
       } catch {
-        return null;
+        return extractBalancedJsonObject(cleaned);
       }
     }
-    return null;
+    return extractBalancedJsonObject(cleaned);
   }
 }
 
-export async function callAI(settings, messages) {
+export async function callAI(settings, messages, options = {}) {
   if (!settings || settings.provider === 'disabled' || !settings.api_key) return null;
+
+  const maxTokensOverride = options.max_tokens != null ? parseInt(options.max_tokens, 10) : null;
 
   let url, body, headers;
 
@@ -137,7 +202,7 @@ export async function callAI(settings, messages) {
     body = JSON.stringify({
       model: settings.model || 'gpt-4o-mini',
       messages,
-      max_tokens: settings.max_tokens || 200,
+      max_tokens: Number.isFinite(maxTokensOverride) ? maxTokensOverride : (settings.max_tokens || 200),
       temperature: parseFloat(settings.temperature) || 0.7,
     });
   } else if (settings.provider === 'self_hosted') {
@@ -147,7 +212,7 @@ export async function callAI(settings, messages) {
     body = JSON.stringify({
       model: settings.model || 'local-chat',
       messages,
-      max_tokens: settings.max_tokens || 200,
+      max_tokens: Number.isFinite(maxTokensOverride) ? maxTokensOverride : (settings.max_tokens || 200),
       temperature: parseFloat(settings.temperature) || 0.7,
     });
   } else if (settings.provider === 'gemini') {
@@ -174,7 +239,9 @@ export async function callAI(settings, messages) {
       model: settings.model || 'claude-3-5-sonnet-latest',
       system,
       messages: convo,
-      max_tokens: parseInt(settings.max_tokens, 10) || 400,
+      max_tokens: Number.isFinite(maxTokensOverride)
+        ? maxTokensOverride
+        : (parseInt(settings.max_tokens, 10) || 400),
       temperature: parseFloat(settings.temperature) || 0.3,
     });
   } else {
@@ -183,7 +250,15 @@ export async function callAI(settings, messages) {
 
   try {
     const res = await fetch(url, { method: 'POST', headers, body });
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        text: '',
+        error: json?.error?.message || json?.message || `AI provider HTTP ${res.status}`,
+        status: res.status,
+        model: settings.model,
+      };
+    }
 
     if (settings.provider === 'openai' || settings.provider === 'self_hosted') {
       const text = json.choices?.[0]?.message?.content || '';
@@ -199,19 +274,23 @@ export async function callAI(settings, messages) {
       const tokens = (json.usage?.input_tokens || 0) + (json.usage?.output_tokens || 0);
       return { text, tokens, model: json.model || settings.model };
     }
-  } catch {
-    return null;
+  } catch (error) {
+    return { text: '', error: error?.message || 'AI request failed', status: 0, model: settings.model };
   }
   return null;
 }
 
 export async function requestAIStructuredPlan(settings, { systemPrompt, userPrompt }) {
-  const result = await callAI(settings, [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt },
-  ]);
+  const result = await callAI(
+    settings,
+    [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    { max_tokens: 4096 },
+  );
 
-  if (!result?.text) return null;
+  if (!result?.text) return result?.error ? { ...result, json: null } : null;
 
   return {
     ...result,

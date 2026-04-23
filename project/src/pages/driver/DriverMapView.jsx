@@ -4,6 +4,32 @@ import { calcBearing, getPCarIcon } from '../../components/map/PCarMarker';
 
 const GMAPS_KEY = 'AIzaSyD5sugXJ0HIUwkVlixF5qdoN-l0McgAQM4';
 
+function sanitizeHtmlInstruction(text) {
+  return String(text || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+}
+
+function maneuverGlyph(maneuver) {
+  const m = String(maneuver || '').toLowerCase();
+  if (m.includes('uturn') || m.includes('u-turn')) return '↶';
+  if (m.includes('sharp') && m.includes('right')) return '↱';
+  if (m.includes('sharp') && m.includes('left')) return '↰';
+  if (m.includes('right')) return '→';
+  if (m.includes('left')) return '←';
+  if (m.includes('merge')) return '⤵';
+  if (m.includes('roundabout')) return '⟲';
+  return '↑';
+}
+
+function primaryStreetFromInstruction(instruction, addressFallback) {
+  const t = sanitizeHtmlInstruction(instruction);
+  const onMatch = t.match(/\bon\s+([^,(]+)/i);
+  if (onMatch) return onMatch[1].replace(/\s+toward\s+.*$/i, '').trim();
+  const onto = t.match(/\bonto\s+([^,(]+)/i);
+  if (onto) return onto[1].trim();
+  if (addressFallback) return String(addressFallback).split(',')[0].trim();
+  return t.slice(0, 36) || 'Next';
+}
+
 const DARK_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#0d1117' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#4b5563' }] },
@@ -171,6 +197,9 @@ export default function DriverMapView({ location, trip, sheetState }) {
             mode: 'pickup',
             eta: leg?.duration?.text || '',
             distance: leg?.distance?.text || '',
+            stepDistance: firstStep?.distance?.text || leg?.distance?.text || '',
+            maneuver: firstStep?.maneuver || '',
+            streetLine: primaryStreetFromInstruction(firstStep?.instructions || '', pickupAddress),
             instruction: sanitizeHtmlInstruction(firstStep?.instructions || 'Head to pickup'),
           });
         }
@@ -206,6 +235,9 @@ export default function DriverMapView({ location, trip, sheetState }) {
               mode: 'dropoff',
               eta: leg?.duration?.text || '',
               distance: leg?.distance?.text || '',
+              stepDistance: firstStep?.distance?.text || leg?.distance?.text || '',
+              maneuver: firstStep?.maneuver || '',
+              streetLine: primaryStreetFromInstruction(firstStep?.instructions || '', dropoffAddress),
               instruction: sanitizeHtmlInstruction(firstStep?.instructions || 'Head to dropoff'),
             });
           }
@@ -214,10 +246,17 @@ export default function DriverMapView({ location, trip, sheetState }) {
     }
   }, [sheetState, location, trip, mapsLoaded]);
 
+  const immersiveNav = Boolean(
+    trip && (sheetState === 'navigation' || sheetState === 'to_dropoff') && navSummary
+  );
+
   return (
     <div className="absolute inset-0 z-0">
       <div ref={mapRef} className="w-full h-full" />
-      <div className="absolute left-3 right-3 z-20 flex flex-wrap items-start justify-between gap-2 pointer-events-auto" style={{ top: 12, maxWidth: '100%' }}>
+      <div
+        className="absolute left-3 right-3 z-30 flex flex-wrap items-start justify-between gap-2 pointer-events-auto"
+        style={{ top: 12, maxWidth: '100%' }}
+      >
         <div className="flex flex-wrap gap-2">
           {[
             { id: 'route', label: 'Route', icon: Route },
@@ -260,8 +299,51 @@ export default function DriverMapView({ location, trip, sheetState }) {
           </button>
         </div>
       </div>
-      {navSummary && activeDestination && (
-        <div className="absolute left-3 right-3 z-20 max-w-full pointer-events-auto" style={{ top: 64 }}>
+      {immersiveNav && (
+        <div className="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: 72 }}>
+          <div
+            className="pointer-events-auto"
+            style={{
+              background: 'linear-gradient(180deg, rgba(0,0,0,0.92) 0%, #080808 78%, rgba(7,9,13,0) 100%)',
+              padding: '12px 14px 18px',
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className="flex items-center justify-center rounded-2xl shrink-0"
+                style={{
+                  width: 48,
+                  height: 48,
+                  background: 'rgba(255,255,255,0.1)',
+                  fontSize: 26,
+                  lineHeight: 1,
+                  color: '#fff',
+                  fontWeight: 700,
+                }}
+              >
+                {maneuverGlyph(navSummary.maneuver)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-600 uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.5)', fontWeight: 600 }}>
+                  {navSummary.stepDistance || navSummary.distance}
+                </p>
+                <p className="text-[22px] font-800 leading-tight truncate" style={{ color: '#fff', fontWeight: 800 }}>
+                  {navSummary.streetLine || navSummary.instruction}
+                </p>
+                <p className="text-[12px] mt-1 leading-snug" style={{ color: 'rgba(255,255,255,0.52)' }}>
+                  {navSummary.instruction}
+                </p>
+              </div>
+              <div className="text-right shrink-0 pt-0.5">
+                <p className="text-sm font-800" style={{ color: '#fff', fontWeight: 800 }}>{navSummary.eta}</p>
+                <p className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.38)' }}>ETA</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {navSummary && activeDestination && !immersiveNav && (
+        <div className="absolute left-3 right-3 z-20 max-w-full pointer-events-auto" style={{ top: 88 }}>
           <div
             className="rounded-2xl px-4 py-3"
             style={{ background: 'rgba(13,17,23,0.9)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(16px)' }}
@@ -289,10 +371,6 @@ export default function DriverMapView({ location, trip, sheetState }) {
       )}
     </div>
   );
-}
-
-function sanitizeHtmlInstruction(text) {
-  return String(text || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
 }
 
 function headingFromLocation(previous, current) {

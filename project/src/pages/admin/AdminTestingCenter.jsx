@@ -8,6 +8,7 @@ import { resolveOrgIdForAdmin } from '../../lib/resolveOrgId';
 import { getAiSettings, requestAIStructuredPlan } from '../../utils/aiMotivation';
 import { CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronUp, Cpu, Play, FlaskConical, RotateCcw, RadioTower } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { SENTRY_ASSIGNMENT_TYPE_REFERENCE } from '../../lib/sentryTripInbound';
 
 function cleanAuthValue(value) {
   return String(value || '').replace(/\u00a0/g, ' ').trim();
@@ -18,12 +19,24 @@ function looksHashedPassword(value) {
   return /^\$2[aby]\$\d+\$/.test(normalized) || /^\$argon2/i.test(normalized);
 }
 
+/** Supabase Edge gateway requires `apikey` on function URLs even when the function verifies webhook/basic auth itself. */
+function supabaseFunctionsGatewayHeaders() {
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_SUPABASE_ANON_KEY || '';
+  if (!key) return {};
+  return { apikey: key };
+}
+
 const TEST_DEFS = [
   { id: 'ui', label: 'UI Test', desc: 'Verify all major UI components render correctly' },
   { id: 'sentry', label: 'Sentry Integration Test', desc: 'Test connection to SentryMS API' },
   { id: 'sentry_sheet', label: 'Sentry Sheet Test', desc: 'Verify retrieve_trips returns completion, fare, and NEXT DAY fields' },
+  {
+    id: 'sentry_strict_partials',
+    label: 'Sentry checklist §17–20 (was PARTIAL)',
+    desc: 'Assignment-type reference log, outbound driver/vehicle GET harness, broker-cancel trips_receiver simulation, and replay reminder.',
+  },
   { id: 'webhook', label: 'Webhook Test', desc: 'Send test payloads to all 3 webhook endpoints' },
-  { id: 'trip_flow', label: 'Trip Flow Test', desc: 'Full trip lifecycle from creation to completion' },
+  { id: 'trip_flow', label: 'Trip Flow Proof Prep', desc: 'Creates a driver-visible pending trip; finish the proof inside Driver App' },
   { id: 'billing', label: 'Billing Test', desc: 'Verify billing calculation logic (Admin only)' },
   { id: 'driver_onboarding', label: 'Driver Onboarding Test', desc: 'Test all 3 onboarding layers' },
   { id: 'chat', label: 'Chat Test', desc: 'Test Firebase message delivery round-trip' },
@@ -143,6 +156,7 @@ export default function AdminTestingCenter() {
         case 'ui': await runUITest(testId); break;
         case 'sentry': await runSentryTest(testId); break;
         case 'sentry_sheet': await runSentrySheetTest(testId); break;
+        case 'sentry_strict_partials': await runSentryStrictPartialHarness(testId); break;
         case 'webhook': await runWebhookTest(testId); break;
         case 'trip_flow': await runTripFlowTest(testId); break;
         case 'billing': await runBillingTest(testId); break;
@@ -359,6 +373,7 @@ export default function AdminTestingCenter() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...supabaseFunctionsGatewayHeaders(),
             ...(secret && authMode === 'bearer' ? { Authorization: `Bearer ${secret}` } : {}),
           },
           body: JSON.stringify(ep.payload),
@@ -385,6 +400,205 @@ export default function AdminTestingCenter() {
     setResult(testId, allPassed ? 'pass' : 'fail');
   }
 
+  async function runSentryStrictPartialHarness(testId) {
+    const cfg = await loadLatestSentryConfig();
+    if (!cfg || cfg.enabled === false) {
+      addLog(testId, 'No enabled Sentry config. Save Admin → Sentry first.', 'warn');
+      setResult(testId, 'fail');
+      return;
+    }
+
+    sentryApi.configure({
+      baseUrl: cfg.base_url,
+      username: cfg.username || '',
+      password: cfg.password_enc || '',
+      apiKey: cfg.api_key || '',
+      authType: cfg.auth_type || 'basic',
+      enabled: cfg.enabled !== false,
+    });
+
+    addLog(testId, '§17 — assignment_type_code quick reference (extend in src/lib/sentryTripInbound.js):', 'info');
+    SENTRY_ASSIGNMENT_TYPE_REFERENCE.forEach(row => {
+      addLog(testId, `  ${row.code}: ${row.meaning}`, 'info');
+    });
+
+    let allPassed = true;
+
+    addLog(testId, '§19 — GET drivers.json (outbound facade)...', 'info');
+    const driversResult = await sentryApi.getDrivers();
+    if (!driversResult.ok) {
+      addLog(testId, `drivers list: FAIL — ${driversResult.error || `HTTP ${driversResult.status}`}`, 'error');
+      allPassed = false;
+    } else {
+      const list = Array.isArray(driversResult.data) ? driversResult.data : (driversResult.data?.drivers || []);
+      addLog(testId, `drivers list: PASS (${list.length} rows)`, 'success');
+      const firstId = list[0]?.id || list[0]?.driver_id;
+      if (firstId) {
+        const one = await sentryApi.getDriver(firstId);
+        addLog(
+          testId,
+          one.ok ? `getDriver(${firstId}): PASS` : `getDriver(${firstId}): FAIL — ${one.error || one.status}`,
+          one.ok ? 'success' : 'error',
+        );
+        if (!one.ok) allPassed = false;
+      } else {
+        addLog(testId, 'getDriver: skipped (empty list)', 'warn');
+      }
+    }
+
+    addLog(testId, '§20 — GET vehicles.json...', 'info');
+    const vehiclesResult = await sentryApi.getVehicles();
+    if (!vehiclesResult.ok) {
+      addLog(testId, `vehicles list: FAIL — ${vehiclesResult.error || `HTTP ${vehiclesResult.status}`}`, 'error');
+      allPassed = false;
+    } else {
+      const vlist = Array.isArray(vehiclesResult.data) ? vehiclesResult.data : (vehiclesResult.data?.vehicles || []);
+      addLog(testId, `vehicles list: PASS (${vlist.length} rows)`, 'success');
+      const vid = vlist[0]?.id || vlist[0]?.vehicle_id;
+      if (vid) {
+        const vone = await sentryApi.getVehicle(vid);
+        addLog(
+          testId,
+          vone.ok ? `getVehicle(${vid}): PASS` : `getVehicle(${vid}): FAIL — ${vone.error || vone.status}`,
+          vone.ok ? 'success' : 'error',
+        );
+        if (!vone.ok) allPassed = false;
+      } else {
+        addLog(testId, 'getVehicle: skipped (empty list)', 'warn');
+      }
+    }
+
+    const companyId = selectedCompanyId || sandboxStatus.companyId || adminPreviewCompany?.id || company?.id || null;
+    const secret = cfg?.webhook_secret || '';
+    const authMode = cfg?.webhook_auth_mode || 'bearer';
+    const EDGE_BASE = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
+    const secretParam = secret && authMode === 'query' ? `?secret=${encodeURIComponent(secret)}` : '';
+
+    addLog(testId, '§18 — Broker cancel / reroute: POST minimal cancel payload to trips_receiver, expect DB + assignments update.', 'info');
+    if (!secret) {
+      addLog(testId, 'Webhook secret missing — broker simulation skipped (configure in Admin → Sentry).', 'warn');
+    } else if (!companyId) {
+      addLog(testId, 'No company scope selected — broker simulation skipped. Pick an approved company above.', 'warn');
+    } else {
+      const tripId = `strict-broker-${Date.now()}`;
+      const nowIso = new Date().toISOString();
+      const { error: seedErr } = await supabase.from('marketplace_trips').upsert(
+        {
+          sentry_trip_id: tripId,
+          sentry_last_modified_at: nowIso,
+          date_val: nowIso.slice(0, 10),
+          los: 'Ambulatory',
+          passengers: '1',
+          mileage: '1',
+          pu_address: 'Harness Pickup',
+          pu_city: 'New York',
+          pu_zip: '10001',
+          pu_time: nowIso,
+          do_address: 'Harness Dropoff',
+          do_city: 'New York',
+          do_zip: '10002',
+          do_time: nowIso,
+          delivery_price: '10.00',
+          status: 'available',
+          company_id: companyId,
+          assignment_type_code: 'STANDARD',
+          external_trip_status: 'available',
+          loaded_at: nowIso,
+        },
+        { onConflict: 'sentry_trip_id' },
+      );
+      if (seedErr) {
+        addLog(testId, `Seed marketplace row failed: ${seedErr.message}`, 'error');
+        allPassed = false;
+      } else {
+        const { data: tempDriver, error: tdErr } = await supabase
+          .from('drivers')
+          .insert({
+            driver_number: `HARNESS-${Date.now()}`,
+            full_name: 'Harness Broker Driver',
+            status: 'offline',
+            is_active: true,
+            company_id: companyId,
+          })
+          .select('id, full_name')
+          .maybeSingle();
+
+        if (tdErr || !tempDriver?.id) {
+          addLog(testId, `Temp driver for harness failed: ${tdErr?.message || 'unknown'}`, 'error');
+          allPassed = false;
+          await supabase.from('marketplace_trips').delete().eq('sentry_trip_id', tripId);
+        } else {
+          const { error: asgErr } = await supabase.from('trip_assignments').insert({
+            trip_id: tripId,
+            driver_id: tempDriver.id,
+            company_id: companyId,
+            driver_name: tempDriver.full_name,
+            status: 'pending',
+            pu_address: 'Harness Pickup',
+            do_address: 'Harness Dropoff',
+            delivery_price: 10,
+            mileage: 1,
+          });
+          if (asgErr) {
+            addLog(testId, `Seed assignment failed: ${asgErr.message}`, 'error');
+            allPassed = false;
+            await supabase.from('drivers').delete().eq('id', tempDriver.id);
+            await supabase.from('marketplace_trips').delete().eq('sentry_trip_id', tripId);
+          } else {
+            try {
+              const url = `${EDGE_BASE}/sentry-receivers/trips_receiver${secretParam}`;
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...supabaseFunctionsGatewayHeaders(),
+                  ...(secret && authMode === 'bearer' ? { Authorization: `Bearer ${secret}` } : {}),
+                },
+                body: JSON.stringify({
+                  trips: [
+                    {
+                      trip_id: tripId,
+                      trip_status: 'cancelled',
+                      assignment_type_code: 'STANDARD',
+                      pickup_address: 'Harness Pickup',
+                      dropoff_address: 'Harness Dropoff',
+                    },
+                  ],
+                }),
+              });
+              if (!res.ok && res.status !== 207) {
+                addLog(testId, `trips_receiver HTTP ${res.status}`, 'error');
+                allPassed = false;
+              } else {
+                addLog(testId, `trips_receiver responded HTTP ${res.status} (207 is normal for multi-trip payloads)`, 'success');
+              }
+
+              const { data: mt } = await supabase.from('marketplace_trips').select('status').eq('sentry_trip_id', tripId).maybeSingle();
+              const { data: asn } = await supabase.from('trip_assignments').select('status').eq('trip_id', tripId).maybeSingle();
+              const mtOk = String(mt?.status || '').toLowerCase() === 'cancelled';
+              const asgOk = String(asn?.status || '').toLowerCase() === 'cancelled';
+              addLog(testId, `marketplace_trips.status after cancel: ${mt?.status || 'null'} (${mtOk ? 'PASS' : 'FAIL'})`, mtOk ? 'success' : 'error');
+              addLog(testId, `trip_assignments.status after cancel: ${asn?.status || 'null'} (${asgOk ? 'PASS' : 'FAIL'})`, asgOk ? 'success' : 'error');
+              if (!mtOk || !asgOk) allPassed = false;
+            } catch (e) {
+              addLog(testId, `Broker harness fetch error: ${e.message}`, 'error');
+              allPassed = false;
+            } finally {
+              await supabase.from('trip_assignments').delete().eq('trip_id', tripId);
+              await supabase.from('marketplace_trips').delete().eq('sentry_trip_id', tripId);
+              await supabase.from('drivers').delete().eq('id', tempDriver.id);
+              addLog(testId, 'Harness seed rows cleaned up.', 'info');
+            }
+          }
+        }
+      }
+    }
+
+    addLog(testId, 'Replay any row from “Webhook Replay” to re-drive §18 with production-shaped payloads.', 'info');
+
+    setResult(testId, allPassed ? 'pass' : 'fail');
+  }
+
   async function runSentrySheetTest(testId) {
     const cfg = await loadLatestSentryConfig();
     if (!cfg) {
@@ -399,6 +613,12 @@ export default function AdminTestingCenter() {
     const tripId = `sheet-test-${Date.now()}`;
     const tempDriverNumber = `SHEET-${Date.now()}`;
     const companyId = selectedCompanyId || sandboxStatus.companyId || adminPreviewCompany?.id || company?.id || null;
+    if (!companyId) {
+      addLog(testId, 'Missing company scope. Pick an approved company in the selector above or activate sandbox mode before running Sentry Sheet Test.', 'error');
+      addLog(testId, 'Why this matters: the synthetic driver/trip/assignment must be tied to one company or Supabase RLS will block the setup.', 'info');
+      setResult(testId, 'fail');
+      return;
+    }
     const completedAt = new Date().toISOString();
     const pickedUpAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const arrivedAt = new Date(Date.now() - 15 * 60 * 1000).toISOString();
@@ -517,6 +737,7 @@ export default function AdminTestingCenter() {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
+          ...supabaseFunctionsGatewayHeaders(),
           ...(secret && authMode === 'bearer' ? { Authorization: `Bearer ${secret}` } : {}),
         },
       });
@@ -590,6 +811,7 @@ export default function AdminTestingCenter() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...supabaseFunctionsGatewayHeaders(),
         ...(secret && authMode === 'bearer' ? { Authorization: `Bearer ${secret}` } : {}),
       },
       body: JSON.stringify(log.raw_payload || {}),
@@ -600,20 +822,25 @@ export default function AdminTestingCenter() {
   }
 
   async function runTripFlowTest(testId) {
-    addLog(testId, 'Creating test driver...');
+    addLog(testId, 'Preparing driver-visible trip flow proof...');
     const testDriverNum = 'TEST-' + Date.now().toString(36).toUpperCase();
     const scopedCompanyId = selectedCompanyId || sandboxStatus.companyId || adminPreviewCompany?.id || company?.id || null;
     if (scopedCompanyId) {
       addLog(testId, `Using active sandbox company scope: ${scopedCompanyId}`, 'info');
     } else {
-      addLog(testId, 'No active sandbox company found. Running trip flow test without company scope may be blocked by tenant policies.', 'warn');
+      addLog(testId, 'Missing company scope. Pick an approved company or activate sandbox before preparing the driver proof.', 'error');
+      setResult(testId, 'fail');
+      return;
     }
     const { data: testDriver, error: dErr } = await supabase.from('drivers').insert({
       driver_number: testDriverNum,
       full_name: 'Test Driver (Auto)',
-      status: 'offline',
+      status: 'online',
       is_active: true,
       company_id: scopedCompanyId,
+      tlc_number: testDriverNum,
+      login_username: testDriverNum.toLowerCase(),
+      login_password: testDriverNum,
     }).select().maybeSingle();
 
     if (dErr || !testDriver) {
@@ -634,6 +861,8 @@ export default function AdminTestingCenter() {
       pu_address: '123 Test St, New York NY',
       do_address: '456 Dropoff Ave, New York NY',
       delivery_price: 25.00,
+      mileage: 4.2,
+      notes: '[TEST_TRIP] Admin Testing Center proof prep - open Driver App and complete lifecycle manually.',
     }).select().maybeSingle();
 
     if (aErr || !assignment) {
@@ -642,18 +871,10 @@ export default function AdminTestingCenter() {
       setResult(testId, 'fail');
       return;
     }
-    addLog(testId, `Assignment created: ${assignment.id}`, 'success');
-
-    const statuses = ['accepted', 'completed'];
-    for (const status of statuses) {
-      const { error: sErr } = await supabase.from('trip_assignments').update({ status, [`${status}_at`]: new Date().toISOString() }).eq('id', assignment.id);
-      addLog(testId, `Status → ${status}: ${sErr ? 'FAIL' : 'OK'}`, sErr ? 'error' : 'success');
-    }
-
-    addLog(testId, 'Cleaning up test data...');
-    await supabase.from('trip_assignments').delete().eq('id', assignment.id);
-    await supabase.from('drivers').delete().eq('id', testDriver.id);
-    addLog(testId, 'Cleanup complete', 'success');
+    addLog(testId, `Pending assignment created: ${assignment.id}`, 'success');
+    addLog(testId, `Driver login: ${testDriverNum.toLowerCase()} / ${testDriverNum}`, 'info');
+    addLog(testId, 'Required proof path: open Driver App, select/login as this driver, accept the pending trip, run pickup/dropoff, then complete it.', 'warn');
+    addLog(testId, 'This test intentionally leaves the pending trip in place so the real driver lifecycle can prove the app path.', 'info');
     setResult(testId, 'pass');
   }
 
@@ -828,6 +1049,19 @@ export default function AdminTestingCenter() {
         lastLog: (logs[test.id] || []).slice(-1)[0]?.msg || '',
       }));
 
+    const slimSyncs = (failedSyncsRes.data || []).slice(0, 5).map(row => ({
+      sync_type: row.sync_type,
+      status: row.status,
+      created_at: row.created_at,
+      error_message: String(row.error_message || '').slice(0, 200),
+    }));
+    const slimWebhooks = (failedWebhooksRes.data || []).slice(0, 5).map(row => ({
+      endpoint: row.endpoint,
+      received_at: row.received_at,
+      processed: row.processed,
+      error_message: String(row.error_message || '').slice(0, 200),
+    }));
+
     const reviewInput = {
       sentryStatus: {
         connected: Boolean(sentryStatus.ok),
@@ -842,8 +1076,8 @@ export default function AdminTestingCenter() {
         tripStatusEnabled: sentryConfig?.feat_trip_status_update !== false,
       },
       testResults: compactTestResults,
-      failedSyncs: failedSyncsRes.data || [],
-      failedWebhooks: failedWebhooksRes.data || [],
+      failedSyncs: slimSyncs,
+      failedWebhooks: slimWebhooks,
       sandbox: sandboxStatus,
     };
 
@@ -875,7 +1109,7 @@ Judge whether the app is ready for a partner-facing Sentry compliance review rig
     });
 
     if (!result?.json) {
-      addLog(testId, 'AI returned an unreadable response.', 'error');
+      addLog(testId, result?.error ? `AI provider error: ${result.error}` : 'AI returned an unreadable response.', 'error');
       if (result?.text) addLog(testId, result.text.slice(0, 300), 'warn');
       setResult(testId, 'fail');
       return;
