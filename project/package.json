@@ -13,6 +13,7 @@
     "verify:edge": "node scripts/verify-supabase-edge-smoke.mjs",
     "audit:trip": "node scripts/audit-trip-db-compare.mjs",
     "audit:phase1": "node scripts/audit-phase1-stability.mjs",
+    "verify:trip-commit": "node scripts/verify-driver-trip-commit-invariants.mjs",
     "test": "vitest run",
     "shots:appstore": "node scripts/capture-store-shots.mjs",
     "mobile:build": "APP_VARIANT=ops node scripts/write-capacitor-config.mjs && APP_VARIANT=ops node scripts/clean-native-bundles.mjs && npm run build:ops && APP_VARIANT=ops npx cap sync",

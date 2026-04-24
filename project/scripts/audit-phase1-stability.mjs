@@ -55,5 +55,13 @@ if (b.status !== 0) {
   console.log('[ok] vite build');
 }
 
+const v = spawnSync('npm', ['run', 'verify:trip-commit', '--silent'], { cwd: root, stdio: 'inherit' });
+if (v.status !== 0) {
+  ok = false;
+  console.log('[FAIL] verify:trip-commit');
+} else {
+  console.log('[ok] verify:trip-commit');
+}
+
 console.log(ok ? '\nAudit: PASS (local). Deploy migrations to staging for DB-backed checks.' : '\nAudit: FAIL');
 process.exit(ok ? 0 : 1);
