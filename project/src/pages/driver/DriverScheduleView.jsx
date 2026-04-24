@@ -150,7 +150,14 @@ function TripRow({ trip, index, onAcceptShared, isShared, onActivateTrip = null 
   );
 }
 
-export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = false, onResumeTrip = null }) {
+export default function DriverScheduleView({
+  driverId,
+  onClose,
+  hasActiveTrip = false,
+  onResumeTrip = null,
+  /** Bumped by DriverApp single shared trip_assignments realtime channel (Phase 1). */
+  assignmentSignal = 0,
+}) {
   const [schedule, setSchedule] = useState([]);
   const [sharedCandidates, setSharedCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -169,19 +176,7 @@ export default function DriverScheduleView({ driverId, onClose, hasActiveTrip = 
     }
 
     loadSchedule();
-
-    const channel = supabase
-      .channel(`driver-schedule-${driverId}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'trip_assignments',
-        filter: `driver_id=eq.${driverId}`,
-      }, () => loadSchedule())
-      .subscribe();
-
-    return () => supabase.removeChannel(channel);
-  }, [driverId]);
+  }, [driverId, assignmentSignal]);
 
   async function loadSchedule() {
     if (!driverId) return;
