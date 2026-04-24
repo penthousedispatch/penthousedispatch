@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { DollarSign, Coffee, X, AlertTriangle, TrendingUp, Clock, CheckCircle, CreditCard, Menu, Calendar, BookOpen, LogOut, ChevronRight, Trophy, MapPin, ClipboardList, BellRing, Navigation } from 'lucide-react';
 import { fbSet, fbGet, fbUpdate } from '../../lib/firebase';
@@ -9,9 +9,11 @@ import {
   logDriverLifecycleStateWrite,
   isBackwardLifecycleStageChange,
   lifecycleStageRank,
+  isDriverLifecycleDiagnosticVerbose,
 } from '../../utils/driverLifecycleDiagnostic';
 import { shouldApplyAssignmentRow } from '../../lib/driverTripLifecycleMerge';
 import { claimDriverTripIdempotency } from '../../lib/claimDriverTripIdempotency';
+import { resolveNextDriverTrip, describeDriverTripCommit } from '../../lib/driverTripCommit';
 import { sentryApi } from '../../lib/sentryApi';
 import DriverMapView from './DriverMapView';
 import TripBottomSheet from './TripBottomSheet';
@@ -555,7 +557,22 @@ export default function DriverApp() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [sheetState, setSheetState] = useState('waiting');
-  const [currentTrip, setCurrentTrip] = useState(null);
+  const [currentTrip, setTripStateInternal] = useState(null);
+  /** Single entry for all driver trip object mutations (Phase 1 state layer). */
+  const commitDriverTrip = useCallback((update, meta = {}) => {
+    setTripStateInternal(prev => {
+      const next = resolveNextDriverTrip(prev, update);
+      if (isDriverLifecycleDiagnosticVerbose() && meta?.source) {
+        try {
+          // eslint-disable-next-line no-console
+          console.info('[driverTripCommit]', JSON.stringify(describeDriverTripCommit(prev, next, meta)));
+        } catch {
+          /* ignore */
+        }
+      }
+      return next;
+    });
+  }, []);
   const [acceptingTrip, setAcceptingTrip] = useState(false);
   const [onBreak, setOnBreak] = useState(false);
   const [location, setLocation] = useState(null);
@@ -917,7 +934,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    setCurrentTrip(null);
+    commitDriverTrip(null);
     setSheetState('waiting');
     setGpsIssue('');
     try {
@@ -1321,7 +1338,7 @@ export default function DriverApp() {
           revision: mtRow?.sentry_last_modified_at ?? null,
           reason: 'firebase_driver_notification',
         });
-        setCurrentTrip(tripPayload);
+        commitDriverTrip(tripPayload);
         setSheetState(deriveSheetStateFromAssignmentStatus(normalizedNotifStatus));
         if (normalizedNotifStatus === 'pending' || normalizedNotifStatus === 'assigned') {
           startTripCountdown(15);
@@ -1488,7 +1505,7 @@ export default function DriverApp() {
         };
         const mergedOffer = preserveTripProgressForSameTrip(existingTrip, offer);
         if (!skipStaleOffer) {
-          setCurrentTrip(mergedOffer);
+          commitDriverTrip(mergedOffer);
           setSheetState(deriveSheetStateFromAssignmentStatus(mergedLifecycle));
           if (mergedLifecycle === 'pending' || mergedLifecycle === 'assigned') {
             startTripCountdown(15);
@@ -1995,7 +2012,7 @@ export default function DriverApp() {
           resetAfter: true,
           reason: 'another_driver_claimed_or_invalid_assignment',
         });
-        setCurrentTrip(null);
+        commitDriverTrip(null);
         setSheetState('waiting');
         showToast('Trip is no longer available. Another driver already accepted it.');
         return;
@@ -2039,7 +2056,7 @@ export default function DriverApp() {
           resetAfter: true,
           reason: 'marketplace_row_missing_after_accept',
         });
-        setCurrentTrip(null);
+        commitDriverTrip(null);
         setSheetState('waiting');
         showToast('Trip is no longer available. Another driver already accepted it.');
         return;
@@ -2131,7 +2148,7 @@ export default function DriverApp() {
         revision: currentTrip?.lastModifiedAt ?? null,
         reason: 'driver_accepted_offer',
       });
-      setCurrentTrip(mergedTrip);
+      commitDriverTrip(mergedTrip);
       setLifecycleUiLock({
         tripId,
         accepted: true,
@@ -2211,7 +2228,7 @@ export default function DriverApp() {
       { status: 'en_route', en_route_at: enRouteAt }
     );
 
-    setCurrentTrip(prev => {
+    commitDriverTrip(prev => {
       const next = { ...prev, enRouteAt };
       if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
       telemetryLifecycleStage('DriverApp:start_route_to_pickup', next.tripId, 'in_progress', {
@@ -2296,7 +2313,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    setCurrentTrip(null);
+    commitDriverTrip(null);
     setSheetState('waiting');
   }
 
@@ -2324,7 +2341,7 @@ export default function DriverApp() {
     const tripId = currentTrip?.tripId || null;
 
     // Optimistic-first progression so checklist/buttons don't revert during sync lag.
-    setCurrentTrip(prev => {
+    commitDriverTrip(prev => {
       const next = { ...prev, arrivedAt };
       if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
       telemetryLifecycleStage('DriverApp:mark_arrived_pickup', next.tripId, 'arrived', {
@@ -2398,7 +2415,7 @@ export default function DriverApp() {
     const tripId = currentTrip?.tripId || null;
 
     // Optimistic-first progression so dropoff flow stays active if sync calls lag.
-    setCurrentTrip(prev => {
+    commitDriverTrip(prev => {
       const next = {
         ...prev,
         pickedUpAt,
@@ -2532,7 +2549,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    setCurrentTrip(null);
+    commitDriverTrip(null);
     setSheetState('waiting');
   }
 
@@ -2648,7 +2665,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    setCurrentTrip(null);
+    commitDriverTrip(null);
     setSheetState('waiting');
 
     if (consecutiveTripsRef.current > 0 && consecutiveTripsRef.current % 5 === 0) {
@@ -2860,7 +2877,7 @@ export default function DriverApp() {
           revision: marketplaceRow.sentry_last_modified_at ?? null,
           reason: 'restore_active_trip_marketplace_fallback',
         });
-        setCurrentTrip(mergedFallback);
+        commitDriverTrip(mergedFallback);
         setSheetState(deriveSheetStateFromAssignmentStatus(normalizedFallbackStatus));
         if (openSheet) setSheetOpen(true);
         return mergedFallback;
@@ -2917,7 +2934,7 @@ export default function DriverApp() {
             revision: mergedCacheTrip.lastModifiedAt || null,
             reason: 'restore_active_trip_local_snapshot',
           });
-          setCurrentTrip(mergedCacheTrip);
+          commitDriverTrip(mergedCacheTrip);
           const nextSheet = mergedCacheTrip.pickedUpAt
             ? 'to_dropoff'
             : mergedCacheTrip.arrivedAt || mergedCacheTrip.acceptedAt || mergedCacheTrip.enRouteAt
@@ -2978,7 +2995,7 @@ export default function DriverApp() {
       revision: mtRow?.sentry_last_modified_at ?? null,
       reason: 'restore_active_trip_db_row',
     });
-    setCurrentTrip(mergedRestored);
+    commitDriverTrip(mergedRestored);
     if (activeRow?.trip_id && activeRow?.lifecycle_revision != null) {
       const tk = String(activeRow.trip_id);
       assignmentRevisionByTripRef.current.set(

@@ -13,9 +13,11 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const required = [
   ['SQL migration (monotonic lifecycle + idempotency + peek RPC)', 'supabase/migrations/20260424140000_phase1_driver_trip_lifecycle.sql'],
   ['Merge / precedence lib', 'src/lib/driverTripLifecycleMerge.js'],
+  ['Trip UI commit resolver (single mutation choke-point)', 'src/lib/driverTripCommit.js'],
   ['Idempotency RPC client', 'src/lib/claimDriverTripIdempotency.js'],
   ['Lifecycle diagnostic logger', 'src/utils/driverLifecycleDiagnostic.js'],
   ['Merge unit tests', 'src/lib/driverTripLifecycleMerge.test.js'],
+  ['Trip commit unit tests', 'src/lib/driverTripCommit.test.js'],
   ['Vitest config', 'vitest.config.js'],
 ];
 
@@ -30,6 +32,7 @@ for (const [label, rel] of required) {
 }
 
 console.log('\nItem 11 — primary client mutation surfaces (see DriverApp.jsx):');
+console.log('  - All currentTrip updates: commitDriverTrip() → resolveNextDriverTrip (src/lib/driverTripCommit.js)');
 console.log('  - poll: peek_driver_trip_offer RPC + trip_assignments fallback, Firebase notification');
 console.log('  - restoreActiveTripFromDb: assignment + marketplace + cache');
 console.log('  - acceptTrip / startRouteToPickup / markArrivedAtPickup / confirmPickup / completeTrip / markNoShow / rejectTrip');
