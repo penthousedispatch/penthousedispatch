@@ -109,8 +109,9 @@ const mapTripStatusId = (status: unknown) => {
   if (normalized === 'cancelled') return 8;
   if (normalized === 'picked_up') return 5;
   if (normalized === 'arrived') return 4;
-  if (normalized === 'accepted' || normalized === 'en_route') return 3;
-  if (normalized === 'pending' || normalized === 'assigned') return 2;
+  if (normalized === 'accepted') return 2;
+  if (normalized === 'en_route') return 3;
+  if (normalized === 'pending' || normalized === 'assigned') return 1;
   return 3;
 };
 

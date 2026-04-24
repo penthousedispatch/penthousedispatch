@@ -6,6 +6,60 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 };
 
+function pickAssignmentTypeCode(t: Record<string, unknown>) {
+  return String(
+    t.assignment_type_code ||
+      t.assignment_type ||
+      t.assignmentTypeCode ||
+      t.assignment_code ||
+      '',
+  ).trim();
+}
+
+function pickExternalTripStatus(t: Record<string, unknown>) {
+  return String(t.trip_status || t.status || t.marketplace_status || t.lifecycle_status || '').trim();
+}
+
+function deriveMarketplaceTripStatus(t: Record<string, unknown>) {
+  const s = pickExternalTripStatus(t).toLowerCase();
+  if (!s) return 'available';
+  if (
+    [
+      'cancelled',
+      'canceled',
+      'void',
+      'deleted',
+      'broker_cancelled',
+      'canceled_by_broker',
+      'no_longer_available',
+      'removed',
+    ].includes(s) ||
+    s.includes('cancel')
+  ) {
+    return 'cancelled';
+  }
+  if (['completed', 'complete', 'done', 'closed'].includes(s)) return 'completed';
+  if (['picked_up', 'picked-up', 'on_trip'].includes(s)) return 'picked_up';
+  if (['arrived', 'arrived_at_pickup'].includes(s)) return 'arrived';
+  if (['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(s)) return 'accepted';
+  return 'available';
+}
+
+function pickIncomingCompanyId(t: Record<string, unknown>) {
+  const candidate =
+    t.company_id ||
+    t.companyId ||
+    t.organization_id ||
+    t.organizationId ||
+    t.account_id ||
+    t.accountId ||
+    t.client_company_id ||
+    t.clientCompanyId ||
+    null;
+  const value = String(candidate || '').trim();
+  return value || null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -116,7 +170,14 @@ Deno.serve(async (req: Request) => {
         const pickup = (t.pick_up_location as Record<string, unknown>) || {};
         const dropoff = (t.drop_off_location as Record<string, unknown>) || {};
         const prices = (t.prices as Record<string, unknown>) || {};
+        const { data: existingTrip } = await supabase
+          .from('marketplace_trips')
+          .select('company_id')
+          .eq('sentry_trip_id', tripId)
+          .maybeSingle();
+        const scopedCompanyId = pickIncomingCompanyId(t) || existingTrip?.company_id || null;
 
+        const rowStatus = deriveMarketplaceTripStatus(t);
         const mapped = {
           sentry_trip_id: tripId,
           sentry_last_modified_at: String(t.last_modified_at || ''),
@@ -127,7 +188,7 @@ Deno.serve(async (req: Request) => {
             t.passengers ||
             t.client_count ||
             (t.client ? 1 : '') ||
-            '1'
+              '1'
           ),
           mileage: String(t.mileage || t.estimated_miles || ''),
           pu_address: String(t.pickup_address || t.pu_address || pickup.address || ''),
@@ -140,12 +201,15 @@ Deno.serve(async (req: Request) => {
           do_time: String(t.scheduled_dropoff_time || t.scheduled_drop_off_timestamp || t.do_time || ''),
           delivery_price: String(
             t.total_amount ||
-            t.delivery_price ||
-            prices.delivery_cost ||
-            prices.actual_cost ||
-            ''
+              t.delivery_price ||
+              prices.delivery_cost ||
+              prices.actual_cost ||
+              ''
           ),
-          status: 'available',
+          status: rowStatus,
+          company_id: scopedCompanyId,
+          assignment_type_code: pickAssignmentTypeCode(t),
+          external_trip_status: pickExternalTripStatus(t),
           pu_lat: pickup.lat ?? null,
           pu_lng: pickup.lng ?? null,
           do_lat: dropoff.lat ?? null,
@@ -167,24 +231,52 @@ Deno.serve(async (req: Request) => {
             error_message: null,
           });
 
+          if (rowStatus === 'cancelled') {
+            await supabase
+              .from('trip_assignments')
+              .update({ status: 'cancelled' })
+              .eq('trip_id', tripId)
+              .in('status', ['pending', 'accepted', 'arrived', 'picked_up']);
+
+            await supabase.from('supervisor_alerts').insert({
+              bot_name: 'sentry-receivers',
+              alert_type: 'broker_trip_cancelled',
+              message: `Inbound trips_receiver marked trip ${tripId} cancelled / broker-removed.`,
+              severity: 'warning',
+              payload: {
+                trip_id: tripId,
+                assignment_type_code: pickAssignmentTypeCode(t),
+                external_trip_status: pickExternalTripStatus(t),
+              },
+            });
+          }
+
           const { data: schedCfg } = await supabase
             .from('auto_scheduler_config')
             .select('auto_accept_inbound, auto_assign, enabled')
             .maybeSingle();
 
-          if (schedCfg?.auto_accept_inbound && schedCfg?.auto_assign && schedCfg?.enabled) {
+          if (
+            rowStatus !== 'cancelled' &&
+            schedCfg?.auto_accept_inbound &&
+            schedCfg?.auto_assign &&
+            schedCfg?.enabled &&
+            scopedCompanyId
+          ) {
             const { data: onlineDrivers } = await supabase
               .from('drivers')
               .select('id, full_name, current_lat, current_lng, status')
               .in('status', ['online', 'on_trip'])
+              .eq('company_id', scopedCompanyId)
               .eq('is_active', true);
 
             if (onlineDrivers && onlineDrivers.length > 0) {
               const { data: existingAssignments } = await supabase
                 .from('trip_assignments')
-                .select('driver_id, count')
+                .select('driver_id')
+                .eq('company_id', scopedCompanyId)
                 .in('status', ['pending', 'accepted'])
-                .select('driver_id');
+                .limit(500);
 
               const assignedDriverIds = new Set(
                 (existingAssignments || []).map((a: Record<string, unknown>) => a.driver_id)
@@ -202,6 +294,7 @@ Deno.serve(async (req: Request) => {
 
                 await supabase.from('trip_assignments').insert({
                   trip_id: tripId,
+                  company_id: scopedCompanyId,
                   driver_id: driver.id,
                   driver_name: driver.full_name,
                   status: 'pending',
@@ -221,6 +314,18 @@ Deno.serve(async (req: Request) => {
                   .eq('sentry_trip_id', tripId);
               }
             }
+          } else if (rowStatus !== 'cancelled' && schedCfg?.auto_accept_inbound && schedCfg?.auto_assign && schedCfg?.enabled && !scopedCompanyId) {
+            await supabase.from('supervisor_alerts').insert({
+              bot_name: 'sentry-receivers',
+              alert_type: 'broker_trip_missing_company_scope',
+              message: `Inbound trip ${tripId} skipped auto-assign because company scope was missing.`,
+              severity: 'warning',
+              payload: {
+                trip_id: tripId,
+                assignment_type_code: pickAssignmentTypeCode(t),
+                external_trip_status: pickExternalTripStatus(t),
+              },
+            });
           }
         } else {
           logStatus = 'error';

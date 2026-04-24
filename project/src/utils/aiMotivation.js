@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { getEdgeFunctionHeaders } from '../lib/edgeHeaders';
 
 export async function getAiSettings(orgId) {
   if (!orgId) return null;
@@ -189,10 +190,55 @@ export function parseAIJson(text = '') {
   }
 }
 
+async function callHostedAIThroughEdge(settings, messages, options = {}) {
+  const edgeBase = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
+  if (!edgeBase) {
+    return { text: '', error: 'Missing Supabase edge base URL', status: 0, model: settings?.model };
+  }
+
+  try {
+    const res = await fetch(`${edgeBase}/ai-proxy`, {
+      method: 'POST',
+      headers: await getEdgeFunctionHeaders(),
+      body: JSON.stringify({ settings, messages, options }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        text: '',
+        error: json?.error || `AI proxy HTTP ${res.status}`,
+        status: res.status,
+        model: settings?.model,
+      };
+    }
+    return {
+      text: json?.text || '',
+      error: json?.error || null,
+      status: json?.status || res.status,
+      model: json?.model || settings?.model,
+      tokens: json?.tokens || 0,
+    };
+  } catch (error) {
+    return {
+      text: '',
+      error: error?.message || 'AI proxy request failed',
+      status: 0,
+      model: settings?.model,
+    };
+  }
+}
+
 export async function callAI(settings, messages, options = {}) {
   if (!settings || settings.provider === 'disabled' || !settings.api_key) return null;
 
   const maxTokensOverride = options.max_tokens != null ? parseInt(options.max_tokens, 10) : null;
+
+  if (['openai', 'anthropic', 'gemini'].includes(settings.provider)) {
+    const proxied = await callHostedAIThroughEdge(settings, messages, options);
+    if (proxied && (proxied.text || proxied.error || proxied.status !== 404)) {
+      return proxied;
+    }
+  }
 
   let url, body, headers;
 
@@ -292,9 +338,46 @@ export async function requestAIStructuredPlan(settings, { systemPrompt, userProm
 
   if (!result?.text) return result?.error ? { ...result, json: null } : null;
 
+  let parsed = parseAIJson(result.text);
+  if (!parsed) {
+    const repairPrompt = `Convert the following response into raw JSON only.
+Return exactly one JSON object and no markdown fences.
+Expected keys:
+- go_no_go
+- severity
+- summary
+- top_blockers
+- next_actions
+- confidence
+
+Source response:
+${result.text}`;
+
+    const repaired = await callAI(
+      settings,
+      [
+        { role: 'system', content: 'You convert semi-structured AI output into strict raw JSON. Return JSON only.' },
+        { role: 'user', content: repairPrompt },
+      ],
+      { max_tokens: 1200 },
+    );
+
+    if (repaired?.text) {
+      parsed = parseAIJson(repaired.text);
+      if (parsed) {
+        return {
+          ...result,
+          text: repaired.text,
+          json: parsed,
+          repaired_from_unstructured: true,
+        };
+      }
+    }
+  }
+
   return {
     ...result,
-    json: parseAIJson(result.text),
+    json: parsed,
   };
 }
 
