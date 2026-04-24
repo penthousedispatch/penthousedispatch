@@ -32,7 +32,7 @@ for (const [label, rel] of required) {
 }
 
 console.log('\nItem 11 — primary client mutation surfaces (see DriverApp.jsx):');
-console.log('  - All currentTrip updates: commitDriverTrip() → resolveNextDriverTrip (src/lib/driverTripCommit.js)');
+console.log('  - All currentTrip updates: commitDriverTrip(update, { source, reason }) → resolveNextDriverTrip');
 console.log('  - poll: peek_driver_trip_offer RPC + trip_assignments fallback, Firebase notification');
 console.log('  - restoreActiveTripFromDb: assignment + marketplace + cache');
 console.log('  - acceptTrip / startRouteToPickup / markArrivedAtPickup / confirmPickup / completeTrip / markNoShow / rejectTrip');

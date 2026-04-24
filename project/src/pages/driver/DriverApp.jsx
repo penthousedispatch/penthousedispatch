@@ -934,7 +934,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    commitDriverTrip(null);
+    commitDriverTrip(null, { source: 'end_shift_logout', reason: 'driver_ended_shift' });
     setSheetState('waiting');
     setGpsIssue('');
     try {
@@ -1338,7 +1338,7 @@ export default function DriverApp() {
           revision: mtRow?.sentry_last_modified_at ?? null,
           reason: 'firebase_driver_notification',
         });
-        commitDriverTrip(tripPayload);
+        commitDriverTrip(tripPayload, { source: 'firebase_notification', reason: 'driver_notification_trip' });
         setSheetState(deriveSheetStateFromAssignmentStatus(normalizedNotifStatus));
         if (normalizedNotifStatus === 'pending' || normalizedNotifStatus === 'assigned') {
           startTripCountdown(15);
@@ -1505,7 +1505,7 @@ export default function DriverApp() {
         };
         const mergedOffer = preserveTripProgressForSameTrip(existingTrip, offer);
         if (!skipStaleOffer) {
-          commitDriverTrip(mergedOffer);
+          commitDriverTrip(mergedOffer, { source: 'poll_pending', reason: 'peek_or_pending_assignment_offer' });
           setSheetState(deriveSheetStateFromAssignmentStatus(mergedLifecycle));
           if (mergedLifecycle === 'pending' || mergedLifecycle === 'assigned') {
             startTripCountdown(15);
@@ -2012,7 +2012,7 @@ export default function DriverApp() {
           resetAfter: true,
           reason: 'another_driver_claimed_or_invalid_assignment',
         });
-        commitDriverTrip(null);
+        commitDriverTrip(null, { source: 'accept_trip', reason: 'lost_race_or_invalid_assignment' });
         setSheetState('waiting');
         showToast('Trip is no longer available. Another driver already accepted it.');
         return;
@@ -2056,7 +2056,7 @@ export default function DriverApp() {
           resetAfter: true,
           reason: 'marketplace_row_missing_after_accept',
         });
-        commitDriverTrip(null);
+        commitDriverTrip(null, { source: 'accept_trip', reason: 'marketplace_unavailable_after_accept' });
         setSheetState('waiting');
         showToast('Trip is no longer available. Another driver already accepted it.');
         return;
@@ -2148,7 +2148,7 @@ export default function DriverApp() {
         revision: currentTrip?.lastModifiedAt ?? null,
         reason: 'driver_accepted_offer',
       });
-      commitDriverTrip(mergedTrip);
+      commitDriverTrip(mergedTrip, { source: 'driver_accept', reason: 'accept_trip_success' });
       setLifecycleUiLock({
         tripId,
         accepted: true,
@@ -2228,14 +2228,17 @@ export default function DriverApp() {
       { status: 'en_route', en_route_at: enRouteAt }
     );
 
-    commitDriverTrip(prev => {
-      const next = { ...prev, enRouteAt };
-      if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
-      telemetryLifecycleStage('DriverApp:start_route_to_pickup', next.tripId, 'in_progress', {
-        reason: 'driver_started_en_route',
-      });
-      return next;
-    });
+    commitDriverTrip(
+      prev => {
+        const next = { ...prev, enRouteAt };
+        if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
+        telemetryLifecycleStage('DriverApp:start_route_to_pickup', next.tripId, 'in_progress', {
+          reason: 'driver_started_en_route',
+        });
+        return next;
+      },
+      { source: 'driver_en_route', reason: 'start_route_to_pickup' }
+    );
     setLifecycleUiLock(prev => ({
       tripId: normalizeUiTripId(currentTrip?.tripId) || normalizeUiTripId(prev.tripId),
       accepted: true,
@@ -2313,7 +2316,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    commitDriverTrip(null);
+    commitDriverTrip(null, { source: 'reject_trip', reason: 'driver_rejected_or_cancelled_offer' });
     setSheetState('waiting');
   }
 
@@ -2341,14 +2344,17 @@ export default function DriverApp() {
     const tripId = currentTrip?.tripId || null;
 
     // Optimistic-first progression so checklist/buttons don't revert during sync lag.
-    commitDriverTrip(prev => {
-      const next = { ...prev, arrivedAt };
-      if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
-      telemetryLifecycleStage('DriverApp:mark_arrived_pickup', next.tripId, 'arrived', {
-        reason: 'driver_marked_arrived',
-      });
-      return next;
-    });
+    commitDriverTrip(
+      prev => {
+        const next = { ...prev, arrivedAt };
+        if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
+        telemetryLifecycleStage('DriverApp:mark_arrived_pickup', next.tripId, 'arrived', {
+          reason: 'driver_marked_arrived',
+        });
+        return next;
+      },
+      { source: 'driver_arrived', reason: 'mark_arrived_at_pickup' }
+    );
     setLifecycleUiLock(prev => ({
       tripId: normalizeUiTripId(tripId) || normalizeUiTripId(prev.tripId),
       accepted: true,
@@ -2415,19 +2421,22 @@ export default function DriverApp() {
     const tripId = currentTrip?.tripId || null;
 
     // Optimistic-first progression so dropoff flow stays active if sync calls lag.
-    commitDriverTrip(prev => {
-      const next = {
-        ...prev,
-        pickedUpAt,
-        collectedFare: normalizedPickupMeta.collectedFare ?? prev?.collectedFare ?? null,
-        mtaFareCollectedAt: normalizedPickupMeta.collectedFare !== null ? pickedUpAt : (prev?.mtaFareCollectedAt || null),
-      };
-      if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
-      telemetryLifecycleStage('DriverApp:confirm_pickup', next.tripId, 'picked_up', {
-        reason: 'driver_confirmed_pickup',
-      });
-      return next;
-    });
+    commitDriverTrip(
+      prev => {
+        const next = {
+          ...prev,
+          pickedUpAt,
+          collectedFare: normalizedPickupMeta.collectedFare ?? prev?.collectedFare ?? null,
+          mtaFareCollectedAt: normalizedPickupMeta.collectedFare !== null ? pickedUpAt : (prev?.mtaFareCollectedAt || null),
+        };
+        if (driverData?.id && next?.tripId) persistDriverActiveTripSnapshot(driverData.id, next);
+        telemetryLifecycleStage('DriverApp:confirm_pickup', next.tripId, 'picked_up', {
+          reason: 'driver_confirmed_pickup',
+        });
+        return next;
+      },
+      { source: 'driver_pickup', reason: 'confirm_pickup' }
+    );
     setLifecycleUiLock(prev => ({
       tripId: normalizeUiTripId(tripId) || normalizeUiTripId(prev.tripId),
       accepted: true,
@@ -2549,7 +2558,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    commitDriverTrip(null);
+    commitDriverTrip(null, { source: 'mark_no_show', reason: 'driver_no_show' });
     setSheetState('waiting');
   }
 
@@ -2665,7 +2674,7 @@ export default function DriverApp() {
     } else {
       lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
     }
-    commitDriverTrip(null);
+    commitDriverTrip(null, { source: 'complete_trip', reason: 'driver_completed_trip' });
     setSheetState('waiting');
 
     if (consecutiveTripsRef.current > 0 && consecutiveTripsRef.current % 5 === 0) {
@@ -2877,7 +2886,7 @@ export default function DriverApp() {
           revision: marketplaceRow.sentry_last_modified_at ?? null,
           reason: 'restore_active_trip_marketplace_fallback',
         });
-        commitDriverTrip(mergedFallback);
+        commitDriverTrip(mergedFallback, { source: 'restore_db', reason: 'marketplace_fallback_row' });
         setSheetState(deriveSheetStateFromAssignmentStatus(normalizedFallbackStatus));
         if (openSheet) setSheetOpen(true);
         return mergedFallback;
@@ -2934,7 +2943,7 @@ export default function DriverApp() {
             revision: mergedCacheTrip.lastModifiedAt || null,
             reason: 'restore_active_trip_local_snapshot',
           });
-          commitDriverTrip(mergedCacheTrip);
+          commitDriverTrip(mergedCacheTrip, { source: 'restore_cache', reason: 'local_snapshot_resumed' });
           const nextSheet = mergedCacheTrip.pickedUpAt
             ? 'to_dropoff'
             : mergedCacheTrip.arrivedAt || mergedCacheTrip.acceptedAt || mergedCacheTrip.enRouteAt
@@ -2995,7 +3004,7 @@ export default function DriverApp() {
       revision: mtRow?.sentry_last_modified_at ?? null,
       reason: 'restore_active_trip_db_row',
     });
-    commitDriverTrip(mergedRestored);
+    commitDriverTrip(mergedRestored, { source: 'restore_db', reason: 'trip_assignment_row' });
     if (activeRow?.trip_id && activeRow?.lifecycle_revision != null) {
       const tk = String(activeRow.trip_id);
       assignmentRevisionByTripRef.current.set(
