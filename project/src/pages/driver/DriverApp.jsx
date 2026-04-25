@@ -1313,40 +1313,51 @@ export default function DriverApp() {
       if (notif.type === 'daily_schedule') {
         setShowSchedule(true);
       } else if (notif.tripId && sheetStateRef.current === 'waiting') {
-        const { data: mtRow } = await supabase
-          .from('marketplace_trips')
-          .select('status, taken_by, sentry_last_modified_at, raw_payload, assignment_type_code, external_trip_status')
-          .eq('sentry_trip_id', String(notif.tripId))
+        const { data: taNotifGate } = await supabase
+          .from('trip_assignments')
+          .select('status')
+          .eq('trip_id', String(notif.tripId))
+          .eq('driver_id', driver.id)
           .maybeSingle();
-        let normalizedNotifStatus = resolveDriverLifecycleStatus({ status: 'pending' }, mtRow || {});
-        const lockStatus = lifecycleStatusFromLock(lifecycleUiLock, notif.tripId);
-        if (lockStatus) normalizedNotifStatus = lockStatus;
-        const tripPayload = { ...notif };
-        if (!perTripPay) delete tripPayload.deliveryPrice;
-        Object.assign(tripPayload, deriveMtaFareInfo(notif));
-        const nMp = extractMarketplaceLifecycleTimestamps(mtRow || {});
-        if (['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(normalizedNotifStatus)) {
-          tripPayload.acceptedAt = tripPayload.acceptedAt || nMp.acceptedAt || new Date().toISOString();
+        const notifGateStatus = String(taNotifGate?.status || '').toLowerCase();
+        if (['completed', 'cancelled', 'rejected', 'no_show'].includes(notifGateStatus)) {
+          await fbSet(`driver_notifications/${driver.id}`, null);
+        } else {
+          const { data: mtRow } = await supabase
+            .from('marketplace_trips')
+            .select('status, taken_by, sentry_last_modified_at, raw_payload, assignment_type_code, external_trip_status')
+            .eq('sentry_trip_id', String(notif.tripId))
+            .maybeSingle();
+          let normalizedNotifStatus = resolveDriverLifecycleStatus({ status: 'pending' }, mtRow || {});
+          const lockStatus = lifecycleStatusFromLock(lifecycleUiLock, notif.tripId);
+          if (lockStatus) normalizedNotifStatus = lockStatus;
+          const tripPayload = { ...notif };
+          if (!perTripPay) delete tripPayload.deliveryPrice;
+          Object.assign(tripPayload, deriveMtaFareInfo(notif));
+          const nMp = extractMarketplaceLifecycleTimestamps(mtRow || {});
+          if (['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(normalizedNotifStatus)) {
+            tripPayload.acceptedAt = tripPayload.acceptedAt || nMp.acceptedAt || new Date().toISOString();
+          }
+          if (['arrived', 'picked_up', 'on_trip'].includes(normalizedNotifStatus)) {
+            tripPayload.arrivedAt = tripPayload.arrivedAt || nMp.arrivedAt || tripPayload.acceptedAt || new Date().toISOString();
+          }
+          if (['picked_up', 'on_trip'].includes(normalizedNotifStatus)) {
+            tripPayload.pickedUpAt = tripPayload.pickedUpAt || nMp.pickedUpAt || tripPayload.arrivedAt || tripPayload.acceptedAt || new Date().toISOString();
+          }
+          telemetryLifecycleStage('DriverApp:poll_firebase_notification', notif.tripId, normalizedNotifStatus, {
+            revision: mtRow?.sentry_last_modified_at ?? null,
+            reason: 'firebase_driver_notification',
+          });
+          commitDriverTrip(tripPayload, { source: 'firebase_notification', reason: 'driver_notification_trip' });
+          setSheetState(deriveSheetStateFromAssignmentStatus(normalizedNotifStatus));
+          if (normalizedNotifStatus === 'pending' || normalizedNotifStatus === 'assigned') {
+            startTripCountdown(15);
+          } else if (driver?.id && tripPayload?.tripId) {
+            persistDriverActiveTripSnapshot(driver.id, tripPayload);
+          }
+          if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+          surfacedTripFromFirebase = true;
         }
-        if (['arrived', 'picked_up', 'on_trip'].includes(normalizedNotifStatus)) {
-          tripPayload.arrivedAt = tripPayload.arrivedAt || nMp.arrivedAt || tripPayload.acceptedAt || new Date().toISOString();
-        }
-        if (['picked_up', 'on_trip'].includes(normalizedNotifStatus)) {
-          tripPayload.pickedUpAt = tripPayload.pickedUpAt || nMp.pickedUpAt || tripPayload.arrivedAt || tripPayload.acceptedAt || new Date().toISOString();
-        }
-        telemetryLifecycleStage('DriverApp:poll_firebase_notification', notif.tripId, normalizedNotifStatus, {
-          revision: mtRow?.sentry_last_modified_at ?? null,
-          reason: 'firebase_driver_notification',
-        });
-        commitDriverTrip(tripPayload, { source: 'firebase_notification', reason: 'driver_notification_trip' });
-        setSheetState(deriveSheetStateFromAssignmentStatus(normalizedNotifStatus));
-        if (normalizedNotifStatus === 'pending' || normalizedNotifStatus === 'assigned') {
-          startTripCountdown(15);
-        } else if (driver?.id && tripPayload?.tripId) {
-          persistDriverActiveTripSnapshot(driver.id, tripPayload);
-        }
-        if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
-        surfacedTripFromFirebase = true;
       }
     }
 
@@ -2608,6 +2619,10 @@ export default function DriverApp() {
       status: 'completed',
       completedAt: Date.now(),
     });
+    // Same as no-show / reject: stale Firebase notifications otherwise resurrect the trip every poll tick.
+    if (driverData?.id) {
+      await fbSet(`driver_notifications/${driverData.id}`, null);
+    }
 
     if (currentTrip?.tripId) {
       let taUpdate = supabase
