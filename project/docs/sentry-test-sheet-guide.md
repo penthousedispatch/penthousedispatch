@@ -156,6 +156,16 @@ Expected:
   - dispatch note banner
   - test trip checklist
 
+## After accept: compare DB rows (without flaky CLI DB auth)
+
+If `supabase db` / `psql` intermittently fails (token refresh, pooler breaker), use the REST audit from `project/`:
+
+```bash
+npm run audit:trip -- --trip=<SENTRY_TRIP_ID>
+```
+
+Set `SUPABASE_SERVICE_ROLE_KEY` in `.env.local` so PostgREST can return full rows under RLS. See `docs/supabase-trip-state-audit.md`.
+
 ## If Sentry Says Nothing Changed
 
 Check these in order:

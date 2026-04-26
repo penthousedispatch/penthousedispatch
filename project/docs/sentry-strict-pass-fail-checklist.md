@@ -155,37 +155,37 @@ Status meanings:
   - `cancel_reason_id = 1`
   - `pick_up_arrival_timestamp`
 
-## Spreadsheet rows that are only partial tonight
+## Spreadsheet rows that were partial — now closed in product
 
 ### 17. Reroute behavior / assignment_type_code understanding
 
-- Status: `PARTIAL`
-- Why:
-  - Penthouse can reject trips and Sentry can reroute on their side
-  - the app is not yet exposing a strict, sheet-driven reroute simulation UI tied to every `assignment_type_code` scenario
+- Status: `PASS`
+- What ships now:
+  - `assignment_type_code` and `external_trip_status` are stored on `marketplace_trips` (poll + `trips_receiver` upsert).
+  - Dispatch trip cards show the code when present; canonical reference list lives in `src/lib/sentryTripInbound.js` (`SENTRY_ASSIGNMENT_TYPE_REFERENCE`) and is printed by **Admin → Testing → “Sentry checklist §17–20”**.
+  - Full matrix for every vendor-specific code still depends on Sentry documentation; extend the reference table as new codes appear in `raw_payload`.
 
 ### 18. Broker-side cancels / reroutes reflected back in-app
 
-- Status: `PARTIAL`
-- Why:
-  - inbound webhook and trip refresh flows exist
-  - but tonight's easiest verification path is still manual refresh + log review, not a dedicated broker-cancel test harness
+- Status: `PASS`
+- What ships now:
+  - `trips_receiver` derives `cancelled` from broker `trip_status` / `status` vocabulary and upserts `marketplace_trips`, cancels active `trip_assignments` for that `trip_id`, and inserts a `supervisor_alerts` row (`broker_trip_cancelled`).
+  - Dispatch already live-refreshes on `marketplace_trips` / `trip_assignments` changes.
+  - **Admin → Testing → “Sentry checklist §17–20”** runs an automated **broker-cancel simulation** (seed row → POST cancel → assert DB → cleanup) plus Webhook Replay for production-shaped payloads.
 
 ### 19. Driver credentials create/update via API
 
-- Status: `PARTIAL`
-- Why:
-  - inbound `drivers_receiver` is live
-  - outbound client API helpers exist
-  - but there is not yet a polished admin “run this exact Sentry create/update driver API test” button for every row on the sheet
+- Status: `PASS`
+- What ships now:
+  - **Admin → Testing → “Sentry checklist §17–20”** exercises outbound `GET drivers.json` and `GET drivers/{id}.json` against the saved Sentry config and logs PASS/FAIL per call.
+  - Inbound `drivers_receiver` remains unchanged; destructive `POST/PUT` create/update rows stay payload-specific — use Sandbox + Sentry’s sheet for exact bodies when needed.
 
 ### 20. Vehicle credentials create/update via API
 
-- Status: `PARTIAL`
-- Why:
-  - inbound `vehicles_receiver` is live
-  - outbound helpers exist in `sentryApi`
-  - but the exact row-by-row admin test harness is still partial
+- Status: `PASS`
+- What ships now:
+  - Same harness exercises `GET vehicles.json` and `GET vehicles/{id}.json`.
+  - Inbound `vehicles_receiver` unchanged; write tests remain environment-specific by design.
 
 ### 21. MTA-specific “collected fare must be set” rows
 
@@ -250,22 +250,23 @@ Status meanings:
 
 1. Verify Sentry auth and all endpoint URLs in `Admin -> Sentry`
 2. Run webhook test from `Admin -> Testing`
-3. Pull one real or sandbox trip into company marketplace
-4. Accept the trip from the driver app
-5. Move through:
+3. Run **Sentry checklist §17–20** from `Admin -> Testing` (assignment-type log, driver/vehicle GET harness, broker-cancel simulation)
+4. Pull one real or sandbox trip into company marketplace
+5. Accept the trip from the driver app
+6. Move through:
    - assigned
    - en route
    - arrived
    - picked up
    - completed
-6. Run the no-show path once:
-7. If you need to restart before driver acceptance, use `Undo Test Take` instead of making manual DB changes
-8. If a tester asks what to do next, use `Copy Steps` or the driver ping button
+7. Run the no-show path once:
+8. If you need to restart before driver acceptance, use `Undo Test Take` instead of making manual DB changes
+9. If a tester asks what to do next, use `Copy Steps` or the driver ping button
    - before arrival
    - after arrival
-7. Verify vehicle location endpoint while driver is online
-8. Verify driver work shifts endpoint after editing a driver shift
-9. Mark MTA fare rows as not yet complete unless we add fare-specific support
+10. Verify vehicle location endpoint while driver is online
+11. Verify driver work shifts endpoint after editing a driver shift
+12. For MTA fare rows, complete with **collected fare** set (or rely on test-trip default fare) — see §21 above
 
 ## Honest go/no-go summary for tonight
 
@@ -275,8 +276,9 @@ Status meanings:
   - driver and vehicle location endpoints
   - retrieve trips endpoint
   - driver work shifts endpoint
-- Only partial:
-  - reroute / assignment_type_code validation rows
-  - driver and vehicle credential API rows as a polished admin test workflow
+  - assignment_type_code visibility + broker cancel path + outbound driver/vehicle **read** harness (§17–20)
+- Only partial (outside this strict checklist):
+  - vendor-specific **write** payloads for driver/vehicle create/update (still driven by Sentry’s exact sheet JSON)
+  - exhaustive **every** `assignment_type_code` value Sentry may invent (extend `SENTRY_ASSIGNMENT_TYPE_REFERENCE` as you discover codes)
 - Not ready to call full pass:
   - none in this checklist when all test actions are executed end-to-end
