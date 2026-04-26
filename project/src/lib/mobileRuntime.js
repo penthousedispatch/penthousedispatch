@@ -52,3 +52,37 @@ export function parseIncomingAppUrl(url) {
     return null;
   }
 }
+
+export function installMobileViewportSizing() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return () => {};
+  }
+
+  const root = document.documentElement;
+  const viewport = window.visualViewport;
+
+  const updateViewportSize = () => {
+    const height = Math.round(viewport?.height ?? window.innerHeight ?? 0);
+    const width = Math.round(viewport?.width ?? window.innerWidth ?? 0);
+
+    if (height > 0) {
+      root.style.setProperty('--app-height', `${height}px`);
+    }
+    if (width > 0) {
+      root.style.setProperty('--app-width', `${width}px`);
+    }
+  };
+
+  updateViewportSize();
+  window.addEventListener('resize', updateViewportSize);
+  window.addEventListener('orientationchange', updateViewportSize);
+  viewport?.addEventListener('resize', updateViewportSize);
+  viewport?.addEventListener('scroll', updateViewportSize);
+
+  return () => {
+    window.removeEventListener('resize', updateViewportSize);
+    window.removeEventListener('orientationchange', updateViewportSize);
+    viewport?.removeEventListener('resize', updateViewportSize);
+    viewport?.removeEventListener('scroll', updateViewportSize);
+  };
+}

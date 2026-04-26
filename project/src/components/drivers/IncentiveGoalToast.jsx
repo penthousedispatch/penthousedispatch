@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trophy, Zap, Target } from 'lucide-react';
+import { X, Trophy, Zap, Target, ChevronRight } from 'lucide-react';
 
-export default function IncentiveGoalToast({ goals = [], onDismiss }) {
+export default function IncentiveGoalToast({ goals = [], onDismiss, onOpen }) {
   const [visible, setVisible] = useState(false);
   const [animOut, setAnimOut] = useState(false);
 
@@ -38,6 +38,7 @@ export default function IncentiveGoalToast({ goals = [], onDismiss }) {
         opacity: visible && !animOut ? 1 : 0,
         transform: visible && !animOut ? 'translateY(0)' : 'translateY(24px)',
         transition: 'opacity 0.35s ease, transform 0.35s ease',
+        pointerEvents: 'none',
       }}
     >
       <div
@@ -48,6 +49,7 @@ export default function IncentiveGoalToast({ goals = [], onDismiss }) {
           padding: '16px 16px 14px',
           boxShadow: `0 12px 40px rgba(0,0,0,0.7), 0 0 0 1px ${accentColor}18`,
           backdropFilter: 'blur(20px)',
+          pointerEvents: 'auto',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
@@ -147,6 +149,32 @@ export default function IncentiveGoalToast({ goals = [], onDismiss }) {
               );
             })}
           </div>
+        )}
+
+        {onOpen && (
+          <button
+            type="button"
+            onClick={onOpen}
+            style={{
+              width: '100%',
+              marginTop: 10,
+              padding: '10px 12px',
+              borderRadius: 14,
+              border: `1px solid ${accentColor}2f`,
+              background: `${accentColor}14`,
+              color: accentColor,
+              fontSize: 12,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              cursor: 'pointer',
+            }}
+          >
+            Open My Incentives
+            <ChevronRight style={{ width: 14, height: 14 }} />
+          </button>
         )}
       </div>
     </div>

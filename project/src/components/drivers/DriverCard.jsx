@@ -152,14 +152,15 @@ export default function DriverCard({
         </button>
         <button
           onClick={e => { e.stopPropagation(); onSendTestTrip?.(); }}
-          disabled={sendingTestTrip}
+          disabled={sendingTestTrip || tripCount > 0}
+          title={tripCount > 0 ? 'Driver already has an active trip' : 'Send one test trip to this driver'}
           className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-600 transition-all"
           style={{
             background: 'rgba(14,165,233,0.12)',
             border: '1px solid rgba(14,165,233,0.22)',
             color: '#38bdf8',
             fontWeight: 600,
-            opacity: sendingTestTrip ? 0.7 : 1,
+            opacity: sendingTestTrip || tripCount > 0 ? 0.7 : 1,
           }}
         >
           <Navigation className="w-3 h-3" /> {sendingTestTrip ? 'Sending...' : '1 Trip'}

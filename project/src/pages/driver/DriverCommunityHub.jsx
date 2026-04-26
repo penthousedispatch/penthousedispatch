@@ -88,7 +88,7 @@ export default function DriverCommunityHub({ orgId, driver, currentTrip, onClose
     const [{ data: assignments }, { data: posts }, { data: notes }] = await Promise.all([
       supabase
         .from('trip_assignments')
-        .select('driver_id, driver_name, delivery_price, completed_at, status')
+        .select('driver_id, driver_name, completed_at, status')
         .eq('status', 'completed')
         .gte('completed_at', monthStart.toISOString()),
       supabase
@@ -113,16 +113,17 @@ export default function DriverCommunityHub({ orgId, driver, currentTrip, onClose
           driver_id: assignment.driver_id,
           driver_name: assignment.driver_name || 'Driver',
           completed_trips: 0,
-          revenue: 0,
         };
       }
       leaderboardMap[key].completed_trips += 1;
-      leaderboardMap[key].revenue += parseFloat(assignment.delivery_price || 0);
     });
 
     setLeaders(
       Object.values(leaderboardMap)
-        .sort((a, b) => b.completed_trips - a.completed_trips || b.revenue - a.revenue)
+        .sort((a, b) =>
+          b.completed_trips - a.completed_trips ||
+          String(a.driver_name || '').localeCompare(String(b.driver_name || ''))
+        )
         .slice(0, 12)
     );
     setForumPosts(posts || []);
@@ -228,7 +229,7 @@ export default function DriverCommunityHub({ orgId, driver, currentTrip, onClose
             </div>
             <div className="text-right">
               <p className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>{myRank.completed_trips} trips</p>
-              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>${myRank.revenue.toFixed(2)} revenue</p>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Completed this month</p>
             </div>
           </div>
         )}
@@ -257,7 +258,7 @@ export default function DriverCommunityHub({ orgId, driver, currentTrip, onClose
                     </div>
                     <div>
                       <p className="text-sm font-600" style={{ color: '#e5e7eb', fontWeight: 600 }}>{entry.driver_name}</p>
-                      <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>${entry.revenue.toFixed(2)} booked</p>
+                      <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>On-time completions</p>
                     </div>
                   </div>
                   <div className="text-right">

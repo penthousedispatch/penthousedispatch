@@ -37,6 +37,13 @@ export default function TripCard({
   const miles = parseFloat(trip.mileage) || 0;
   const ratePerMile = miles > 0 ? (price / miles).toFixed(2) : '—';
   const syncMeta = getSyncMeta(syncStatus);
+  const assignCode = String(
+    trip.assignment_type_code ||
+      trip.raw_payload?.assignment_type_code ||
+      trip.raw_payload?.assignment_type ||
+      ''
+  ).trim();
+  const isCancelled = String(trip.status || '').toLowerCase() === 'cancelled';
 
   return (
     <div
@@ -63,6 +70,16 @@ export default function TripCard({
           {assigned && (
             <span className="text-xs px-1.5 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(0,229,160,0.1)', color: '#00e5a0', fontSize: 10 }}>
               <CheckCircle className="w-2.5 h-2.5" /> Assigned
+            </span>
+          )}
+          {isCancelled && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,71,87,0.12)', color: '#ff8a95', fontSize: 10 }}>
+              Cancelled
+            </span>
+          )}
+          {assignCode && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-mono" style={{ background: 'rgba(201,168,76,0.12)', color: '#c9a84c', fontSize: 10 }} title="Sentry assignment_type_code">
+              {assignCode}
             </span>
           )}
           {syncMeta && (

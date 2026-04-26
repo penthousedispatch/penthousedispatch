@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, MapPin, Navigation, Clock, DollarSign, Phone, Car, CheckCircle, Circle, ArrowRight, Activity, Zap, TrendingUp, AlertTriangle, ChevronRight, CreditCard as Edit2, Save, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { logFailure, toastError, toastSuccess } from '../../utils/errorHandler';
@@ -138,12 +138,35 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
 
   if (!driver) return null;
 
+  const driverIsHourly = (displayPay.pay_rate_type || driver.pay_rate_type || 'hourly') === 'hourly';
   const status = STATUS_CONFIG[driver.status] || STATUS_CONFIG.offline;
   const initials = driver.full_name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '??';
 
-  const activeAssignments = assignments.filter(
-    a => a.driver_id === driver.id && !['completed', 'cancelled', 'rejected'].includes(a.status)
-  );
+  const activeAssignments = useMemo(() => {
+    const list = (assignments || []).filter(
+      a => String(a.driver_id) === String(driver.id) && !['completed', 'cancelled', 'rejected'].includes(a.status)
+    );
+    const rank = s => ({ picked_up: 4, arrived: 3, accepted: 2, pending: 1 }[String(s || '').toLowerCase()] || 0);
+    function dedupeKey(a) {
+      const id = String(a.trip_id ?? '').trim();
+      if (id) return `id:${id}`;
+      const fp = `${String(a.pu_address || '').slice(0, 56)}|${String(a.do_address || '').slice(0, 56)}|${String(a.pu_time || '')}|${String(a.delivery_price ?? '')}`;
+      return `fp:${fp}`;
+    }
+    const byTrip = new Map();
+    for (const a of list) {
+      const k = dedupeKey(a);
+      const prev = byTrip.get(k);
+      if (!prev || rank(a.status) > rank(prev.status)) {
+        byTrip.set(k, a);
+      } else if (rank(a.status) === rank(prev.status)) {
+        const prevT = new Date(prev.created_at || prev.assigned_at || 0).getTime();
+        const nextT = new Date(a.created_at || a.assigned_at || 0).getTime();
+        if (nextT >= prevT) byTrip.set(k, a);
+      }
+    }
+    return [...byTrip.values()];
+  }, [assignments, driver.id]);
 
   const gpsAge = driver.last_location_update
     ? Math.floor((Date.now() - new Date(driver.last_location_update).getTime()) / 60000)
@@ -372,7 +395,7 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
 
                 return (
                   <div
-                    key={a.id}
+                    key={String(a.trip_id || a.id)}
                     className="rounded-xl p-3"
                     style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
                   >
@@ -383,7 +406,7 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
                       >
                         {tripStatus.label}
                       </span>
-                      {a.delivery_price > 0 && (
+                      {!driverIsHourly && a.delivery_price > 0 && (
                         <span className="text-xs font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>
                           ${parseFloat(a.delivery_price).toFixed(2)}
                         </span>
@@ -440,7 +463,7 @@ export default function DriverDetailPanel({ driver, assignments = [], onClose, o
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                    {t.delivery_price > 0 && (
+                    {!driverIsHourly && t.delivery_price > 0 && (
                       <span className="text-xs font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>
                         ${parseFloat(t.delivery_price).toFixed(2)}
                       </span>

@@ -66,6 +66,7 @@ export default function DriverMapView({ location, trip, sheetState }) {
   const dropoffRouteRef = useRef(null);
   const trafficLayerRef = useRef(null);
   const prevLocationRef = useRef(null);
+  const directionsRequestSeqRef = useRef(0);
   const [mapsLoaded, setMapsLoaded] = useState(mapsReady);
   const [mapMode, setMapMode] = useState('route');
   const [showTraffic, setShowTraffic] = useState(false);
@@ -166,6 +167,8 @@ export default function DriverMapView({ location, trip, sheetState }) {
 
   useEffect(() => {
     if (!mapsLoaded || !mapInstanceRef.current || !window.google) return;
+    const requestSeq = directionsRequestSeqRef.current + 1;
+    directionsRequestSeqRef.current = requestSeq;
     if (pickupRouteRef.current) { pickupRouteRef.current.setMap(null); pickupRouteRef.current = null; }
     if (dropoffRouteRef.current) { dropoffRouteRef.current.setMap(null); dropoffRouteRef.current = null; }
     setNavSummary(null);
@@ -188,6 +191,7 @@ export default function DriverMapView({ location, trip, sheetState }) {
         destination: pickupAddress,
         travelMode: window.google.maps.TravelMode.DRIVING,
       }, (result, status) => {
+        if (directionsRequestSeqRef.current !== requestSeq) return;
         if (status === 'OK') {
           pickupRenderer.setDirections(result);
           pickupRouteRef.current = pickupRenderer;
@@ -225,6 +229,7 @@ export default function DriverMapView({ location, trip, sheetState }) {
         destination: dropoffAddress,
         travelMode: window.google.maps.TravelMode.DRIVING,
       }, (result, status) => {
+        if (directionsRequestSeqRef.current !== requestSeq) return;
         if (status === 'OK') {
           dropoffRenderer.setDirections(result);
           dropoffRouteRef.current = dropoffRenderer;
@@ -244,6 +249,20 @@ export default function DriverMapView({ location, trip, sheetState }) {
         }
       });
     }
+
+    return () => {
+      if (directionsRequestSeqRef.current === requestSeq) {
+        directionsRequestSeqRef.current += 1;
+      }
+      if (pickupRouteRef.current) {
+        pickupRouteRef.current.setMap(null);
+        pickupRouteRef.current = null;
+      }
+      if (dropoffRouteRef.current) {
+        dropoffRouteRef.current.setMap(null);
+        dropoffRouteRef.current = null;
+      }
+    };
   }, [sheetState, location, trip, mapsLoaded]);
 
   const immersiveNav = Boolean(

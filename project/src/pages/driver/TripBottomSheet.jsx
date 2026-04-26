@@ -20,15 +20,39 @@ function formatTripPickupTime(puTime) {
   return raw;
 }
 
+function driverContractPayLabel(driverData) {
+  if (!driverData) return '—';
+  const t = String(driverData.pay_rate_type || 'hourly').toLowerCase();
+  const r = parseFloat(driverData.pay_rate);
+  if (t === 'per_trip' && r > 0) return `$${r.toFixed(0)}/trip`;
+  if (r > 0) return `$${r.toFixed(0)}/hr`;
+  return 'Hourly';
+}
+
+function safeFixed(value, digits = 1, fallback = '--') {
+  const num = Number.parseFloat(value);
+  return Number.isFinite(num) ? num.toFixed(digits) : fallback;
+}
+
+function mtaFareLabel(trip) {
+  if (!trip?.mtaFareRequired) return '';
+  const amount = Number.parseFloat(trip.mtaFareAmount);
+  return Number.isFinite(amount)
+    ? `MTA fare required: collect $${amount.toFixed(2)}`
+    : 'MTA fare required: confirm fare paid';
+}
+
 export default function TripBottomSheet({
   state, trip, open, onToggle,
   onRequestRides, onAccept, onReject,
   onStartRoute, onArrive, onConfirmPickup, onNoShow, onComplete,
   driverData, earnings, ridePreferences, onToggleShortTrips, onTogglePriority, onToggleSharedRide,
-  countdown, pickupArrived, waitRemaining, waitTargetMins, sosButton,
+  countdown, routeStarted = false, pickupArrived, waitRemaining, waitTargetMins, sosButton, acceptingTrip = false,
 }) {
+  const [confirmingPickup, setConfirmingPickup] = useState(false);
   const [confirmingComplete, setConfirmingComplete] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const fareNotice = mtaFareLabel(trip);
   const [showTripMenu, setShowTripMenu] = useState(false);
   const [showIssueForm, setShowIssueForm] = useState(false);
   const [issueNote, setIssueNote] = useState('');
@@ -51,6 +75,19 @@ export default function TripBottomSheet({
     setConfirmingComplete(false);
     setCollectedFare('');
     setMarkNextDay(false);
+  }
+
+  async function handlePickupConfirm() {
+    const trimmedFare = String(collectedFare || '').trim();
+    const fareValue = trimmedFare === '' ? null : Number(trimmedFare);
+    await onConfirmPickup({
+      collectedFare:
+        trimmedFare === '' || Number.isNaN(fareValue)
+          ? null
+          : fareValue,
+    });
+    setConfirmingPickup(false);
+    setCollectedFare('');
   }
 
   const destAddr = state === 'navigation' ? trip?.puAddress : trip?.doAddress;
@@ -102,7 +139,7 @@ export default function TripBottomSheet({
                 <div>
                   <p className="font-700 text-base" style={{ fontWeight: 700 }}>Waiting for trips</p>
                   <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                    {earnings.trips || 0} trips today &bull; ${typeof earnings.today === 'number' ? earnings.today.toFixed(2) : '0.00'}
+                    {earnings?.trips || 0} trips today
                   </p>
                 </div>
               </div>
@@ -225,7 +262,9 @@ export default function TripBottomSheet({
                     <p className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.35)' }}>Next Best Ride</p>
                     <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Keep the shift moving</p>
                   </div>
-                  {trip.deliveryPrice && <p className="text-base font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>${parseFloat(trip.deliveryPrice).toFixed(2)}</p>}
+                  <p className="text-xs font-600 text-right max-w-[140px]" style={{ color: 'rgba(255,255,255,0.38)', fontWeight: 600 }}>
+                    Trip fare is billed to the company; your pay follows your contract rate.
+                  </p>
                 </div>
                 <div className="flex gap-3">
                   <div className="flex flex-col items-center pt-1">
@@ -247,11 +286,15 @@ export default function TripBottomSheet({
                     </div>
                   </div>
                 </div>
-                {(trip.passengers > 1 || trip.deliveryPrice || trip.mileage) && (
+                {(trip.passengers > 1 || trip.mileage) && (
                   <div className="flex gap-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                     {trip.passengers > 1 && <span className="text-xs flex items-center gap-1" style={{ color: 'rgba(255,255,255,0.5)' }}><Users className="w-3 h-3" />{trip.passengers} passengers</span>}
-                    {trip.mileage && <span className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>{parseFloat(trip.mileage).toFixed(1)} mi</span>}
-                    {trip.deliveryPrice && <span className="text-sm font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>${parseFloat(trip.deliveryPrice).toFixed(2)}</span>}
+                    {trip.mileage && <span className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>{safeFixed(trip.mileage, 1)} mi</span>}
+                  </div>
+                )}
+                {fareNotice && (
+                  <div className="rounded-xl px-3 py-2 text-xs font-700" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)', color: '#f59e0b', fontWeight: 700 }}>
+                    {fareNotice}
                   </div>
                 )}
               </div>
@@ -283,21 +326,28 @@ export default function TripBottomSheet({
                 )}
                 <button
                   onClick={onAccept}
+                  disabled={acceptingTrip}
                   className="w-full py-5 rounded-2xl text-lg font-800 flex items-center justify-center gap-2 transition-all"
                   style={{
-                    background: countdown !== null && countdown <= 5
+                    background: acceptingTrip
+                      ? 'linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.08))'
+                      : countdown !== null && countdown <= 5
                       ? 'linear-gradient(135deg, #ff6b6b, #ff4757)'
                       : 'linear-gradient(135deg, #00e5a0, #00c88c)',
-                    color: '#07090d',
+                    color: acceptingTrip ? 'rgba(255,255,255,0.78)' : '#07090d',
                     fontWeight: 800,
                     fontSize: 18,
-                    boxShadow: countdown !== null && countdown <= 5
+                    boxShadow: acceptingTrip
+                      ? 'none'
+                      : countdown !== null && countdown <= 5
                       ? '0 4px 20px rgba(255,71,87,0.35)'
                       : '0 4px 20px rgba(0,229,160,0.3)',
+                    opacity: acceptingTrip ? 0.88 : 1,
+                    cursor: acceptingTrip ? 'not-allowed' : 'pointer',
                   }}
                 >
                   <CheckCircle className="w-6 h-6" />
-                  Accept Trip
+                  {acceptingTrip ? 'Checking Trip...' : 'Accept Trip'}
                 </button>
               </div>
               <button
@@ -331,8 +381,8 @@ export default function TripBottomSheet({
               <div className="grid grid-cols-3 gap-2">
                 {[
                   ['Trip', state === 'navigation' ? 'Pickup' : 'Dropoff'],
-                  ['Miles', trip.mileage ? parseFloat(trip.mileage).toFixed(1) : '--'],
-                  ['Pay', trip.deliveryPrice ? `$${parseFloat(trip.deliveryPrice).toFixed(0)}` : '--'],
+                  ['Miles', trip.mileage ? safeFixed(trip.mileage, 1) : '--'],
+                  ['Your rate', driverContractPayLabel(driverData)],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-xl px-3 py-2.5 text-center" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
                     <p className="text-[10px] uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.35)' }}>{label}</p>
@@ -340,6 +390,11 @@ export default function TripBottomSheet({
                   </div>
                 ))}
               </div>
+              {fareNotice && (
+                <div className="rounded-xl px-3 py-2 text-xs font-700" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)', color: '#f59e0b', fontWeight: 700 }}>
+                  {fareNotice}
+                </div>
+              )}
 
               {showTripMenu && (
                 <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}>
@@ -457,17 +512,89 @@ export default function TripBottomSheet({
                         {waitRemaining > 0 ? `${waitMinutes}:${waitSeconds} remaining` : 'Wait complete'}
                       </p>
                     </div>
-                    <button
-                      onClick={onConfirmPickup}
-                      className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
-                      style={{
-                        background: 'linear-gradient(135deg, #00e5a0, #00c88c)',
-                        color: '#07090d',
-                        fontWeight: 700,
-                      }}
-                    >
-                      <CheckCircle className="w-5 h-5" /> Rider Received
-                    </button>
+                    {!confirmingPickup ? (
+                      <button
+                        onClick={() => {
+                          if (trip?.mtaFareRequired) {
+                            setConfirmingPickup(true);
+                            return;
+                          }
+                          onConfirmPickup({ collectedFare: null });
+                        }}
+                        className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
+                        style={{
+                          background: 'linear-gradient(135deg, #00e5a0, #00c88c)',
+                          color: '#07090d',
+                          fontWeight: 700,
+                        }}
+                      >
+                        <CheckCircle className="w-5 h-5" /> Rider Received
+                      </button>
+                    ) : (
+                      <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(0,229,160,0.25)', background: 'rgba(0,229,160,0.08)' }}>
+                        <div className="px-4 pt-4 pb-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <CheckCircle className="w-4 h-4 flex-shrink-0" style={{ color: '#00e5a0' }} />
+                            <p className="text-sm font-700" style={{ color: '#e5e7eb', fontWeight: 700 }}>Confirm Pickup + Fare</p>
+                          </div>
+                          <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.55)', lineHeight: 1.5 }}>
+                            Rider is in the car. Enter the fare you collected now so the trip stays correct before dropoff.
+                          </p>
+                          {fareNotice && (
+                            <div className="rounded-xl px-3 py-2 mb-3" style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.22)' }}>
+                              <p className="text-xs font-700" style={{ color: '#c9a84c', fontWeight: 700 }}>{fareNotice}</p>
+                            </div>
+                          )}
+                          <label className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                            Collected Fare
+                          </label>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="0.01"
+                            value={collectedFare}
+                            onChange={(event) => setCollectedFare(event.target.value)}
+                            placeholder={trip?.mtaFareAmount ? Number(trip.mtaFareAmount).toFixed(2) : '0.00'}
+                            className="w-full rounded-xl px-3 py-2.5 text-sm"
+                            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#e5e7eb', outline: 'none' }}
+                          />
+                          <p className="mt-1 text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                            Put the actual amount collected from the rider before continuing.
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                          <button
+                            onClick={() => {
+                              setConfirmingPickup(false);
+                              setCollectedFare('');
+                            }}
+                            className="py-3.5 text-sm font-600"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              borderRight: '1px solid rgba(255,255,255,0.07)',
+                              color: 'rgba(255,255,255,0.5)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Back
+                          </button>
+                          <button
+                            onClick={handlePickupConfirm}
+                            className="py-3.5 text-sm font-700 flex items-center justify-center gap-1.5"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#00e5a0',
+                              fontWeight: 700,
+                            }}
+                          >
+                            <><CheckCircle className="w-4 h-4" /> Confirm Pickup</>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <button
                       onClick={onNoShow}
                       disabled={waitRemaining > 0}
@@ -484,7 +611,7 @@ export default function TripBottomSheet({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {!trip?.enRouteAt && (
+                    {!routeStarted && (
                       <button
                         onClick={onStartRoute}
                         className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
@@ -499,12 +626,12 @@ export default function TripBottomSheet({
                     )}
                     <button
                       onClick={onArrive}
-                      disabled={!trip?.enRouteAt}
+                      disabled={!(routeStarted || trip?.enRouteAt)}
                       className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
                       style={{
-                        background: trip?.enRouteAt ? 'linear-gradient(135deg, #00e5a0, #00c88c)' : 'rgba(255,255,255,0.05)',
-                        color: trip?.enRouteAt ? '#07090d' : 'rgba(255,255,255,0.35)',
-                        border: trip?.enRouteAt ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                        background: (routeStarted || trip?.enRouteAt) ? 'linear-gradient(135deg, #00e5a0, #00c88c)' : 'rgba(255,255,255,0.05)',
+                        color: (routeStarted || trip?.enRouteAt) ? '#07090d' : 'rgba(255,255,255,0.35)',
+                        border: (routeStarted || trip?.enRouteAt) ? 'none' : '1px solid rgba(255,255,255,0.08)',
                         fontWeight: 700,
                       }}
                     >

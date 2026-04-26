@@ -311,6 +311,7 @@ export default function DriverScheduleView({
       pu_address: trip.puAddress,
       do_address: trip.doAddress,
       pu_time: trip.puTime,
+      scheduled_pickup_time: trip.puTime || null,
       do_time: trip.doTime || '',
       delivery_price: parseFloat(trip.deliveryPrice) || 0,
       mileage: parseFloat(trip.mileage) || 0,
