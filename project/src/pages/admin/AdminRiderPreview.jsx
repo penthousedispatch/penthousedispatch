@@ -277,6 +277,7 @@ export default function AdminRiderPreview() {
             </div>
           ) : inAppTrackingPath ? (
             <iframe
+              key={preview?.riderKey || 'rider-preview-iframe'}
               title="Rider App Preview"
               src={inAppTrackingPath}
               className="w-full h-[780px]"

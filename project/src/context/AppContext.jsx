@@ -68,6 +68,11 @@ export function AppProvider({ children }) {
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
   const initialSessionResolvedRef = useRef(false);
+  // Tracks the most recent time the client wrote to the profiles row for this user.
+  // Used to ignore the realtime echo of our own write so the client + DB triggers
+  // can't ping-pong the role and stall the dashboard in a loadUserData loop.
+  const selfProfileWriteRef = useRef(0);
+  const SELF_PROFILE_WRITE_ECHO_MS = 2500;
   const normalizedRole = normalizeAppRole(profile?.role);
   const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
   const isCompanyRole = normalizedRole === 'company';
@@ -266,6 +271,7 @@ export function AppProvider({ children }) {
 
     setProfile(fallbackProfile);
 
+    selfProfileWriteRef.current = Date.now();
     const { data, error } = await supabase
       .from('profiles')
       .upsert(fallbackProfile, { onConflict: 'id' })
@@ -471,6 +477,7 @@ export function AppProvider({ children }) {
 
         setProfile(prof);
 
+        selfProfileWriteRef.current = Date.now();
         supabase
           .from('profiles')
           .upsert(prof, { onConflict: 'id' })
@@ -504,6 +511,7 @@ export function AppProvider({ children }) {
 
         setProfile(prof);
 
+        selfProfileWriteRef.current = Date.now();
         supabase
           .from('profiles')
           .upsert(prof, { onConflict: 'id' })
@@ -1270,9 +1278,15 @@ export function AppProvider({ children }) {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, payload => {
         const changedProfileId = payload?.new?.id || payload?.old?.id;
-        if (changedProfileId === user.id) {
-          scheduleLiveRefresh('profile', () => loadUserData(user), 500);
+        if (changedProfileId !== user.id) return;
+
+        // Suppress our own write echoes. Without this, a DB trigger that rewrites the
+        // role we just upserted would tail-chase loadUserData() forever.
+        if (Date.now() - selfProfileWriteRef.current < SELF_PROFILE_WRITE_ECHO_MS) {
+          return;
         }
+
+        scheduleLiveRefresh('profile', () => loadUserData(user), 500);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sentry_config' }, async () => {
         const cfg = await fetchLatestSentryConfig().catch((error) => {
