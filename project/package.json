@@ -11,6 +11,7 @@
     "build:rider": "VITE_APP_VARIANT=rider VITE_MOBILE_APP_SCHEME=penthouserider VITE_BUILD_OUTDIR=dist-rider vite build",
     "preview": "vite preview",
     "verify:edge": "node scripts/verify-supabase-edge-smoke.mjs",
+    "audit:sheet": "node scripts/audit-denys-sheet.mjs",
     "audit:trip": "node scripts/audit-trip-db-compare.mjs",
     "audit:phase1": "node scripts/audit-phase1-stability.mjs",
     "verify:trip-commit": "node scripts/verify-driver-trip-commit-invariants.mjs",
