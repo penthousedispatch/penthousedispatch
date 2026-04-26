@@ -109,11 +109,22 @@ export default function AdminRiderPreview() {
       trackingUrl: getPublicAppUrl(`/rider?trip=${encodeURIComponent(riderKey)}`),
     };
 
-    await fbSet(`rider_tracking/${riderKey}`, payload);
-    await fbSet(`drivers/${driver.id}/coords`, {
+    const trackingWrite = await fbSet(`rider_tracking/${riderKey}`, payload);
+    const coordsWrite = await fbSet(`drivers/${driver.id}/coords`, {
       lat: driver.current_lat || DEFAULT_COORDS.lat,
       lng: driver.current_lng || DEFAULT_COORDS.lng,
     });
+
+    if (!trackingWrite.ok || !coordsWrite.ok) {
+      setError(
+        trackingWrite.error ||
+        coordsWrite.error ||
+        'Could not create rider preview in Firebase. Check Firebase rules or network access.'
+      );
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
 
     setPreview({
       companyName: company.company_name,
@@ -264,10 +275,10 @@ export default function AdminRiderPreview() {
                 </div>
               </div>
             </div>
-          ) : trackingUrl ? (
+          ) : inAppTrackingPath ? (
             <iframe
               title="Rider App Preview"
-              src={trackingUrl}
+              src={inAppTrackingPath}
               className="w-full h-[780px]"
               style={{ background: '#07090d', border: 'none' }}
             />

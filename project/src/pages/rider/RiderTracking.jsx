@@ -19,18 +19,55 @@ const DARK_STYLE = [
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
 ];
 
+// Rider-facing only. Internal dispatch statuses (no_show / rejected / cancelled / on_trip /
+// raw "accepted") are intentionally translated into friendly wording — riders should not
+// see operational terms.
+const SEARCHING_LABEL = 'Looking for a new driver';
+const SEARCHING_COLOR = '#c9a84c';
+
 const STATUS_LABELS = {
   assigned: 'Driver Assigned',
-  en_route: 'Driver is on the way',
-  picked_up: "You've been picked up",
+  accepted: 'Driver Assigned',
+  en_route: 'Your driver is on the way',
+  in_progress: 'Your driver is on the way',
+  arrived: 'Your driver has arrived',
+  picked_up: 'In progress',
+  on_trip: 'In progress',
   completed: 'Trip Completed',
+  cancelled: SEARCHING_LABEL,
+  canceled: SEARCHING_LABEL,
+  no_show: SEARCHING_LABEL,
+  rejected: SEARCHING_LABEL,
 };
 
 const STATUS_COLORS = {
   assigned: '#c9a84c',
+  accepted: '#c9a84c',
   en_route: '#0ea5e9',
+  in_progress: '#0ea5e9',
+  arrived: '#00e5a0',
   picked_up: '#00e5a0',
+  on_trip: '#00e5a0',
   completed: '#4b5563',
+  cancelled: SEARCHING_COLOR,
+  canceled: SEARCHING_COLOR,
+  no_show: SEARCHING_COLOR,
+  rejected: SEARCHING_COLOR,
+};
+
+const STATUS_HINTS = {
+  assigned: "We're connecting you with your driver. You'll see them on the map any moment now.",
+  accepted: "We're connecting you with your driver. You'll see them on the map any moment now.",
+  en_route: 'Look out for your driver — they are heading to your pickup.',
+  in_progress: 'Look out for your driver — they are heading to your pickup.',
+  arrived: 'Your driver is at the pickup spot. Head out when you are ready.',
+  picked_up: 'Enjoy the ride. We will let you know when you arrive.',
+  on_trip: 'Enjoy the ride. We will let you know when you arrive.',
+  completed: 'Thanks for riding with us.',
+  cancelled: "Hang tight. We're looking for a new driver for you.",
+  canceled: "Hang tight. We're looking for a new driver for you.",
+  no_show: "Hang tight. We're looking for a new driver for you.",
+  rejected: "Hang tight. We're looking for a new driver for you.",
 };
 
 let mapsReady = false;
@@ -70,9 +107,12 @@ export default function RiderTracking() {
   const animationFrameRef = useRef(null);
   const previousDriverCoordsRef = useRef(null);
   const riderGuideNarration = useMemo(() => {
-    const statusText = STATUS_LABELS[tracking?.status] || 'Your ride is being tracked';
+    const statusKey = tracking?.status;
+    const statusText = STATUS_LABELS[statusKey] || 'Your ride is being tracked';
+    const hintText = STATUS_HINTS[statusKey] || '';
     return [
       `${statusText}.`,
+      hintText,
       tracking?.driverName ? `${tracking.driverName} is your driver.` : '',
       tracking?.puAddress ? `Pickup is ${tracking.puAddress}.` : '',
       tracking?.doAddress ? `Dropoff is ${tracking.doAddress}.` : '',
@@ -409,7 +449,7 @@ export default function RiderTracking() {
             style={{ background: `${statusColor}12`, border: `1px solid ${statusColor}30` }}
           >
             <div className="w-2 h-2 rounded-full animate-blink" style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
-            <p className="font-700 text-sm" style={{ color: statusColor, fontWeight: 700 }}>{STATUS_LABELS[status] || status}</p>
+            <p className="font-700 text-sm" style={{ color: statusColor, fontWeight: 700 }}>{STATUS_LABELS[status] || 'Your ride is being tracked'}</p>
           </div>
           <button
             type="button"
@@ -421,6 +461,17 @@ export default function RiderTracking() {
             {compactMap ? 'Expand Map' : 'Compact Map'}
           </button>
         </div>
+
+        {STATUS_HINTS[status] && (
+          <div
+            className="rounded-xl px-3 py-2"
+            style={{ background: `${statusColor}10`, border: `1px solid ${statusColor}26` }}
+          >
+            <p className="text-xs" style={{ color: '#e5e7eb', lineHeight: 1.6 }}>
+              {STATUS_HINTS[status]}
+            </p>
+          </div>
+        )}
 
         {(usingUploadedAudio || riderVoice.supported) && (
           <div className="rounded-xl px-4 py-3" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.16)' }}>
