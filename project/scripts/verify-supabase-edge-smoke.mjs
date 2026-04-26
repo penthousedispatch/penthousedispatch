@@ -49,26 +49,46 @@ const gateway = {
 async function main() {
   console.log('Supabase host:', new URL(base).host);
 
-  const r0 = await fetch(`${edge}/sentry-provider/rest/gc/retrieve_trips.json?trip_ids=smoke`, {
+  /** Optional: same value as Admin → Sentry → webhook secret (not committed to git). */
+  const webhookSecret =
+    env.SENTRY_WEBHOOK_SECRET ||
+    env.VITE_SENTRY_WEBHOOK_SECRET ||
+    env.EDGE_SENTRY_WEBHOOK_SECRET ||
+    '';
+  const retrieveQs = new URLSearchParams({ trip_ids: 'smoke' });
+  if (webhookSecret) retrieveQs.set('secret', webhookSecret);
+  const receiverQs = new URLSearchParams();
+  if (webhookSecret) receiverQs.set('secret', webhookSecret);
+  const receiverSuffix = receiverQs.toString() ? `?${receiverQs}` : '';
+
+  const r0 = await fetch(`${edge}/sentry-provider/rest/gc/retrieve_trips.json?${retrieveQs}`, {
     method: 'GET',
     headers: gateway,
   });
   const t0 = await r0.text();
   console.log(
-    'sentry-provider retrieve_trips (no webhook secret):',
+    webhookSecret ? 'sentry-provider retrieve_trips (with secret):' : 'sentry-provider retrieve_trips (no webhook secret):',
     'HTTP',
     r0.status,
     r0.headers.get('x-sentry-provider-version') || '',
     t0.slice(0, 80).replace(/\s+/g, ' '),
   );
+  if (!webhookSecret && r0.status === 401) {
+    console.log('Tip: set SENTRY_WEBHOOK_SECRET in .env.local to exercise authenticated edge smoke.');
+  }
 
-  const r1 = await fetch(`${edge}/sentry-receivers/trips_receiver`, {
+  const r1 = await fetch(`${edge}/sentry-receivers/trips_receiver${receiverSuffix}`, {
     method: 'POST',
     headers: { ...gateway, 'Content-Type': 'application/json' },
     body: JSON.stringify({ trips: [{ trip_id: `smoke-${Date.now()}`, pickup_address: '1 Test' }] }),
   });
   const t1 = await r1.text();
-  console.log('sentry-receivers trips_receiver (no webhook secret):', 'HTTP', r1.status, t1.slice(0, 120).replace(/\s+/g, ' '));
+  console.log(
+    webhookSecret ? 'sentry-receivers trips_receiver (with secret):' : 'sentry-receivers trips_receiver (no webhook secret):',
+    'HTTP',
+    r1.status,
+    t1.slice(0, 120).replace(/\s+/g, ' '),
+  );
 }
 
 main().catch((e) => {

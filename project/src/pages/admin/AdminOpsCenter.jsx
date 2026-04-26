@@ -89,7 +89,7 @@ export default function AdminOpsCenter() {
       supabase.from('profiles').select('id', { count: 'exact', head: true }),
       supabase
         .from('webhook_logs')
-        .select('id, received_at, processed, endpoint, error_message, raw_payload', { count: 'exact' })
+        .select('id, received_at, processed, webhook_type, error_message, raw_payload', { count: 'exact' })
         .eq('processed', false)
         .order('received_at', { ascending: false })
         .limit(20),
@@ -366,7 +366,7 @@ export default function AdminOpsCenter() {
               <div className="space-y-2">
                 {pendingWebhookRows.slice(0, 4).map(row => (
                   <div key={row.id} className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <p className="text-xs font-700" style={{ color: '#f59e0b', fontWeight: 700 }}>{row.endpoint || 'Webhook endpoint'}</p>
+                    <p className="text-xs font-700" style={{ color: '#f59e0b', fontWeight: 700 }}>{row.webhook_type || row.endpoint || 'Webhook endpoint'}</p>
                     <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.55)' }}>{row.error_message || 'Pending delivery or no explicit error saved yet'}</p>
                   </div>
                 ))}

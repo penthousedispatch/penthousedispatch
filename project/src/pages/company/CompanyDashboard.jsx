@@ -1025,31 +1025,38 @@ function CompanyTrips({ company }) {
   useEffect(() => {
     if (!company?.id) return;
 
-    supabase.from('drivers').select('id').eq('company_id', company.id).then(async ({ data: driverRows, error: driverError }) => {
+    (async () => {
+      setLoading(true);
+      const { data: driverRows, error: driverError } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('company_id', company.id);
+
       if (driverError) {
         handleSupabaseError(driverError, 'CompanyTrips:loadDrivers', { silent: true });
-        setLoading(false);
-        return;
-      }
-
-      const driverIds = (driverRows || []).map(row => row.id);
-      if (!driverIds.length) {
         setAssignments([]);
         setLoading(false);
         return;
       }
 
-      const { data, error } = await supabase
+      const driverIds = (driverRows || []).map(row => row.id).filter(Boolean);
+      let tripQuery = supabase
         .from('trip_assignments')
-        .select('*, drivers(full_name)')
-        .in('driver_id', driverIds)
+        .select('*, drivers(full_name, is_active)')
         .order('assigned_at', { ascending: false })
         .limit(100);
 
+      if (driverIds.length) {
+        tripQuery = tripQuery.or(`company_id.eq.${company.id},driver_id.in.(${driverIds.join(',')})`);
+      } else {
+        tripQuery = tripQuery.eq('company_id', company.id);
+      }
+
+      const { data, error } = await tripQuery;
       if (error) handleSupabaseError(error, 'CompanyTrips:load', { silent: true });
       setAssignments(data || []);
       setLoading(false);
-    });
+    })();
   }, [company?.id]);
 
   const statusColor = {
@@ -1113,7 +1120,21 @@ function CompanyTrips({ company }) {
                   return (
                     <div key={`active-${a.id}`} className="flex items-center gap-4 p-3 rounded-lg" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{a.drivers?.full_name || a.driver_name || 'Driver'}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-600 truncate" style={{ color: '#e5e7eb', fontWeight: 600 }}>{a.drivers?.full_name || a.driver_name || 'Driver'}</p>
+                          {a.drivers && (
+                            <span
+                              className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                              style={{
+                                background: a.drivers.is_active === false ? 'rgba(255,71,87,0.12)' : 'rgba(0,229,160,0.12)',
+                                color: a.drivers.is_active === false ? '#ff4757' : '#00e5a0',
+                                fontWeight: 600,
+                              }}
+                            >
+                              {a.drivers.is_active === false ? 'Inactive' : 'Active'}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.55)' }}>{a.pu_address || 'Unknown pickup'} → {a.do_address || 'Unknown dropoff'}</p>
                         <p className="text-xs mt-1 flex items-center gap-1.5" style={{ color: '#0ea5e9' }}>
                           <Clock className="w-3 h-3" />
@@ -1139,6 +1160,23 @@ function CompanyTrips({ company }) {
               return (
                 <div key={a.id} className="flex items-center gap-4 p-4 rounded-xl" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
                   <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      <p className="text-xs font-600 truncate" style={{ color: 'rgba(255,255,255,0.65)', fontWeight: 600 }}>
+                        {a.drivers?.full_name || a.driver_name || 'Driver'}
+                      </p>
+                      {a.drivers && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                          style={{
+                            background: a.drivers.is_active === false ? 'rgba(255,71,87,0.12)' : 'rgba(0,229,160,0.12)',
+                            color: a.drivers.is_active === false ? '#ff4757' : '#00e5a0',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {a.drivers.is_active === false ? 'Inactive' : 'Active'}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm font-500 truncate" style={{ color: '#e5e7eb' }}>{a.pu_address || 'Unknown pickup'}</p>
                     <p className="text-xs mt-0.5 truncate" style={{ color: 'rgba(255,255,255,0.4)' }}>{a.do_address || 'Unknown dropoff'}</p>
                     <p className="text-xs mt-1 flex items-center gap-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>

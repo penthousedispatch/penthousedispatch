@@ -239,7 +239,9 @@ export default function AdminAuditLogs() {
     const secret = cfg?.webhook_secret || '';
     const authMode = cfg?.webhook_auth_mode || 'bearer';
     const edgeBase = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1`;
-    const url = `${edgeBase}/sentry-receivers/${log.endpoint}${secret && authMode === 'query' ? `?secret=${encodeURIComponent(secret)}` : ''}`;
+    const webhookType = log.endpoint || log.webhook_type || '';
+    if (!webhookType) return { ok: false, status: 0 };
+    const url = `${edgeBase}/sentry-receivers/${webhookType}${secret && authMode === 'query' ? `?secret=${encodeURIComponent(secret)}` : ''}`;
 
     const res = await fetch(url, {
       method: 'POST',
@@ -255,7 +257,7 @@ export default function AdminAuditLogs() {
 
   async function runInternalFixes(actions, rows) {
     const executed = [];
-    const filteredWebhookRows = rows.filter(row => row.processed === false && row.endpoint);
+    const filteredWebhookRows = rows.filter(row => row.processed === false && (row.endpoint || row.webhook_type));
 
     for (const action of actions) {
       try {

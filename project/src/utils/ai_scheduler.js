@@ -133,7 +133,10 @@ const AI_SCHED = {
           score,
         };
       })
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => {
+        if (a.startMin !== b.startMin) return a.startMin - b.startMin;
+        return b.score - a.score;
+      });
 
     const schedule = [];
     const usedIds = new Set(alreadyTakenIds);
@@ -303,7 +306,10 @@ const AI_SCHED = {
           score: (price * 2) + (Math.max(0, 10 - dist) * 3) - (drive * 1.15),
         };
       })
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => {
+        if (a.startMin !== b.startMin) return a.startMin - b.startMin;
+        return b.score - a.score;
+      })
       .slice(0, limit);
   },
 

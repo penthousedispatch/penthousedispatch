@@ -23,13 +23,27 @@ import DispatchWalkthrough from '../../components/dispatch/DispatchWalkthrough';
 import ChatPanel from '../../components/chat/ChatPanel';
 import { toastFleetImportSummary } from '../../utils/fleetImportSummaryToast';
 import { logFailure } from '../../utils/errorHandler';
+import { isSyntheticMarketplaceTrip } from '../../lib/sentrySyntheticTrips';
 
 const TEST_TRIP_MARKER = '[TEST_TRIP]';
 const TEST_NOTE_PREFIX = '[TEST_NOTE]';
 const LOCAL_ACTIVE_ASSIGNMENT_STATUSES = new Set(['pending', 'accepted', 'arrived', 'picked_up', 'completed']);
-/** Trip rows in these states still "hold" the trip for dispatch (no second assign). */
-const TRIP_LOCK_STATUSES = new Set(['pending', 'accepted', 'arrived', 'picked_up']);
-const IN_PROGRESS_TRIP_STATUSES = new Set(['accepted', 'arrived', 'picked_up']);
+/**
+ * Any status here means dispatch must treat the offer as locked:
+ * pending/assigned = offered or reserved for a driver,
+ * accepted/arrived/picked_up = active lifecycle already underway,
+ * in_progress/on_trip = older aliases still used by restore/sync paths.
+ */
+const TRIP_LOCK_STATUSES = new Set([
+  'pending',
+  'accepted',
+  'arrived',
+  'picked_up',
+  'in_progress',
+  'on_trip',
+  'assigned',
+]);
+const IN_PROGRESS_TRIP_STATUSES = new Set(['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip']);
 const QUEUE_WINDOW_MINS = 20;
 
 function normalizeTripId(value) {
@@ -417,16 +431,21 @@ export default function LiveDispatch() {
     } catch {}
   }, [scopedCompanyId, allowMultiTripTake]);
 
-  const availableTrips = trips.filter(t => {
-    if (t.status !== 'available') return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (t.pu_address || '').toLowerCase().includes(q) ||
-             (t.do_address || '').toLowerCase().includes(q) ||
-             (t.sentry_trip_id || '').toLowerCase().includes(q);
-    }
-    return true;
-  });
+  const availableTrips = useMemo(() => {
+    return trips.filter(t => {
+      if (t.status !== 'available') return false;
+      const tid = normalizeTripId(t.sentry_trip_id);
+      if (tid && lockedTripIdSet.has(tid)) return false;
+      if (t.taken_by) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        return (t.pu_address || '').toLowerCase().includes(q) ||
+               (t.do_address || '').toLowerCase().includes(q) ||
+               (t.sentry_trip_id || '').toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [trips, lockedTripIdSet, search]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -508,6 +527,12 @@ export default function LiveDispatch() {
       return;
     }
 
+    const claimedBy = trip?.taken_by != null && trip?.taken_by !== '' ? String(trip.taken_by) : '';
+    if (claimedBy && claimedBy !== String(driver?.id || '')) {
+      showToast('This trip is already claimed on the marketplace by another driver or company.', 'error');
+      return;
+    }
+
     const tripAlreadyLocked = (assignments || []).find(
       a => normalizeTripId(a.trip_id) === tripIdKey && isTripLockStatus(a?.status)
     );
@@ -562,6 +587,45 @@ export default function LiveDispatch() {
       return;
     }
 
+    const { data: liveTripRow, error: liveTripError } = await supabase
+      .from('marketplace_trips')
+      .select('status, taken_by')
+      .eq('sentry_trip_id', tripIdKey)
+      .maybeSingle();
+    if (liveTripError) {
+      logFailure('LiveDispatch:assignTrip:marketplace_trips', liveTripError);
+      showToast('Could not verify live trip availability. Refresh and try again.', 'error');
+      return;
+    }
+
+    const liveTakenBy =
+      liveTripRow?.taken_by != null && liveTripRow?.taken_by !== ''
+        ? String(liveTripRow.taken_by)
+        : '';
+    if (liveTakenBy && liveTakenBy !== String(driver?.id || '')) {
+      showToast('This trip was just claimed by another driver or company.', 'error');
+      return;
+    }
+
+    const { data: liveLockedAssignments, error: liveLockedAssignmentsError } = await supabase
+      .from('trip_assignments')
+      .select('driver_id, status')
+      .eq('trip_id', tripIdKey)
+      .in('status', Array.from(TRIP_LOCK_STATUSES));
+    if (liveLockedAssignmentsError) {
+      logFailure('LiveDispatch:assignTrip:trip_assignments', liveLockedAssignmentsError);
+      showToast('Could not verify assignment lock state. Refresh and try again.', 'error');
+      return;
+    }
+
+    const liveConflict = (liveLockedAssignments || []).find(
+      row => String(row?.driver_id || '') && String(row.driver_id) !== String(driver?.id || '')
+    );
+    if (liveConflict) {
+      showToast('This trip is already locked for another driver.', 'error');
+      return;
+    }
+
     setAssigning(tripIdKey);
     const assignmentNotes = buildAssignmentNotes('', {
       isTestTrip: Boolean(options.isTestTrip),
@@ -572,21 +636,26 @@ export default function LiveDispatch() {
     let takeResult = { ok: true };
     let testTakeBypassed = false;
 
+    const syntheticTestTrip = isSyntheticMarketplaceTrip(trip, options);
     const localOnlyTestTrip = Boolean(options.localOnlyTestTrip || trip.localOnlyTestTrip);
+    const skipUpstreamMarketplaceSync = Boolean(localOnlyTestTrip || syntheticTestTrip);
 
-    if (localOnlyTestTrip) {
+    if (skipUpstreamMarketplaceSync) {
       testTakeBypassed = true;
       await supabase.from('sentry_sync_log').insert({
-        sync_type: 'marketplace_take_test_local_only',
+        sync_type: localOnlyTestTrip ? 'marketplace_take_test_local_only' : 'marketplace_take_test_synthetic_bypass',
         direction: 'internal',
         record_type: 'trip',
         external_id: tripIdKey,
         status: 'success',
-        error_message: 'No usable Sentry marketplace row was available; created local-only test trip for driver acceptance testing.',
+        error_message: localOnlyTestTrip
+          ? 'No usable Sentry marketplace row was available; created local-only test trip for driver acceptance testing.'
+          : 'Synthetic sandbox marketplace row detected; skipped upstream Sentry take and assigned locally for test coverage.',
         payload: {
           driver_id: driver.id,
           driver_name: driver.full_name,
           company_id: scopedCompanyId || driver.company_id || null,
+          reason: localOnlyTestTrip ? 'local_only_test_trip' : 'synthetic_test_marketplace_row',
         },
       });
     } else if (sentryApi.enabled && sentryApi.features.marketplaceTrips) {
@@ -692,6 +761,7 @@ export default function LiveDispatch() {
       pu_address: trip.pu_address,
       do_address: trip.do_address,
       pu_time: trip.pu_time,
+      scheduled_pickup_time: trip.pu_time || null,
       delivery_price: parseFloat(trip.delivery_price) || 0,
       mileage: parseFloat(trip.mileage) || 0,
       notes: assignmentNotes,
@@ -759,7 +829,7 @@ export default function LiveDispatch() {
       mileage: trip.mileage,
       assignedAt: Date.now(),
       testingNote: options.testingNote || '',
-      isTestTrip: Boolean(options.isTestTrip),
+      isTestTrip: Boolean(options.isTestTrip || syntheticTestTrip),
       ...mtaFareInfo,
     };
     const notifyResult = await setDriverNotificationWithRetry(driver.id, notificationPayload);

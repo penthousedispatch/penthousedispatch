@@ -222,6 +222,19 @@ export default function TestModeSandbox() {
         delivery_price: String(tt.price),
         status: 'available',
         company_id: companyId,
+        assignment_type_code: 'TEST',
+        external_trip_status: 'available',
+        raw_payload: {
+          source: 'penthouse_test_mode_sandbox',
+          assignment_type_code: 'TEST',
+          trip_id: `${sentryPrefix}-${scenarioKey}-${String(i + 1).padStart(3, '0')}`,
+          trip_status: 'available',
+          scheduled_pickup_time: tripTime.toISOString(),
+          pickup_address: tt.pu,
+          dropoff_address: tt.do,
+          mileage: tt.miles,
+          total_amount: tt.price,
+        },
         loaded_at: new Date().toISOString(),
       };
     });
