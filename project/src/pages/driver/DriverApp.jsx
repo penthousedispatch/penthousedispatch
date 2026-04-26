@@ -58,8 +58,9 @@ const DRIVER_ACTIVE_TRIP_CACHE_PREFIX = 'pd_driver_active_trip_v1:';
 const DRIVER_LIFECYCLE_LOCK_PREFIX = 'pd_driver_lifecycle_lock_v1:';
 
 const DRIVER_TEST_TRIP_MARKER = '[TEST_TRIP]';
-const CLAIMED_ASSIGNMENT_STATUSES = ['accepted', 'arrived', 'picked_up', 'completed', 'no_show', 'in_progress', 'on_trip'];
 const ACTIVE_DRIVER_ASSIGNMENT_STATUSES = ['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'];
+const CLAIMED_ASSIGNMENT_STATUSES = [...ACTIVE_DRIVER_ASSIGNMENT_STATUSES, 'completed', 'no_show'];
+const ACCEPTABLE_ASSIGNMENT_STATUSES = ['pending', 'assigned', 'accepted'];
 const OFFER_ASSIGNMENT_STATUSES = ['pending', 'assigned'];
 const RESUMABLE_ASSIGNMENT_STATUSES = [...ACTIVE_DRIVER_ASSIGNMENT_STATUSES, ...OFFER_ASSIGNMENT_STATUSES];
 
@@ -73,6 +74,21 @@ function driverLifecycleLockKey(driverId) {
 
 function normalizeUiTripId(value) {
   return String(value || '').trim();
+}
+
+function applyTripAssignmentTarget(query, trip = {}, fallbackDriverId = null) {
+  const assignmentRowId = trip?.assignmentRowId || null;
+  const assignmentDriverId = trip?.assignmentDriverId || fallbackDriverId || null;
+
+  if (assignmentRowId) {
+    return query.eq('id', assignmentRowId);
+  }
+
+  let scoped = query.eq('trip_id', String(trip?.tripId || trip?.trip_id || '').trim());
+  if (assignmentDriverId) {
+    scoped = scoped.eq('driver_id', assignmentDriverId);
+  }
+  return scoped;
 }
 
 function persistDriverActiveTripSnapshot(driverId, trip) {
@@ -94,6 +110,8 @@ function persistDriverActiveTripSnapshot(driverId, trip) {
         mileage: trip.mileage,
         deliveryPrice: trip.deliveryPrice ?? null,
         riderKey: trip.riderKey || null,
+        assignmentRowId: trip.assignmentRowId || null,
+        assignmentDriverId: trip.assignmentDriverId || null,
         isTestTrip: Boolean(trip.isTestTrip),
         savedAt: Date.now(),
       })
@@ -234,6 +252,24 @@ function resolveDriverLifecycleStatus(assignmentRow = {}, marketplaceRow = {}) {
     : assignmentStatus;
 }
 
+function marketplaceClaimOwner(row = {}, driverId) {
+  const takenBy = row?.taken_by;
+  if (takenBy == null || takenBy === '') return 'unclaimed';
+  return String(takenBy) === String(driverId || '') ? 'mine' : 'other';
+}
+
+function resolveDriverLifecycleStatusForDriver(assignmentRow = {}, marketplaceRow = {}, driverId) {
+  const merged = resolveDriverLifecycleStatus(assignmentRow, marketplaceRow);
+  const claimOwner = marketplaceClaimOwner(marketplaceRow, driverId);
+
+  // If marketplace already says this driver owns the trip, do not reopen it as a fresh offer.
+  if (claimOwner === 'mine' && ['pending', 'assigned', 'available', ''].includes(String(merged || '').toLowerCase())) {
+    return 'accepted';
+  }
+
+  return merged;
+}
+
 /** Supabase json/jsonb may return object or serialized string — normalize for safe reads. */
 function asJsonObject(value) {
   if (value && typeof value === 'object') return value;
@@ -293,6 +329,14 @@ function preserveTripProgressForSameTrip(existingTrip, nextTrip) {
   };
 }
 
+function deriveLifecycleStatusFromTripSnapshot(trip = {}, fallback = 'assigned') {
+  if (trip?.pickedUpAt) return 'picked_up';
+  if (trip?.arrivedAt) return 'arrived';
+  if (trip?.enRouteAt) return 'in_progress';
+  if (trip?.acceptedAt) return 'accepted';
+  return fallback;
+}
+
 function lifecycleStatusFromLock(lock = {}, tripId) {
   if (!tripId || normalizeUiTripId(lock?.tripId) !== normalizeUiTripId(tripId)) return '';
   if (lock?.pickedUp) return 'picked_up';
@@ -333,12 +377,42 @@ function asFiniteNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseOfferSortTimestamp(value) {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
+function deriveOfferCandidateSortTimestamp(row = {}) {
+  return parseOfferSortTimestamp(
+    row?.scheduled_pickup_time ||
+    row?.scheduledPickupTime ||
+    row?.pu_time ||
+    row?.puTime ||
+    row?.assigned_at ||
+    row?.assignedAt ||
+    null
+  );
+}
+
+function sortDriverOfferCandidates(rows = []) {
+  return [...rows].sort((a, b) => {
+    const timeDiff = deriveOfferCandidateSortTimestamp(a) - deriveOfferCandidateSortTimestamp(b);
+    if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
+    return parseOfferSortTimestamp(a?.assigned_at || a?.assignedAt) - parseOfferSortTimestamp(b?.assigned_at || b?.assignedAt);
+  });
+}
+
 function buildLifecycleRetryPayload(payload = {}) {
   const safe = payload && typeof payload === 'object' ? payload : {};
+  const driver = safe.driver && typeof safe.driver === 'object' ? safe.driver : null;
+  const vehicle = safe.vehicle && typeof safe.vehicle === 'object' ? safe.vehicle : null;
   return Object.fromEntries(
     Object.entries({
       status_id: safe.status_id,
+      is_done_by_not_integrated_provider: safe.is_done_by_not_integrated_provider,
       is_confirmed: safe.is_confirmed,
+      last_modified_at: safe.last_modified_at,
       cancel_reason_id: safe.cancel_reason_id,
       cancel_note: safe.cancel_note,
       cancelled_at: safe.cancelled_at,
@@ -352,6 +426,8 @@ function buildLifecycleRetryPayload(payload = {}) {
       is_next_day: safe.is_next_day,
       next_day: safe.next_day,
       next_day_requested_at: safe.next_day_requested_at,
+      driver: driver && Object.keys(driver).length ? driver : undefined,
+      vehicle: vehicle && Object.keys(vehicle).length ? vehicle : undefined,
     }).filter(([, value]) => value !== null && value !== undefined && value !== '')
   );
 }
@@ -630,6 +706,28 @@ export default function DriverApp() {
   const assignmentRevisionByTripRef = useRef(new Map());
   const lastFetchSourceByTripRef = useRef(new Map());
   const [assignmentRealtimeEpoch, setAssignmentRealtimeEpoch] = useState(0);
+
+  const closeDriverPanels = useCallback(() => {
+    setShowMenu(false);
+    setShowSchedule(false);
+    setShowPaymentSetup(false);
+    setShowGuide(false);
+    setShowIncentives(false);
+    setShowCommunity(false);
+    setShowZonePreferences(false);
+    setOnBreak(false);
+  }, []);
+
+  const openDriverPanel = useCallback((panel) => {
+    setShowMenu(false);
+    setShowSchedule(panel === 'schedule');
+    setShowPaymentSetup(panel === 'payment');
+    setShowGuide(panel === 'guide');
+    setShowIncentives(panel === 'incentives');
+    setShowCommunity(panel === 'community');
+    setShowZonePreferences(panel === 'zones');
+    setOnBreak(panel === 'break');
+  }, []);
 
   useEffect(() => { sheetStateRef.current = sheetState; }, [sheetState]);
   useEffect(() => { currentTripRef.current = currentTrip; }, [currentTrip]);
@@ -919,11 +1017,7 @@ export default function DriverApp() {
       clearDriverLifecycleLock(driverData.id);
     }
 
-    setShowMenu(false);
-    setShowSchedule(false);
-    setShowPaymentSetup(false);
-    setShowGuide(false);
-    setShowZonePreferences(false);
+    closeDriverPanels();
     setLifecycleUiLock({ tripId: null, accepted: false, enRoute: false, arrived: false, pickedUp: false });
     if (currentTripRef.current?.tripId) {
       telemetryLifecycleStage('DriverApp:end_shift_logout', currentTripRef.current.tripId, 'cancelled', {
@@ -1328,12 +1422,38 @@ export default function DriverApp() {
             .select('status, taken_by, sentry_last_modified_at, raw_payload, assignment_type_code, external_trip_status')
             .eq('sentry_trip_id', String(notif.tripId))
             .maybeSingle();
-          let normalizedNotifStatus = resolveDriverLifecycleStatus({ status: 'pending' }, mtRow || {});
+          const notifClaimOwner = marketplaceClaimOwner(mtRow || {}, driver.id);
+          if (notifClaimOwner === 'other') {
+            await supabase
+              .from('trip_assignments')
+              .update({
+                status: 'rejected',
+                trip_processing_status_id: 2,
+                rejected_at: new Date().toISOString(),
+              })
+              .eq('trip_id', String(notif.tripId))
+              .eq('driver_id', driver.id)
+              .in('status', ['pending', 'assigned']);
+            await fbSet(`driver_notifications/${driver.id}`, null);
+            return;
+          }
+          let normalizedNotifStatus = resolveDriverLifecycleStatusForDriver({ status: 'pending' }, mtRow || {}, driver.id);
           const lockStatus = lifecycleStatusFromLock(lifecycleUiLock, notif.tripId);
           if (lockStatus) normalizedNotifStatus = lockStatus;
+          if (['completed', 'cancelled', 'rejected', 'no_show'].includes(normalizedNotifStatus)) {
+            await fbSet(`driver_notifications/${driver.id}`, null);
+            const currentTripId = String(currentTripRef.current?.tripId || '');
+            if (currentTripId && currentTripId === String(notif.tripId || '')) {
+              commitDriverTrip(null, { source: 'firebase_notification', reason: 'terminal_notification_cleared' });
+              setSheetState('waiting');
+            }
+            return;
+          }
           const tripPayload = { ...notif };
           if (!perTripPay) delete tripPayload.deliveryPrice;
           Object.assign(tripPayload, deriveMtaFareInfo(notif));
+          tripPayload.assignmentRowId = tripPayload.assignmentRowId || tripPayload.assignment_id || null;
+          tripPayload.assignmentDriverId = tripPayload.assignmentDriverId || tripPayload.driver_id || driver.id;
           const nMp = extractMarketplaceLifecycleTimestamps(mtRow || {});
           if (['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(normalizedNotifStatus)) {
             tripPayload.acceptedAt = tripPayload.acceptedAt || nMp.acceptedAt || new Date().toISOString();
@@ -1362,163 +1482,195 @@ export default function DriverApp() {
     }
 
     if (!lockHasActiveTrip && !surfacedTripFromFirebase && ['waiting', 'suggestions'].includes(sheetStateRef.current) && driver?.id) {
-      let pendingRow = null;
-      let mtRow = null;
+      let candidateRows = [];
       let pendingErr = null;
       try {
         const { data: pack, error: peekErr } = await supabase.rpc('peek_driver_trip_offer', { p_driver_id: driver.id });
         if (peekErr) {
           logFailure('DriverApp:pollForNotifications:peek_driver_trip_offer', peekErr);
         } else if (pack && typeof pack === 'object' && pack.assignment) {
-          pendingRow = pack.assignment;
-          mtRow =
-            pack.marketplace && typeof pack.marketplace === 'object' && Object.keys(pack.marketplace).length
-              ? pack.marketplace
-              : null;
+          candidateRows = [
+            {
+              ...pack.assignment,
+              _marketplaceRow:
+                pack.marketplace && typeof pack.marketplace === 'object' && Object.keys(pack.marketplace).length
+                  ? pack.marketplace
+                  : null,
+            },
+          ];
         }
       } catch (e) {
         logFailure('DriverApp:pollForNotifications:peek_driver_trip_offer', e);
       }
 
-      if (!pendingRow?.trip_id) {
+      if (!candidateRows.length) {
         const pr = await supabase
           .from('trip_assignments')
           .select(
-            'trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, assigned_at, status, accepted_at, actual_pickup_time, lifecycle_revision'
+            'id, trip_id, driver_id, pu_address, do_address, pu_time, scheduled_pickup_time, delivery_price, mileage, notes, assigned_at, status, accepted_at, actual_pickup_time, lifecycle_revision'
           )
           .eq('driver_id', driver.id)
           .in('status', OFFER_ASSIGNMENT_STATUSES)
-          .order('assigned_at', { ascending: false })
-          .limit(5);
+          .order('scheduled_pickup_time', { ascending: true, nullsFirst: false })
+          .order('assigned_at', { ascending: true, nullsFirst: false })
+          .limit(10);
         pendingErr = pr.error;
-        pendingRow = (pr.data || [])[0] || null;
+        candidateRows = sortDriverOfferCandidates(pr.data || []);
       }
 
       if (pendingErr) {
         logFailure('DriverApp:pollForNotifications:pending_assignment', pendingErr);
-      } else if (!pendingRow?.trip_id) {
+      } else if (!candidateRows.length) {
         // no-op: no pending/assigned offers to surface
       } else {
-        if (!mtRow || !Object.keys(mtRow).length) {
-          const { data: mtFetched } = await supabase
-            .from('marketplace_trips')
-            .select('status, taken_by, sentry_last_modified_at, raw_payload, assignment_type_code, external_trip_status')
-            .eq('sentry_trip_id', String(pendingRow.trip_id))
-            .maybeSingle();
-          mtRow = mtFetched || {};
-        }
-        const rawMerged = resolveDriverLifecycleStatus(pendingRow, mtRow || {});
-        let mergedLifecycle = rawMerged;
-        const lockStatus = lifecycleStatusFromLock(lifecycleUiLock, pendingRow.trip_id);
-        if (lockStatus) mergedLifecycle = lockStatus;
-        const tidPoll = normalizeUiTripId(pendingRow.trip_id);
-        const prevPoll = lastCommittedLifecycleRef.current;
-        const fromPoll =
-          tidPoll && prevPoll.tripId && String(prevPoll.tripId) === String(tidPoll) ? prevPoll.stage : '';
-        let pollDecision = 'accepted';
-        let pollReason = 'poll_pending_assignment';
-        let pollProposed = null;
-        if (
-          lockStatus &&
-          isBackwardLifecycleStageChange(fromPoll, rawMerged) &&
-          lifecycleStageRank(String(mergedLifecycle).toLowerCase()) >
-            lifecycleStageRank(String(rawMerged).toLowerCase())
-        ) {
-          pollDecision = 'rejected';
-          pollProposed = rawMerged;
-          pollReason = 'lifecycle_ui_lock_blocked_backward_incoming';
-        }
-        const tripKeyPoll = String(pendingRow.trip_id || '');
-        let skipStaleOffer = false;
-        if (tripKeyPoll && Number(pendingRow?.lifecycle_revision ?? 0) > 0) {
-          const lastRev = assignmentRevisionByTripRef.current.get(tripKeyPoll) ?? 0;
-          const lastSrc = lastFetchSourceByTripRef.current.get(tripKeyPoll) || 'polling';
-          const gate = shouldApplyAssignmentRow({
-            incomingRevision: pendingRow.lifecycle_revision,
-            lastAppliedRevision: lastRev,
-            source: 'polling',
-            lastSource: lastSrc,
-          });
-          if (!gate.apply) skipStaleOffer = true;
-        }
-        telemetryLifecycleStage('DriverApp:poll_pending_assignment', pendingRow.trip_id, mergedLifecycle, {
-          revision: mtRow?.sentry_last_modified_at ?? null,
-          reason: pollReason,
-          proposedStage: pollProposed,
-          decision: pollDecision,
-        });
-        if (!['pending', 'assigned'].includes(mergedLifecycle)) {
-          await restoreActiveTripFromDb(driver, { openSheet: !surfacedTripFromFirebase });
-        } else {
-        const { data: claimedRows } = await supabase
-          .from('trip_assignments')
-          .select('driver_id, status')
-          .eq('trip_id', pendingRow.trip_id)
-          .in('status', CLAIMED_ASSIGNMENT_STATUSES);
-        const claimedByAnotherDriver = (claimedRows || []).some(row => String(row.driver_id || '') !== String(driver.id || ''));
-        const marketplaceStatus = String(mtRow?.status || '').toLowerCase();
-        const marketplaceTakenByAnotherDriver =
-          mtRow?.taken_by != null &&
-          mtRow?.taken_by !== '' &&
-          String(mtRow.taken_by) !== String(driver.id || '');
-        const marketplaceClosed = ['cancelled', 'completed'].includes(marketplaceStatus);
-        const marketplaceOfferStillValid =
-          !mtRow ||
-          ['available', 'assigned', 'accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(marketplaceStatus);
-        if (claimedByAnotherDriver || marketplaceTakenByAnotherDriver || marketplaceClosed || !marketplaceOfferStillValid) {
-          await supabase
-            .from('trip_assignments')
-            .update({
-              status: 'rejected',
-              trip_processing_status_id: 2,
-              rejected_at: new Date().toISOString(),
-            })
-            .eq('trip_id', pendingRow.trip_id)
-            .eq('driver_id', driver.id)
-            .eq('status', 'pending');
-          await fbSet(`driver_notifications/${driver.id}`, null);
-          return;
-        }
+        let shouldRestoreActiveTrip = false;
 
-        const parsedNotes = parseTripAssignmentNotesForOffer(pendingRow.notes);
-        const mpTs = extractMarketplaceLifecycleTimestamps(mtRow || {});
-        const hasEnRouteProgress =
-          hasMarketplaceEnRouteProgress(mtRow || {}) ||
-          String(pendingRow?.status || '').toLowerCase() === 'in_progress';
-        const existingTrip = currentTripRef.current;
-        const sameTrip = String(existingTrip?.tripId || '') === String(pendingRow.trip_id || '');
-        const preservedEnRouteAt = sameTrip ? (existingTrip?.enRouteAt || null) : null;
-        const offer = {
-          type: 'new_trip',
-          tripId: pendingRow.trip_id,
-          lastModifiedAt: mtRow?.sentry_last_modified_at || '',
-          puAddress: pendingRow.pu_address || '',
-          doAddress: pendingRow.do_address || '',
-          puTime: pendingRow.pu_time || '',
-          ...(perTripPay ? { deliveryPrice: pendingRow.delivery_price } : {}),
-          mileage: pendingRow.mileage,
-          assignedAt: Date.now(),
-          acceptedAt: ['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(mergedLifecycle)
-            ? (mpTs.acceptedAt || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
-            : null,
-          enRouteAt: preservedEnRouteAt || (hasEnRouteProgress
-            ? (mpTs.enRouteAt || mpTs.acceptedAt || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
-            : null),
-          arrivedAt: ['arrived', 'picked_up', 'on_trip'].includes(mergedLifecycle)
-            ? (mpTs.arrivedAt || pendingRow.actual_pickup_time || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
-            : null,
-          pickedUpAt: ['picked_up', 'on_trip'].includes(mergedLifecycle)
-            ? (mpTs.pickedUpAt || pendingRow.actual_pickup_time || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
-            : null,
-          testingNote: parsedNotes.testingNote,
-          isTestTrip: parsedNotes.isTestTrip,
-          ...deriveMtaFareInfo(mtRow || {}),
-        };
-        const mergedOffer = preserveTripProgressForSameTrip(existingTrip, offer);
-        if (!skipStaleOffer) {
+        for (const candidateRow of sortDriverOfferCandidates(candidateRows)) {
+          const pendingRow = candidateRow;
+          let mtRow =
+            candidateRow?._marketplaceRow && typeof candidateRow._marketplaceRow === 'object'
+              ? candidateRow._marketplaceRow
+              : null;
+
+          if (!pendingRow?.trip_id) continue;
+
+          if (!mtRow || !Object.keys(mtRow).length) {
+            const { data: mtFetched } = await supabase
+              .from('marketplace_trips')
+              .select('status, taken_by, sentry_last_modified_at, raw_payload, assignment_type_code, external_trip_status')
+              .eq('sentry_trip_id', String(pendingRow.trip_id))
+              .maybeSingle();
+            mtRow = mtFetched || {};
+          }
+
+          const rawMerged = resolveDriverLifecycleStatusForDriver(pendingRow, mtRow || {}, driver.id);
+          let mergedLifecycle = rawMerged;
+          const lockStatus = lifecycleStatusFromLock(lifecycleUiLock, pendingRow.trip_id);
+          if (lockStatus) mergedLifecycle = lockStatus;
+          const tidPoll = normalizeUiTripId(pendingRow.trip_id);
+          const prevPoll = lastCommittedLifecycleRef.current;
+          const fromPoll =
+            tidPoll && prevPoll.tripId && String(prevPoll.tripId) === String(tidPoll) ? prevPoll.stage : '';
+          let pollDecision = 'accepted';
+          let pollReason = 'poll_pending_assignment';
+          let pollProposed = null;
+          if (
+            lockStatus &&
+            isBackwardLifecycleStageChange(fromPoll, rawMerged) &&
+            lifecycleStageRank(String(mergedLifecycle).toLowerCase()) >
+              lifecycleStageRank(String(rawMerged).toLowerCase())
+          ) {
+            pollDecision = 'rejected';
+            pollProposed = rawMerged;
+            pollReason = 'lifecycle_ui_lock_blocked_backward_incoming';
+          }
+          const tripKeyPoll = String(pendingRow.trip_id || '');
+          let skipStaleOffer = false;
+          if (tripKeyPoll && Number(pendingRow?.lifecycle_revision ?? 0) > 0) {
+            const lastRev = assignmentRevisionByTripRef.current.get(tripKeyPoll) ?? 0;
+            const lastSrc = lastFetchSourceByTripRef.current.get(tripKeyPoll) || 'polling';
+            const gate = shouldApplyAssignmentRow({
+              incomingRevision: pendingRow.lifecycle_revision,
+              lastAppliedRevision: lastRev,
+              source: 'polling',
+              lastSource: lastSrc,
+            });
+            if (!gate.apply) skipStaleOffer = true;
+          }
+          telemetryLifecycleStage('DriverApp:poll_pending_assignment', pendingRow.trip_id, mergedLifecycle, {
+            revision: mtRow?.sentry_last_modified_at ?? null,
+            reason: pollReason,
+            proposedStage: pollProposed,
+            decision: pollDecision,
+          });
+
+          if (!['pending', 'assigned'].includes(mergedLifecycle)) {
+            shouldRestoreActiveTrip = true;
+            continue;
+          }
+
+          const { data: claimedRows } = await supabase
+            .from('trip_assignments')
+            .select('driver_id, status')
+            .eq('trip_id', pendingRow.trip_id)
+            .in('status', ACTIVE_DRIVER_ASSIGNMENT_STATUSES);
+          const claimedByAnotherDriver = (claimedRows || []).some(row => String(row.driver_id || '') !== String(driver.id || ''));
+          const marketplaceStatus = String(mtRow?.status || '').toLowerCase();
+          const marketplaceExternalStatus = String(mtRow?.external_trip_status || '').toLowerCase();
+          const marketplaceTakenByAnotherDriver =
+            mtRow?.taken_by != null &&
+            mtRow?.taken_by !== '' &&
+            String(mtRow.taken_by) !== String(driver.id || '');
+          const marketplaceClosed =
+            ['cancelled', 'completed'].includes(marketplaceStatus) ||
+            ['cancelled', 'canceled', 'completed', 'complete', 'done', 'closed', 'no_show', 'rejected'].includes(marketplaceExternalStatus);
+          const marketplaceOfferStillValid =
+            !mtRow ||
+            (
+              ['available', 'assigned', ''].includes(marketplaceStatus) &&
+              !['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip', 'completed', 'complete', 'done', 'closed', 'cancelled', 'canceled', 'no_show', 'rejected'].includes(marketplaceExternalStatus)
+            );
+
+          if (claimedByAnotherDriver || marketplaceTakenByAnotherDriver || marketplaceClosed || !marketplaceOfferStillValid) {
+            await supabase
+              .from('trip_assignments')
+              .update({
+                status: 'rejected',
+                trip_processing_status_id: 2,
+                rejected_at: new Date().toISOString(),
+              })
+              .eq('trip_id', pendingRow.trip_id)
+              .eq('driver_id', driver.id)
+              .in('status', ['pending', 'assigned']);
+            await fbSet(`driver_notifications/${driver.id}`, null);
+            continue;
+          }
+
+          const parsedNotes = parseTripAssignmentNotesForOffer(pendingRow.notes);
+          const mpTs = extractMarketplaceLifecycleTimestamps(mtRow || {});
+          const hasEnRouteProgress =
+            hasMarketplaceEnRouteProgress(mtRow || {}) ||
+            String(pendingRow?.status || '').toLowerCase() === 'in_progress';
+          const existingTrip = currentTripRef.current;
+          const sameTrip = String(existingTrip?.tripId || '') === String(pendingRow.trip_id || '');
+          const preservedEnRouteAt = sameTrip ? (existingTrip?.enRouteAt || null) : null;
+          const offer = {
+            type: 'new_trip',
+            tripId: pendingRow.trip_id,
+            assignmentRowId: pendingRow.id || null,
+            assignmentDriverId: pendingRow.driver_id || driver.id,
+            lastModifiedAt: mtRow?.sentry_last_modified_at || '',
+            puAddress: pendingRow.pu_address || '',
+            doAddress: pendingRow.do_address || '',
+            puTime: pendingRow.scheduled_pickup_time || pendingRow.pu_time || '',
+            ...(perTripPay ? { deliveryPrice: pendingRow.delivery_price } : {}),
+            mileage: pendingRow.mileage,
+            assignedAt: Date.now(),
+            acceptedAt: ['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(mergedLifecycle)
+              ? (mpTs.acceptedAt || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
+              : null,
+            enRouteAt: preservedEnRouteAt || (hasEnRouteProgress
+              ? (mpTs.enRouteAt || mpTs.acceptedAt || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
+              : null),
+            arrivedAt: ['arrived', 'picked_up', 'on_trip'].includes(mergedLifecycle)
+              ? (mpTs.arrivedAt || pendingRow.actual_pickup_time || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
+              : null,
+            pickedUpAt: ['picked_up', 'on_trip'].includes(mergedLifecycle)
+              ? (mpTs.pickedUpAt || pendingRow.actual_pickup_time || pendingRow.accepted_at || pendingRow.assigned_at || new Date().toISOString())
+              : null,
+            testingNote: parsedNotes.testingNote,
+            isTestTrip: parsedNotes.isTestTrip,
+            ...deriveMtaFareInfo(mtRow || {}),
+          };
+          const mergedOffer = preserveTripProgressForSameTrip(existingTrip, offer);
+          const mergedOfferLifecycle = deriveLifecycleStatusFromTripSnapshot(mergedOffer, mergedLifecycle);
+          if (skipStaleOffer) {
+            continue;
+          }
+
           commitDriverTrip(mergedOffer, { source: 'poll_pending', reason: 'peek_or_pending_assignment_offer' });
-          setSheetState(deriveSheetStateFromAssignmentStatus(mergedLifecycle));
-          if (mergedLifecycle === 'pending' || mergedLifecycle === 'assigned') {
+          setSheetState(deriveSheetStateFromAssignmentStatus(mergedOfferLifecycle));
+          if (mergedOfferLifecycle === 'pending' || mergedOfferLifecycle === 'assigned') {
             startTripCountdown(15);
           } else {
             persistDriverActiveTripSnapshot(driver.id, mergedOffer);
@@ -1532,7 +1684,12 @@ export default function DriverApp() {
             )
           );
           lastFetchSourceByTripRef.current.set(tripKeyPoll, 'polling');
+          shouldRestoreActiveTrip = false;
+          break;
         }
+
+        if (shouldRestoreActiveTrip) {
+          await restoreActiveTripFromDb(driver, { openSheet: !surfacedTripFromFirebase });
         }
       }
     }
@@ -1973,18 +2130,26 @@ export default function DriverApp() {
           .select('status, taken_by')
           .eq('sentry_trip_id', tripId)
           .maybeSingle(),
-        supabase
-          .from('trip_assignments')
-          .select('id, status, driver_id')
-          .eq('trip_id', tripId)
-          .eq('driver_id', thisDriverId)
-          .maybeSingle(),
+        applyTripAssignmentTarget(
+          supabase
+            .from('trip_assignments')
+            .select('id, status, driver_id'),
+          currentTrip,
+          thisDriverId
+        ).maybeSingle(),
         supabase
           .from('trip_assignments')
           .select('driver_id, status')
           .eq('trip_id', tripId)
-          .in('status', CLAIMED_ASSIGNMENT_STATUSES),
+          .in('status', ACTIVE_DRIVER_ASSIGNMENT_STATUSES),
       ]);
+
+      if (!driverAssignmentError && driverAssignment?.id && !currentTrip?.assignmentRowId) {
+        currentTrip.assignmentRowId = driverAssignment.id;
+      }
+      if (!driverAssignmentError && driverAssignment?.driver_id && !currentTrip?.assignmentDriverId) {
+        currentTrip.assignmentDriverId = driverAssignment.driver_id;
+      }
 
       if (marketplaceError) {
         logFailure('DriverApp:acceptTrip:marketplace_precheck', marketplaceError);
@@ -2010,10 +2175,9 @@ export default function DriverApp() {
         marketplaceRow?.taken_by !== '' &&
         String(marketplaceRow.taken_by) !== String(thisDriverId || '');
       const normalizedAssignmentStatus = String(driverAssignment?.status || '').toLowerCase();
-      const assignableStatuses = new Set(['pending', 'assigned', 'accepted']);
       const canUseAssignment =
         driverAssignment &&
-        (assignableStatuses.has(normalizedAssignmentStatus) || CLAIMED_ASSIGNMENT_STATUSES.includes(normalizedAssignmentStatus));
+        ACCEPTABLE_ASSIGNMENT_STATUSES.includes(normalizedAssignmentStatus);
 
       if (claimedByAnotherDriver || takenByAnotherDriver || !canUseAssignment) {
         await fbSet(`driver_notifications/${driverData.id}`, null);
@@ -2025,15 +2189,18 @@ export default function DriverApp() {
         });
         commitDriverTrip(null, { source: 'accept_trip', reason: 'lost_race_or_invalid_assignment' });
         setSheetState('waiting');
-        showToast('Trip is no longer available. Another driver already accepted it.');
+        showToast(
+          claimedByAnotherDriver || takenByAnotherDriver
+            ? 'Trip is no longer available. Another driver already accepted it.'
+            : 'That trip offer already closed. Looking for the next one.'
+        );
         return;
       }
 
       let assignUpdate = supabase
         .from('trip_assignments')
-        .update({ status: 'accepted', trip_processing_status_id: 2, accepted_at: acceptedAt })
-        .eq('trip_id', tripId)
-        .eq('driver_id', thisDriverId)
+        .update({ status: 'accepted', trip_processing_status_id: 2, accepted_at: acceptedAt });
+      assignUpdate = applyTripAssignmentTarget(assignUpdate, currentTrip, thisDriverId)
         .in('status', ['pending', 'assigned', 'accepted']);
       const { error: assignRowError } = await assignUpdate;
       if (assignRowError) {
@@ -2069,7 +2236,7 @@ export default function DriverApp() {
         });
         commitDriverTrip(null, { source: 'accept_trip', reason: 'marketplace_unavailable_after_accept' });
         setSheetState('waiting');
-        showToast('Trip is no longer available. Another driver already accepted it.');
+        showToast('That trip offer already closed. Looking for the next one.');
         return;
       }
 
@@ -2215,9 +2382,8 @@ export default function DriverApp() {
         .update({
           status: 'in_progress',
           accepted_at: currentTrip?.acceptedAt || enRouteAt,
-        })
-        .eq('trip_id', currentTrip.tripId);
-      if (driverRecord?.id) routeUpdate = routeUpdate.eq('driver_id', driverRecord.id);
+        });
+      routeUpdate = applyTripAssignmentTarget(routeUpdate, currentTrip, driverRecord?.id || driverData?.id);
       const { error: routeErr } = await routeUpdate;
       if (routeErr) logFailure('DriverApp:startRouteToPickup:trip_assignments', routeErr);
 
@@ -2271,10 +2437,19 @@ export default function DriverApp() {
     if (currentTrip.tripId) {
       let rejectUpdate = supabase
         .from('trip_assignments')
-        .update({ status: 'rejected', trip_processing_status_id: 2, rejected_at: rejectedAt })
-        .eq('trip_id', currentTrip.tripId);
-      if (driverRecord?.id) rejectUpdate = rejectUpdate.eq('driver_id', driverRecord.id);
+        .update({ status: 'rejected', trip_processing_status_id: 2, rejected_at: rejectedAt });
+      rejectUpdate = applyTripAssignmentTarget(rejectUpdate, currentTrip, driverRecord?.id || driverData?.id);
       await rejectUpdate;
+
+      if (currentTrip?.acceptedAt) {
+        await supabase
+          .from('marketplace_trips')
+          .update({
+            status: 'cancelled',
+            external_trip_status: 'cancelled',
+          })
+          .eq('sentry_trip_id', String(currentTrip.tripId));
+      }
 
       if (sentryApi.enabled) {
         // Align with Sentry lifecycle sheet:
@@ -2386,9 +2561,8 @@ export default function DriverApp() {
     if (tripId) {
       let arriveUpdate = supabase
         .from('trip_assignments')
-        .update({ status: 'arrived' })
-        .eq('trip_id', tripId);
-      if (driverRecord?.id) arriveUpdate = arriveUpdate.eq('driver_id', driverRecord.id);
+        .update({ status: 'arrived' });
+      arriveUpdate = applyTripAssignmentTarget(arriveUpdate, currentTrip, driverRecord?.id || driverData?.id);
       const { error } = await arriveUpdate;
       if (error) logFailure('DriverApp:markArrivedAtPickup:trip_assignments', error);
     }
@@ -2473,9 +2647,8 @@ export default function DriverApp() {
           status: 'picked_up',
           actual_pickup_time: pickedUpAt,
           collected_fare: normalizedPickupMeta.collectedFare,
-        })
-        .eq('trip_id', tripId);
-      if (driverRecord?.id) pickupUpdate = pickupUpdate.eq('driver_id', driverRecord.id);
+        });
+      pickupUpdate = applyTripAssignmentTarget(pickupUpdate, currentTrip, driverRecord?.id || driverData?.id);
       const { error } = await pickupUpdate;
       if (error) logFailure('DriverApp:confirmPickup:trip_assignments', error);
     }
@@ -2530,11 +2703,18 @@ export default function DriverApp() {
     if (currentTrip?.tripId) {
       let noShowUpdate = supabase
         .from('trip_assignments')
-        .update({ status: 'no_show' })
-        .eq('trip_id', currentTrip.tripId);
-      if (driverRecord?.id) noShowUpdate = noShowUpdate.eq('driver_id', driverRecord.id);
+        .update({ status: 'no_show' });
+      noShowUpdate = applyTripAssignmentTarget(noShowUpdate, currentTrip, driverRecord?.id || driverData?.id);
       const { error } = await noShowUpdate;
       if (error) logFailure('DriverApp:markNoShow:trip_assignments', error);
+
+      await supabase
+        .from('marketplace_trips')
+        .update({
+          status: 'cancelled',
+          external_trip_status: 'no_show',
+        })
+        .eq('sentry_trip_id', String(currentTrip.tripId));
     }
 
     if (driverRecord?.id) {
@@ -2634,15 +2814,14 @@ export default function DriverApp() {
           collected_fare: effectiveCollectedFare,
           is_next_day: completionMeta.isNextDay,
           next_day_requested_at: completionMeta.isNextDay ? completedAt : null,
-        })
-        .eq('trip_id', currentTrip.tripId);
-      if (driverRecord?.id) taUpdate = taUpdate.eq('driver_id', driverRecord.id);
+        });
+      taUpdate = applyTripAssignmentTarget(taUpdate, currentTrip, driverRecord?.id || driverData?.id);
       const { error: taErr } = await taUpdate;
       if (taErr) logFailure('DriverApp:completeTrip:trip_assignments', taErr);
 
       await supabase
         .from('marketplace_trips')
-        .update({ status: 'completed' })
+        .update({ status: 'completed', external_trip_status: 'completed' })
         .eq('sentry_trip_id', String(currentTrip.tripId));
 
       const completionResult = await sendSentryLifecycleStatus(currentTrip.tripId, 6, lifecycleExtras);
@@ -2769,6 +2948,8 @@ export default function DriverApp() {
     const cachedSnapshotTrip = cachedSnapshot?.tripId
       ? {
           tripId: cachedSnapshot.tripId,
+          assignmentRowId: cachedSnapshot.assignmentRowId || null,
+          assignmentDriverId: cachedSnapshot.assignmentDriverId || null,
           acceptedAt: cachedSnapshot.acceptedAt || null,
           enRouteAt: cachedSnapshot.enRouteAt || null,
           arrivedAt: cachedSnapshot.arrivedAt || null,
@@ -2778,7 +2959,7 @@ export default function DriverApp() {
 
     let { data: primaryRows, error: activeErr } = await supabase
       .from('trip_assignments')
-      .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, lifecycle_revision')
+      .select('id, trip_id, driver_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, lifecycle_revision')
       .eq('driver_id', driverCtx.id)
       .order('accepted_at', { ascending: false, nullsFirst: false })
       .order('assigned_at', { ascending: false })
@@ -2789,7 +2970,7 @@ export default function DriverApp() {
       if (driverName) {
         const fallback = await supabase
           .from('trip_assignments')
-          .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, driver_name, lifecycle_revision')
+          .select('id, trip_id, driver_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, driver_name, lifecycle_revision')
           .eq('company_id', driverCtx.company_id)
           .order('accepted_at', { ascending: false, nullsFirst: false })
           .order('assigned_at', { ascending: false })
@@ -2837,7 +3018,7 @@ export default function DriverApp() {
         if (aliasIds.length > 0) {
           const aliasLookup = await supabase
             .from('trip_assignments')
-            .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, lifecycle_revision')
+            .select('id, trip_id, driver_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, lifecycle_revision')
             .in('driver_id', aliasIds)
             .order('accepted_at', { ascending: false, nullsFirst: false })
             .order('assigned_at', { ascending: false })
@@ -2865,7 +3046,7 @@ export default function DriverApp() {
       if (marketplaceErr) {
         logFailure('DriverApp:restoreActiveTripFromDb:marketplaceFallback', marketplaceErr);
       } else if (marketplaceRow?.sentry_trip_id) {
-        const normalizedFallbackStatus = deriveLifecycleStatusFromMarketplaceRow(marketplaceRow);
+        const normalizedFallbackStatus = resolveDriverLifecycleStatusForDriver({}, marketplaceRow, driverCtx?.id);
         const fbMpTs = extractMarketplaceLifecycleTimestamps(marketplaceRow);
         const fallbackHasEnRouteProgress = hasMarketplaceEnRouteProgress(marketplaceRow);
         const fallbackTrip = {
@@ -2897,12 +3078,13 @@ export default function DriverApp() {
           cachedSnapshotTrip || currentTripRef.current,
           fallbackTrip
         );
+        const mergedFallbackLifecycle = deriveLifecycleStatusFromTripSnapshot(mergedFallback, normalizedFallbackStatus);
         telemetryLifecycleStage('DriverApp:restore_marketplace_fallback', marketplaceRow.sentry_trip_id, normalizedFallbackStatus, {
           revision: marketplaceRow.sentry_last_modified_at ?? null,
           reason: 'restore_active_trip_marketplace_fallback',
         });
         commitDriverTrip(mergedFallback, { source: 'restore_db', reason: 'marketplace_fallback_row' });
-        setSheetState(deriveSheetStateFromAssignmentStatus(normalizedFallbackStatus));
+        setSheetState(deriveSheetStateFromAssignmentStatus(mergedFallbackLifecycle));
         if (openSheet) setSheetOpen(true);
         return mergedFallback;
       }
@@ -2914,7 +3096,7 @@ export default function DriverApp() {
       if (cacheFresh && cached?.tripId && String(cached.driverId || driverCtx.id) === String(driverCtx.id)) {
         const { data: byTrip, error: byTripErr } = await supabase
           .from('trip_assignments')
-          .select('trip_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, driver_name, lifecycle_revision')
+          .select('id, trip_id, driver_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, driver_name, lifecycle_revision')
           .eq('trip_id', cached.tripId)
           .eq('driver_id', driverCtx.id)
           .maybeSingle();
@@ -2924,6 +3106,8 @@ export default function DriverApp() {
           const tripFromCache = {
             type: 'active_trip',
             tripId: cached.tripId,
+            assignmentRowId: cached.assignmentRowId || null,
+            assignmentDriverId: cached.assignmentDriverId || driverCtx.id,
             lastModifiedAt: cached.lastModifiedAt || '',
             puAddress: cached.puAddress || '',
             doAddress: cached.doAddress || '',
@@ -2978,7 +3162,7 @@ export default function DriverApp() {
       .eq('sentry_trip_id', String(activeRow.trip_id))
       .maybeSingle();
     const parsedNotes = parseTripAssignmentNotesForOffer(activeRow.notes);
-    const normalizedLifecycleStatus = resolveDriverLifecycleStatus(activeRow, mtRow || {});
+    const normalizedLifecycleStatus = resolveDriverLifecycleStatusForDriver(activeRow, mtRow || {}, driverCtx?.id);
     const mpTs = extractMarketplaceLifecycleTimestamps(mtRow || {});
     const hasEnRouteProgress =
       hasMarketplaceEnRouteProgress(mtRow || {}) ||
@@ -2989,6 +3173,8 @@ export default function DriverApp() {
     const restoredTrip = {
       type: 'active_trip',
       tripId: activeRow.trip_id,
+      assignmentRowId: activeRow.id || null,
+      assignmentDriverId: activeRow.driver_id || driverCtx.id,
       lastModifiedAt: mtRow?.sentry_last_modified_at || '',
       puAddress: activeRow.pu_address || '',
       doAddress: activeRow.do_address || '',
@@ -3015,6 +3201,7 @@ export default function DriverApp() {
       cachedSnapshotTrip || existingTrip,
       restoredTrip
     );
+    const mergedRestoredLifecycle = deriveLifecycleStatusFromTripSnapshot(mergedRestored, normalizedLifecycleStatus);
     telemetryLifecycleStage('DriverApp:restore_db_assignment', activeRow.trip_id, normalizedLifecycleStatus, {
       revision: mtRow?.sentry_last_modified_at ?? null,
       reason: 'restore_active_trip_db_row',
@@ -3028,7 +3215,7 @@ export default function DriverApp() {
       );
       lastFetchSourceByTripRef.current.set(tk, 'db');
     }
-    setSheetState(deriveSheetStateFromAssignmentStatus(normalizedLifecycleStatus));
+    setSheetState(deriveSheetStateFromAssignmentStatus(mergedRestoredLifecycle));
     if (openSheet) setSheetOpen(true);
     if (normalizedLifecycleStatus !== 'pending' && driverCtx?.id) {
       supabase.from('drivers').update({ status: 'on_trip' }).eq('id', driverCtx.id).then(({ error }) => {
@@ -3540,7 +3727,7 @@ export default function DriverApp() {
       {incentiveGoals && (
         <IncentiveGoalToast
           goals={incentiveGoals}
-          onOpen={() => setShowIncentives(true)}
+          onOpen={() => openDriverPanel('incentives')}
           onDismiss={() => setIncentiveGoals(null)}
         />
       )}
@@ -3552,14 +3739,14 @@ export default function DriverApp() {
         />
       )}
 
-      {onBreak && <BreakOverlay driverId={driverRecord?.id || driverData?.id} onEnd={() => setOnBreak(false)} />}
+      {onBreak && <BreakOverlay driverId={driverRecord?.id || driverData?.id} onEnd={() => openDriverPanel(null)} />}
 
       {showPaymentSetup && (
         <DriverPaymentSetup
           driverId={driverData?.id}
           driverName={driverData?.name}
           driverEmail={driverData?.email || ''}
-          onClose={() => setShowPaymentSetup(false)}
+          onClose={() => openDriverPanel(null)}
         />
       )}
 
@@ -3577,16 +3764,16 @@ export default function DriverApp() {
           assignmentSignal={assignmentRealtimeEpoch}
           hasActiveTrip={Boolean(currentTrip?.tripId)}
           onResumeTrip={resumeActiveTrip}
-          onClose={() => setShowSchedule(false)}
+          onClose={() => openDriverPanel(null)}
         />
       )}
 
-      {showGuide && <DriverGuide onClose={() => setShowGuide(false)} />}
+      {showGuide && <DriverGuide onClose={() => openDriverPanel(null)} />}
 
       {showIncentives && (
         <DriverIncentivesView
           goals={incentiveGoals || incentiveSnapshotRef.current || []}
-          onClose={() => setShowIncentives(false)}
+          onClose={() => openDriverPanel(null)}
         />
       )}
 
@@ -3595,7 +3782,7 @@ export default function DriverApp() {
           orgId={orgId}
           driver={driverRecord || driverData}
           currentTrip={currentTrip}
-          onClose={() => setShowCommunity(false)}
+          onClose={() => openDriverPanel(null)}
         />
       )}
 
@@ -3605,7 +3792,7 @@ export default function DriverApp() {
           saving={zoneSaving}
           savedMessage={zoneSavedMessage}
           onSave={savePreferredZones}
-          onClose={() => setShowZonePreferences(false)}
+          onClose={() => openDriverPanel(null)}
         />
       )}
 
@@ -3677,15 +3864,15 @@ export default function DriverApp() {
                     resumeActiveTrip();
                   },
                 },
-                { icon: <Calendar className="w-5 h-5" />, color: '#00e5a0', label: 'My Schedule', sub: 'View today\'s trips', action: () => { setShowSchedule(true); setShowMenu(false); } },
+                { icon: <Calendar className="w-5 h-5" />, color: '#00e5a0', label: 'My Schedule', sub: 'View today\'s trips', action: () => openDriverPanel('schedule') },
                 {
                   icon: <Trophy className="w-5 h-5" />,
                   color: '#c9a84c',
                   label: 'My Incentives',
                   sub: 'Check your bonus goals and progress',
-                  action: () => { setShowIncentives(true); setShowMenu(false); },
+                  action: () => openDriverPanel('incentives'),
                 },
-                { icon: <CreditCard className="w-5 h-5" />, color: '#c9a84c', label: 'Earnings & Pay', sub: 'Bank account & payouts', action: () => { setShowPaymentSetup(true); setShowMenu(false); } },
+                { icon: <CreditCard className="w-5 h-5" />, color: '#c9a84c', label: 'Earnings & Pay', sub: 'Bank account & payouts', action: () => openDriverPanel('payment') },
                 {
                   icon: <MapPin className="w-5 h-5" />,
                   color: '#0ea5e9',
@@ -3693,11 +3880,11 @@ export default function DriverApp() {
                   sub: driverRecord?.preferred_zones?.length
                     ? driverRecord.preferred_zones.map(formatServiceZone).join(', ')
                     : 'Choose boroughs you prefer to cover',
-                  action: () => { setShowZonePreferences(true); setShowMenu(false); },
+                  action: () => openDriverPanel('zones'),
                 },
-                { icon: <Coffee className="w-5 h-5" />, color: '#f59e0b', label: 'Take a Break', sub: '15-minute break timer', action: () => { setOnBreak(true); setShowMenu(false); } },
-                { icon: <Trophy className="w-5 h-5" />, color: '#c9a84c', label: 'Community & Leaderboard', sub: 'Compete, post tips, track riders', action: () => { setShowCommunity(true); setShowMenu(false); } },
-                { icon: <BookOpen className="w-5 h-5" />, color: '#0ea5e9', label: 'Driver Guide', sub: 'How to use this app', action: () => { setShowGuide(true); setShowMenu(false); } },
+                { icon: <Coffee className="w-5 h-5" />, color: '#f59e0b', label: 'Take a Break', sub: '15-minute break timer', action: () => openDriverPanel('break') },
+                { icon: <Trophy className="w-5 h-5" />, color: '#c9a84c', label: 'Community & Leaderboard', sub: 'Compete, post tips, track riders', action: () => openDriverPanel('community') },
+                { icon: <BookOpen className="w-5 h-5" />, color: '#0ea5e9', label: 'Driver Guide', sub: 'How to use this app', action: () => openDriverPanel('guide') },
               ].map((item, i) => (
                 <button
                   key={i}

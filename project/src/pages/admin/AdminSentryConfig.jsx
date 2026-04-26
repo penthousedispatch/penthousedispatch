@@ -99,6 +99,7 @@ export default function AdminSentryConfig() {
     driver_sandbox_username: '',
     driver_sandbox_password: '',
     sandbox: true,
+    pause_sandbox_outbound: false,
     enabled: true,
     max_trips_per_pull: 150,
     pull_interval_mins: 5,
@@ -130,6 +131,7 @@ export default function AdminSentryConfig() {
         driver_sandbox_username: sentryConfig.driver_sandbox_username || '',
         driver_sandbox_password: sentryConfig.driver_sandbox_password || '',
         sandbox: sentryConfig.sandbox !== false,
+        pause_sandbox_outbound: sentryConfig.pause_sandbox_outbound === true,
         enabled: sentryConfig.enabled !== false,
         max_trips_per_pull: sentryConfig.max_trips_per_pull || 150,
         pull_interval_mins: sentryConfig.pull_interval_mins || 5,
@@ -207,6 +209,8 @@ export default function AdminSentryConfig() {
       apiKey: normalized.api_key,
       authType: form.auth_type,
       enabled: form.enabled,
+      sandbox: form.sandbox,
+      pauseSandboxOutbound: form.pause_sandbox_outbound,
       features: buildFeaturesForClient(),
     });
 
@@ -415,6 +419,22 @@ export default function AdminSentryConfig() {
                   </label>
                 </div>
               </div>
+              {form.sandbox && (
+                <div
+                  className="rounded-lg p-3 flex items-start justify-between gap-3"
+                  style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.18)' }}
+                >
+                  <div>
+                    <p className="text-xs font-700 mb-1" style={{ color: '#f59e0b', fontWeight: 700 }}>
+                      Pause Sandbox Outbound Writes
+                    </p>
+                    <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                      Stops POST and PUT requests from hitting Sentry sandbox while you test. Reads still work, so your setup stays visible without spamming their side.
+                    </p>
+                  </div>
+                  <Toggle field="pause_sandbox_outbound" />
+                </div>
+              )}
               {form.auth_type === 'basic' ? (
                 <div className="grid grid-cols-2 gap-3">
                   <div>

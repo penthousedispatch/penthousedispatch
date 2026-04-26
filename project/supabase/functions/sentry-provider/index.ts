@@ -13,6 +13,22 @@ const DEFAULT_LNG = -74.006;
 
 const cleanText = (value: unknown) => String(value ?? '').trim();
 const hasText = (value: unknown) => cleanText(value).length > 0;
+const asJsonObject = (value: unknown): Record<string, unknown> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return {};
+};
 const asNumber = (value: unknown, fallback: number | null = null) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -160,13 +176,14 @@ const normalizeTripSidePayload = (
   tripRow?: Record<string, unknown>,
 ) => {
   const fallback = defaultRetrieveTripPayload(tripId);
-  const rawVehicle = (raw.vehicle as Record<string, unknown>) || {};
-  const rawDriver = (raw.driver as Record<string, unknown>) || {};
-  const rawVehicleReg = (rawVehicle.dmv_registration as Record<string, unknown>) || {};
-  const rawDriverLicense = (rawDriver.dmv_license as Record<string, unknown>) || {};
-  const rawPickUp = (raw.pick_up_location as Record<string, unknown>) || {};
-  const rawDropOff = (raw.drop_off_location as Record<string, unknown>) || {};
-  const rawMta = (raw.mta as Record<string, unknown>) || {};
+  const normalizedRaw = asJsonObject(raw);
+  const rawVehicle = asJsonObject(normalizedRaw.vehicle);
+  const rawDriver = asJsonObject(normalizedRaw.driver);
+  const rawVehicleReg = asJsonObject(rawVehicle.dmv_registration);
+  const rawDriverLicense = asJsonObject(rawDriver.dmv_license);
+  const rawPickUp = asJsonObject(normalizedRaw.pick_up_location);
+  const rawDropOff = asJsonObject(normalizedRaw.drop_off_location);
+  const rawMta = asJsonObject(normalizedRaw.mta);
 
   const collectedFromAssignment = asNumber(assignment?.collected_fare, null);
   const collectedFromMta = asNumber(rawMta.collected_fare, null);
@@ -176,9 +193,81 @@ const normalizeTripSidePayload = (
       : (collectedFromMta != null && Number.isFinite(collectedFromMta)
         ? collectedFromMta
         : (fallback.mta.collected_fare as number));
+  const assignmentTypeCode = firstText(
+    normalizedRaw.assignment_type_code,
+    tripRow?.assignment_type_code,
+    assignment?.assignment_type_code,
+    'PRIMARY',
+  );
+  const scheduledPickupTime = firstText(
+    normalizedRaw.scheduled_pickup_time,
+    tripRow?.pu_time,
+  );
+  const scheduledDropoffTime = firstText(
+    normalizedRaw.scheduled_dropoff_time,
+    tripRow?.do_time,
+  );
+  const deliveryPrice = firstText(
+    normalizedRaw.total_amount,
+    normalizedRaw.delivery_price,
+    tripRow?.delivery_price,
+  );
+  const previousTotalAmount = firstText(
+    normalizedRaw.previous_total_amount,
+    normalizedRaw.previous_delivery_price,
+    asJsonObject(normalizedRaw.price_adjustment).previous_total_amount,
+    asJsonObject(normalizedRaw.price_adjustment).previous_delivery_price,
+    '',
+  );
+  const priceAdjustmentAmount = firstText(
+    normalizedRaw.price_adjustment_amount,
+    asJsonObject(normalizedRaw.price_adjustment).amount,
+    '',
+  );
+  const priceAdjustmentReason = firstText(
+    normalizedRaw.price_adjustment_reason,
+    asJsonObject(normalizedRaw.price_adjustment).reason,
+    '',
+  );
+  const willCallFlag = Boolean(
+    normalizedRaw.will_call ??
+    normalizedRaw.is_will_call ??
+    assignmentTypeCode.toUpperCase() === 'WILL_CALL'
+  );
+  const willCallWindowStart = firstText(
+    normalizedRaw.pickup_window_start,
+    normalizedRaw.sput_min,
+    '',
+  );
+  const willCallWindowEnd = firstText(
+    normalizedRaw.pickup_window_end,
+    normalizedRaw.sput_max,
+    '',
+  );
+  const reroutedFromTripId = firstText(
+    normalizedRaw.rerouted_from_trip_id,
+    normalizedRaw.reroute_source_trip_id,
+    normalizedRaw.previous_trip_id,
+    '',
+  );
+  const rerouteGroupId = firstText(
+    normalizedRaw.reroute_group_id,
+    normalizedRaw.route_group_id,
+    '',
+  );
+  const isApprovedForMta = Boolean(
+    normalizedRaw.is_approved_for_mta ??
+    rawMta.is_approved_for_mta ??
+    rawMta.collected_fare_required ??
+    rawMta.fare_required ??
+    normalizedRaw.collected_fare_required ??
+    normalizedRaw.fare_required ??
+    normalizedRaw.mta_fare_required ??
+    assignmentTypeCode.toUpperCase().includes('MTA')
+  );
 
   const nextDayFlag = Boolean(
-    assignment?.is_next_day ?? raw.next_day ?? raw.is_next_day ?? false,
+    assignment?.is_next_day ?? normalizedRaw.next_day ?? normalizedRaw.is_next_day ?? false,
   );
 
   return {
@@ -186,23 +275,26 @@ const normalizeTripSidePayload = (
     /** When a TP assignment row exists, lifecycle read-back follows Penthouse (not stale inbound raw.status_id). */
     status_id: assignment
       ? mapTripStatusId(assignment.status)
-      : (asNumber(raw.status_id, fallback.status_id) ?? fallback.status_id),
-    cancel_reason_id: raw.cancel_reason_id ?? null,
-    cancel_note: raw.cancel_note ?? null,
-    pick_up_arrival_timestamp: firstText(raw.pick_up_arrival_timestamp, fallback.pick_up_arrival_timestamp),
+      : (asNumber(normalizedRaw.status_id, fallback.status_id) ?? fallback.status_id),
+    cancel_reason_id: normalizedRaw.cancel_reason_id ?? null,
+    cancel_note: normalizedRaw.cancel_note ?? null,
+    pick_up_arrival_timestamp: firstText(normalizedRaw.pick_up_arrival_timestamp, fallback.pick_up_arrival_timestamp),
     pick_up_timestamp: firstText(
       assignment?.actual_pickup_time,
-      raw.pick_up_timestamp,
+      normalizedRaw.pick_up_timestamp,
       fallback.pick_up_timestamp,
     ),
     drop_off_timestamp: firstText(
       assignment?.actual_dropoff_time,
       assignment?.completed_at,
-      raw.drop_off_timestamp,
+      normalizedRaw.drop_off_timestamp,
       fallback.drop_off_timestamp,
     ),
-    notes_from_provider: assignment?.notes ?? raw.notes_from_provider ?? null,
-    company_ein: asNumber(raw.company_ein, asNumber(rawMta.dispatch_base_ein, fallback.company_ein)) ?? fallback.company_ein,
+    assignment_type_code: assignmentTypeCode,
+    scheduled_pickup_time: scheduledPickupTime,
+    scheduled_dropoff_time: scheduledDropoffTime,
+    notes_from_provider: assignment?.notes ?? normalizedRaw.notes_from_provider ?? null,
+    company_ein: asNumber(normalizedRaw.company_ein, asNumber(rawMta.dispatch_base_ein, fallback.company_ein)) ?? fallback.company_ein,
     vehicle: {
       id: asNumber(rawVehicle.id, asNumber(deriveVehicleId(driverRow || {}), fallback.vehicle.id)) ?? fallback.vehicle.id,
       dmv_registration: {
@@ -252,6 +344,17 @@ const normalizeTripSidePayload = (
         fallback.mta.dispatch_base_ein,
       ),
     },
+    is_approved_for_mta: isApprovedForMta ? 1 : 0,
+    delivery_price: deliveryPrice,
+    total_amount: deliveryPrice,
+    previous_total_amount: previousTotalAmount || null,
+    price_adjustment_amount: priceAdjustmentAmount || null,
+    price_adjustment_reason: priceAdjustmentReason || null,
+    will_call: willCallFlag ? 1 : 0,
+    pickup_window_start: willCallWindowStart || null,
+    pickup_window_end: willCallWindowEnd || null,
+    rerouted_from_trip_id: reroutedFromTripId || null,
+    reroute_group_id: rerouteGroupId || null,
     collected_fare: collectedFareResolved,
     collected_fare_amount: collectedFareResolved,
     is_next_day: nextDayFlag,
@@ -488,7 +591,7 @@ Deno.serve(async (req: Request) => {
 
       const mapped = (trips || []).flatMap((t: Record<string, unknown>) => {
         try {
-          const raw = (t.raw_payload as Record<string, unknown>) || {};
+          const raw = asJsonObject(t.raw_payload);
           const assignment = assignmentByTrip.get(String(t.sentry_trip_id || '')) as Record<string, unknown> | undefined;
           const tripId = firstText(raw.trip_id, t.sentry_trip_id);
           return [normalizeTripSidePayload(tripId, raw, assignment, {}, t)];

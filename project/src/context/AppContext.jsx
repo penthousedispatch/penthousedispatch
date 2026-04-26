@@ -8,6 +8,12 @@ import { DEFAULT_BILLING_RATE_PER_MILE, syncCompletedTripBilling } from '../util
 import { normalizeAppRole } from '../lib/roles';
 import { readCompanySchedulerPrefs } from '../lib/companySchedulerPrefs';
 import { ensurePlatformAdminOrg } from '../lib/platformAdminOrg';
+import { APP_VARIANT } from '../lib/appVariant';
+import {
+  deriveMarketplaceTripStatus,
+  pickAssignmentTypeCode,
+  pickExternalTripStatus,
+} from '../lib/sentryTripInbound';
 
 const AppContext = createContext(null);
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -76,6 +82,44 @@ export function AppProvider({ children }) {
     }
   }, [normalizedRole, isCompanyRole, company?.id, adminPreviewCompany?.id, profile?.company_id]);
 
+  async function resolveAuthRole(u) {
+    const directRole =
+      normalizeAppRole(u?.user_metadata?.role) ||
+      normalizeAppRole(u?.app_metadata?.role);
+
+    if (directRole) return directRole;
+
+    try {
+      const { data } = await supabase.auth.getSession();
+      return (
+        normalizeAppRole(data?.session?.user?.user_metadata?.role) ||
+        normalizeAppRole(data?.session?.user?.app_metadata?.role) ||
+        null
+      );
+    } catch (error) {
+      logFailure('resolveAuthRole', error);
+    }
+
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const authStorageKey = Object.keys(window.localStorage).find(key => key.startsWith('sb-') && key.endsWith('-auth-token'));
+        if (authStorageKey) {
+          const rawSession = window.localStorage.getItem(authStorageKey);
+          const parsedSession = rawSession ? JSON.parse(rawSession) : null;
+          return (
+            normalizeAppRole(parsedSession?.user?.user_metadata?.role) ||
+            normalizeAppRole(parsedSession?.user?.app_metadata?.role) ||
+            null
+          );
+        }
+      }
+    } catch (error) {
+      logFailure('resolveAuthRole:localStorage', error);
+    }
+
+    return null;
+  }
+
   async function fetchProfileWithRetry(userId, attempts = 2) {
     let lastError = null;
 
@@ -137,9 +181,7 @@ export function AppProvider({ children }) {
   }
 
   async function inferFallbackIdentity(u) {
-    const metadataRole =
-      normalizeAppRole(u?.user_metadata?.role) ||
-      normalizeAppRole(u?.app_metadata?.role);
+    const metadataRole = await resolveAuthRole(u);
 
     if (metadataRole) {
       return {
@@ -192,6 +234,14 @@ export function AppProvider({ children }) {
       if (driverResult.data?.id) {
         return { role: 'driver', companyId: driverResult.data.company_id || null };
       }
+    }
+
+    if (APP_VARIANT === 'rider') {
+      return { role: 'rider', companyId: null };
+    }
+
+    if (APP_VARIANT === 'driver') {
+      return { role: 'driver', companyId: null };
     }
 
     return { role: 'admin', companyId: null };
@@ -281,6 +331,8 @@ export function AppProvider({ children }) {
       apiKey: cfg.api_key,
       authType: cfg.auth_type,
       enabled: cfg.enabled,
+      sandbox: cfg.sandbox !== false,
+      pauseSandboxOutbound: cfg.pause_sandbox_outbound === true,
       features: buildSentryFeatureConfig(cfg),
     });
   }
@@ -340,9 +392,19 @@ export function AppProvider({ children }) {
       initialSessionResolvedRef.current = true;
       setUser(session?.user ?? null);
       if (session?.user) {
+        // Token refresh must not flip the whole app into <LoadingScreen /> — that unmounts Driver/Dispatch
+        // and wipes in-memory session (embedded driver, trip offer, etc.).
+        if (event === 'TOKEN_REFRESHED') {
+          return;
+        }
         setLoading(true);
         (async () => { await loadUserData(session.user); })();
       } else {
+        try {
+          if (typeof window !== 'undefined') {
+            window.localStorage?.removeItem('pd_driver_embed_session_v1');
+          }
+        } catch {}
         setProfile(null);
         setOrg(null);
         setCompany(null);
@@ -369,9 +431,7 @@ export function AppProvider({ children }) {
 
   async function loadUserData(u) {
     try {
-      const metadataRole =
-        normalizeAppRole(u?.user_metadata?.role) ||
-        normalizeAppRole(u?.app_metadata?.role);
+      const metadataRole = await resolveAuthRole(u);
 
       if (metadataRole && !profile) {
         setProfile(prev => prev || {
@@ -416,6 +476,39 @@ export function AppProvider({ children }) {
           .upsert(prof, { onConflict: 'id' })
           .then(({ error }) => {
             if (error) logFailure('loadUserData:forceAdminProfile', error);
+          });
+      }
+
+      const normalizedStoredRole = normalizeAppRole(prof?.role);
+      if (
+        metadataRole &&
+        metadataRole !== normalizedStoredRole &&
+        !isPlatformOwnerEmail &&
+        !adminMembership?.org_id
+      ) {
+        prof = {
+          ...(prof || {
+            id: u.id,
+            email: u.email || '',
+            full_name:
+              u?.user_metadata?.full_name ||
+              u?.user_metadata?.name ||
+              (u.email ? u.email.split('@')[0] : 'User'),
+          }),
+          role: metadataRole,
+          company_id:
+            metadataRole === 'company'
+              ? (u?.user_metadata?.company_id || prof?.company_id || null)
+              : (prof?.company_id || null),
+        };
+
+        setProfile(prof);
+
+        supabase
+          .from('profiles')
+          .upsert(prof, { onConflict: 'id' })
+          .then(({ error }) => {
+            if (error) logFailure('loadUserData:syncMetadataRole', error);
           });
       }
 
@@ -577,15 +670,17 @@ export function AppProvider({ children }) {
 
         setLoading(false);
       }
-      if (!autoPullRef.current) {
+      if (!autoPullRef.current && normalizedProfRole === 'company') {
         autoPullRef.current = setInterval(async () => {
           if (!sentryApi.enabled) return;
           const scopedCompanyId = sentryPollCompanyIdRef.current;
+          if (!scopedCompanyId) return;
 
           function mapTrip(t) {
             const pickup = t.pick_up_location || {};
             const dropoff = t.drop_off_location || {};
             const prices = t.prices || {};
+            const extStatus = pickExternalTripStatus(t);
             return {
               sentry_trip_id: String(t.trip_id || t.id || Math.random()),
               sentry_last_modified_at: String(t.last_modified_at || ''),
@@ -614,7 +709,9 @@ export function AppProvider({ children }) {
                 prices.actual_cost ||
                 ''
               ),
-              status: 'available',
+              status: deriveMarketplaceTripStatus(t),
+              assignment_type_code: pickAssignmentTypeCode(t),
+              external_trip_status: extStatus,
               company_id: scopedCompanyId,
               pu_lat: pickup.lat ?? null,
               pu_lng: pickup.lng ?? null,
@@ -638,7 +735,7 @@ export function AppProvider({ children }) {
                   let refreshQuery = supabase
                     .from('marketplace_trips')
                     .select('*')
-                    .eq('status', 'available')
+                    .in('status', ['available', 'assigned', 'accepted', 'arrived', 'picked_up'])
                     .order('loaded_at', { ascending: false });
                   if (scopedCompanyId) refreshQuery = refreshQuery.eq('company_id', scopedCompanyId);
                   const { data } = await refreshQuery;
@@ -770,7 +867,7 @@ export function AppProvider({ children }) {
     }
     let query = supabase
       .from('trip_assignments')
-      .select('*, drivers(full_name, photo_data, status, company_id)')
+      .select('*, drivers(full_name, photo_data, status, company_id, is_active)')
       .order('assigned_at', { ascending: false })
       .limit(200);
 
@@ -786,11 +883,13 @@ export function AppProvider({ children }) {
       }
 
       const driverIds = (companyDrivers || []).map(row => row.id).filter(Boolean);
-      if (!driverIds.length) {
-        setAssignments([]);
-        return [];
+      if (driverIds.length) {
+        query = query.or(
+          `company_id.eq.${scopedCompanyId},driver_id.in.(${driverIds.join(',')})`
+        );
+      } else {
+        query = query.eq('company_id', scopedCompanyId);
       }
-      query = query.in('driver_id', driverIds);
     }
 
     const { data, error } = await query;
@@ -829,6 +928,7 @@ export function AppProvider({ children }) {
     const pickup = t.pick_up_location || {};
     const dropoff = t.drop_off_location || {};
     const prices = t.prices || {};
+    const extStatus = pickExternalTripStatus(t);
     return {
       sentry_trip_id: String(t.trip_id || t.id || Math.random()),
       sentry_last_modified_at: String(t.last_modified_at || ''),
@@ -857,7 +957,9 @@ export function AppProvider({ children }) {
         prices.actual_cost ||
         ''
       ),
-      status: 'available',
+      status: deriveMarketplaceTripStatus(t),
+      assignment_type_code: pickAssignmentTypeCode(t),
+      external_trip_status: extStatus,
       company_id: scopedCompanyId,
       pu_lat: pickup.lat ?? null,
       pu_lng: pickup.lng ?? null,
@@ -1062,6 +1164,8 @@ export function AppProvider({ children }) {
         .from('marketplace_trips')
         .select('*')
         .eq('status', 'available')
+        .is('taken_by', null)
+        .order('pu_time', { ascending: true, nullsFirst: false })
         .order('loaded_at', { ascending: true });
 
       if ((isCompanyRole || normalizedRole === 'admin') && activeCompany?.id) {

@@ -20,9 +20,40 @@ function pickExternalTripStatus(t: Record<string, unknown>) {
   return String(t.trip_status || t.status || t.marketplace_status || t.lifecycle_status || '').trim();
 }
 
+function asJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function extractLifecycleStatusId(t: Record<string, unknown>) {
+  const nestedTrip = asJsonObject(t.trip);
+  const statusId = Number(
+    t.status_id ??
+    t.trip_status_id ??
+    t.trip_processing_status_id ??
+    nestedTrip.status_id ??
+    nestedTrip.trip_status_id ??
+    nestedTrip.trip_processing_status_id
+  );
+  return Number.isFinite(statusId) ? statusId : null;
+}
+
 function deriveMarketplaceTripStatus(t: Record<string, unknown>) {
   const s = pickExternalTripStatus(t).toLowerCase();
-  if (!s) return 'available';
+  const statusId = extractLifecycleStatusId(t);
+  if (statusId === 6 || ['completed', 'complete', 'done', 'closed'].includes(s)) return 'completed';
+  if (statusId === 7 || statusId === 8) return 'cancelled';
+  if (s.includes('rerout')) return 'cancelled';
   if (
     [
       'cancelled',
@@ -39,9 +70,9 @@ function deriveMarketplaceTripStatus(t: Record<string, unknown>) {
     return 'cancelled';
   }
   if (['completed', 'complete', 'done', 'closed'].includes(s)) return 'completed';
-  if (['picked_up', 'picked-up', 'on_trip'].includes(s)) return 'picked_up';
-  if (['arrived', 'arrived_at_pickup'].includes(s)) return 'arrived';
-  if (['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(s)) return 'accepted';
+  if (statusId === 5 || ['picked_up', 'picked-up', 'on_trip', 'passenger_picked_up'].includes(s)) return 'picked_up';
+  if (statusId === 4 || ['arrived', 'arrived_at_pickup'].includes(s)) return 'arrived';
+  if (statusId === 3 || statusId === 2 || ['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(s)) return 'accepted';
   return 'available';
 }
 
@@ -58,6 +89,46 @@ function pickIncomingCompanyId(t: Record<string, unknown>) {
     null;
   const value = String(candidate || '').trim();
   return value || null;
+}
+
+function extractRerouteMeta(t: Record<string, unknown>) {
+  return {
+    reroutedFromTripId: String(
+      t.rerouted_from_trip_id ||
+      t.reroute_source_trip_id ||
+      t.previous_trip_id ||
+      ''
+    ).trim(),
+    rerouteGroupId: String(
+      t.reroute_group_id ||
+      t.route_group_id ||
+      ''
+    ).trim(),
+  };
+}
+
+function extractPriceAdjustmentMeta(t: Record<string, unknown>) {
+  const adjustment = asJsonObject(t.price_adjustment);
+  const amount =
+    t.price_adjustment_amount ??
+    adjustment.amount ??
+    null;
+  const reason =
+    t.price_adjustment_reason ??
+    adjustment.reason ??
+    null;
+  const previousTotal =
+    t.previous_total_amount ??
+    t.previous_delivery_price ??
+    adjustment.previous_total_amount ??
+    adjustment.previous_delivery_price ??
+    null;
+
+  return {
+    amount: amount === null || amount === undefined || amount === '' ? null : Number(amount),
+    reason: String(reason || '').trim() || null,
+    previousTotal: previousTotal === null || previousTotal === undefined || previousTotal === '' ? null : Number(previousTotal),
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -121,7 +192,7 @@ Deno.serve(async (req: Request) => {
       .from('webhook_logs')
       .select('id')
       .eq('idempotency_key', idempotencyKey)
-      .eq('endpoint', endpoint)
+      .eq('webhook_type', endpoint)
       .maybeSingle();
 
     if (existing) {
@@ -172,10 +243,12 @@ Deno.serve(async (req: Request) => {
         const prices = (t.prices as Record<string, unknown>) || {};
         const { data: existingTrip } = await supabase
           .from('marketplace_trips')
-          .select('company_id')
+          .select('company_id, delivery_price')
           .eq('sentry_trip_id', tripId)
           .maybeSingle();
         const scopedCompanyId = pickIncomingCompanyId(t) || existingTrip?.company_id || null;
+        const rerouteMeta = extractRerouteMeta(t);
+        const priceAdjustmentMeta = extractPriceAdjustmentMeta(t);
 
         const rowStatus = deriveMarketplaceTripStatus(t);
         const mapped = {
@@ -231,6 +304,24 @@ Deno.serve(async (req: Request) => {
             error_message: null,
           });
 
+          const previousPrice = Number(existingTrip?.delivery_price ?? NaN);
+          const nextPrice = Number(mapped.delivery_price ?? NaN);
+          if (Number.isFinite(previousPrice) && Number.isFinite(nextPrice) && previousPrice !== nextPrice) {
+            await supabase.from('supervisor_alerts').insert({
+              bot_name: 'sentry-receivers',
+              alert_type: 'broker_price_adjustment',
+              message: `Inbound trips_receiver changed trip ${tripId} price from ${previousPrice.toFixed(2)} to ${nextPrice.toFixed(2)}.`,
+              severity: 'info',
+              payload: {
+                trip_id: tripId,
+                previous_total_amount: priceAdjustmentMeta.previousTotal ?? previousPrice,
+                total_amount: nextPrice,
+                price_adjustment_amount: priceAdjustmentMeta.amount,
+                price_adjustment_reason: priceAdjustmentMeta.reason,
+              },
+            });
+          }
+
           if (rowStatus === 'cancelled') {
             await supabase
               .from('trip_assignments')
@@ -245,6 +336,22 @@ Deno.serve(async (req: Request) => {
               severity: 'warning',
               payload: {
                 trip_id: tripId,
+                assignment_type_code: pickAssignmentTypeCode(t),
+                external_trip_status: pickExternalTripStatus(t),
+              },
+            });
+          }
+
+          if (rerouteMeta.reroutedFromTripId || pickExternalTripStatus(t).toLowerCase().includes('rerout')) {
+            await supabase.from('supervisor_alerts').insert({
+              bot_name: 'sentry-receivers',
+              alert_type: 'broker_trip_rerouted',
+              message: `Inbound trips_receiver marked trip ${tripId} as rerouted / replaced.`,
+              severity: 'warning',
+              payload: {
+                trip_id: tripId,
+                rerouted_from_trip_id: rerouteMeta.reroutedFromTripId || null,
+                reroute_group_id: rerouteMeta.rerouteGroupId || null,
                 assignment_type_code: pickAssignmentTypeCode(t),
                 external_trip_status: pickExternalTripStatus(t),
               },
@@ -302,6 +409,7 @@ Deno.serve(async (req: Request) => {
                   pu_address: mapped.pu_address,
                   do_address: mapped.do_address,
                   pu_time: mapped.pu_time,
+                  scheduled_pickup_time: mapped.pu_time || null,
                   delivery_price: parseFloat(mapped.delivery_price) || 0,
                   mileage: parseFloat(mapped.mileage) || 0,
                   scheduled_order: nextOrder,
@@ -397,12 +505,11 @@ Deno.serve(async (req: Request) => {
     }
 
     await supabase.from('webhook_logs').insert({
-      endpoint,
+      webhook_type: endpoint,
       raw_payload: payload,
       processed: logStatus !== 'error',
       idempotency_key: idempotencyKey,
       error_message: logError,
-      trip_ids_accepted: acceptedIds,
       received_at: new Date().toISOString(),
     });
 

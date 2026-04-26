@@ -16,6 +16,8 @@ const resolveAuthMode = (authType: unknown, username: string, apiKey: string) =>
 };
 const TIMEOUT_MS = 15000;
 
+const isWriteMethod = (method: string) => !['GET', 'HEAD', 'OPTIONS'].includes(method);
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -75,7 +77,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: cfg, error: cfgError } = await supabase
       .from('sentry_config')
-      .select('base_url, auth_type, username, password_enc, api_key, enabled')
+      .select('base_url, auth_type, username, password_enc, api_key, enabled, sandbox, pause_sandbox_outbound')
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -86,6 +88,23 @@ Deno.serve(async (req: Request) => {
 
     if (!cfg?.base_url || cfg.enabled === false) {
       return json({ phase: 'edge', error_type: 'config', message: 'Sentry config is missing or disabled', status: 400 }, 400);
+    }
+
+    if (cfg.sandbox !== false && cfg.pause_sandbox_outbound === true && isWriteMethod(method)) {
+      return json(
+        {
+          latencyMs: 0,
+          status: 202,
+          data: {
+            skipped: true,
+            reason: 'sandbox_outbound_paused',
+            message: 'Sandbox outbound writes are paused in admin settings.',
+            method,
+            path,
+          },
+        },
+        202,
+      );
     }
 
     const headers: Record<string, string> = {

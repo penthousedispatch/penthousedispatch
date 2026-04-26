@@ -23,10 +23,39 @@ export function pickExternalTripStatus(raw = {}) {
   ).trim();
 }
 
+function asJsonObject(value) {
+  if (value && typeof value === 'object') return value;
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function extractLifecycleStatusId(raw = {}) {
+  const nestedTrip = asJsonObject(raw.trip);
+  const statusId = Number(
+    raw.status_id ??
+    raw.trip_status_id ??
+    raw.trip_processing_status_id ??
+    nestedTrip.status_id ??
+    nestedTrip.trip_status_id ??
+    nestedTrip.trip_processing_status_id
+  );
+  return Number.isFinite(statusId) ? statusId : null;
+}
+
 /** Maps broker/Sentry vocabulary to marketplace_trips.status */
 export function deriveMarketplaceTripStatus(raw = {}) {
   const s = pickExternalTripStatus(raw).toLowerCase();
-  if (!s) return 'available';
+  const statusId = extractLifecycleStatusId(raw);
+  if (statusId === 6 || ['completed', 'complete', 'done', 'closed'].includes(s)) return 'completed';
+  if (statusId === 7 || statusId === 8) return 'cancelled';
+  if (s.includes('rerout')) return 'cancelled';
   if (
     [
       'cancelled',
@@ -42,8 +71,11 @@ export function deriveMarketplaceTripStatus(raw = {}) {
   ) {
     return 'cancelled';
   }
-  if (['completed', 'complete', 'done', 'closed'].includes(s)) return 'completed';
-  if (['assigned', 'accepted', 'locked', 'in_progress', 'in progress'].includes(s)) return 'assigned';
+  if (statusId === 5 || ['picked_up', 'picked-up', 'on_trip', 'passenger_picked_up'].includes(s)) return 'picked_up';
+  if (statusId === 4 || ['arrived', 'arrived_at_pickup'].includes(s)) return 'arrived';
+  if (statusId === 3 || statusId === 2 || ['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(s)) {
+    return 'accepted';
+  }
   return 'available';
 }
 

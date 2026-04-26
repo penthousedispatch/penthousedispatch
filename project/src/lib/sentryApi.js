@@ -174,7 +174,7 @@ class SentryApiClient {
     this.apiKey = '';
     this.authType = 'basic';
     this.enabled = true;
-    this.config = { enabled: true };
+    this.config = { enabled: true, sandbox: true, pauseSandboxOutbound: false };
 
     this.features = {
       assignedTrips: true,
@@ -205,6 +205,14 @@ class SentryApiClient {
     this.config = { ...this.config, ...config };
   }
 
+  shouldPauseSandboxOutbound(method) {
+    const normalizedMethod = String(method || 'GET').toUpperCase();
+    if (normalizedMethod === 'GET' || normalizedMethod === 'HEAD' || normalizedMethod === 'OPTIONS') {
+      return false;
+    }
+    return this.config?.sandbox !== false && this.config?.pauseSandboxOutbound === true;
+  }
+
   getHeaders() {
     const headers = {
       'Content-Type': 'application/json',
@@ -221,6 +229,21 @@ class SentryApiClient {
 
   async request(method, path, body = null) {
     const normalizedBody = body ? normalizeSentryPayloadTimestamps(body) : null;
+    if (this.shouldPauseSandboxOutbound(method)) {
+      return {
+        ok: true,
+        skipped: true,
+        status: 202,
+        latency: 0,
+        data: {
+          skipped: true,
+          reason: 'sandbox_outbound_paused',
+          message: 'Sandbox outbound writes are paused in admin settings.',
+          method: String(method || 'GET').toUpperCase(),
+          path,
+        },
+      };
+    }
     const allowDirectFallback = shouldAllowDirectSentryFallback();
     let edgeTransportError = null;
 
@@ -563,8 +586,12 @@ class SentryApiClient {
   }
 
   // ─── Driver Work Shifts ───────────────────────────────────────────────────
-  async getDriverWorkShifts() {
-    return this.request('GET', '/rest/transportation_provider_facade/v4.0/driver_work_shifts.json');
+  async getDriverWorkShifts(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(
+      'GET',
+      `/rest/transportation_provider_facade/v4.0/driver_work_shifts.json${qs ? `?${qs}` : ''}`
+    );
   }
 
   // ─── Sync helpers ─────────────────────────────────────────────────────────
