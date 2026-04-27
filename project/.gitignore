@@ -1,3 +1,6 @@
+# Standalone Hempstead / map tooling lives outside this repo (see ~/Documents/hempstead-map-generator)
+hempstead_map_generator/
+
 node_modules/
 dist/
 dist-driver/
