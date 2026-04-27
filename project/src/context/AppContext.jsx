@@ -73,6 +73,8 @@ export function AppProvider({ children }) {
   // can't ping-pong the role and stall the dashboard in a loadUserData loop.
   const selfProfileWriteRef = useRef(0);
   const SELF_PROFILE_WRITE_ECHO_MS = 2500;
+  /** Tracks prior pause_sandbox_outbound so we can notify driver clients to re-sync accept/status2. */
+  const pauseSandboxOutboundPrevRef = useRef(null);
   const normalizedRole = normalizeAppRole(profile?.role);
   const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
   const isCompanyRole = normalizedRole === 'company';
@@ -351,6 +353,32 @@ export function AppProvider({ children }) {
     applySentryConfig(cfg);
     return cfg;
   }
+
+  // When the tab/app returns to foreground, refresh Sentry config so driver sessions
+  // pick up Admin changes (e.g. turning off "pause sandbox outbound") without a full reload.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    function onVisibilityChange() {
+      if (document.visibilityState !== 'visible' || !user?.id) return;
+      fetchLatestSentryConfig()
+        .then(cfg => {
+          applySentryConfig(cfg);
+        })
+        .catch(err => logFailure('visibility:sentry_config', err));
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [user?.id]);
+
+  // When outbound pause is cleared, tell the driver app to re-send accept + status 2 for the active trip.
+  useEffect(() => {
+    const paused = sentryConfig?.pause_sandbox_outbound === true;
+    const prev = pauseSandboxOutboundPrevRef.current;
+    pauseSandboxOutboundPrevRef.current = paused;
+    if (prev === true && paused === false && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pd-sentry-outbound-resumed'));
+    }
+  }, [sentryConfig?.pause_sandbox_outbound, sentryConfig?.updated_at]);
 
   useEffect(() => {
     let mounted = true;

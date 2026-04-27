@@ -692,6 +692,7 @@ export default function DriverApp() {
   const pollRef = useRef(null);
   const sheetStateRef = useRef(sheetState);
   const currentTripRef = useRef(currentTrip);
+  const ensureSentryAcceptedSyncRef = useRef(null);
   const shiftStartRef = useRef(Date.now());
   const motivationTimerRef = useRef(null);
   const consecutiveTripsRef = useRef(0);
@@ -731,6 +732,21 @@ export default function DriverApp() {
 
   useEffect(() => { sheetStateRef.current = sheetState; }, [sheetState]);
   useEffect(() => { currentTripRef.current = currentTrip; }, [currentTrip]);
+
+  useEffect(() => {
+    function onOutboundResumed() {
+      const trip = currentTripRef.current;
+      const id = String(trip?.tripId || '').trim();
+      if (!id.startsWith('STY-')) return;
+      const fn = ensureSentryAcceptedSyncRef.current;
+      if (typeof fn === 'function') {
+        fn(trip, { source: 'outbound_resumed', throttleMs: 0, notifyOnFailure: true });
+      }
+    }
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener('pd-sentry-outbound-resumed', onOutboundResumed);
+    return () => window.removeEventListener('pd-sentry-outbound-resumed', onOutboundResumed);
+  }, []);
   useEffect(() => { locationRef.current = location; }, [location]);
   useEffect(() => {
     const tripId = normalizeUiTripId(currentTrip?.tripId);
@@ -1979,15 +1995,18 @@ export default function DriverApp() {
         }
       : sentryResult;
 
+    const outboundPausedLog = sentryResult?.data?.reason === 'sandbox_outbound_paused';
     await supabase.from('sentry_sync_log').insert({
       sync_type: `trip_status_${statusId}`,
       direction: 'export',
       record_type: 'trip',
       external_id: String(tripId),
-      status: effectiveResult.ok ? 'success' : 'failed',
-      error_message: effectiveResult.ok
-        ? (effectiveResult.downgraded ? `Downgraded upstream lifecycle warning: ${effectiveResult.error}` : '')
-        : (effectiveResult.error || `HTTP ${effectiveResult.status}`),
+      status: outboundPausedLog ? 'skipped' : (effectiveResult.ok ? 'success' : 'failed'),
+      error_message: outboundPausedLog
+        ? 'sandbox_outbound_paused — turn off in Admin → Sentry'
+        : (effectiveResult.ok
+          ? (effectiveResult.downgraded ? `Downgraded upstream lifecycle warning: ${effectiveResult.error}` : '')
+          : (effectiveResult.error || `HTTP ${effectiveResult.status}`)),
       payload: {
         ...payload,
         retry_minimal_payload: retryUsed,
@@ -1995,8 +2014,12 @@ export default function DriverApp() {
       },
     });
 
-    if (!effectiveResult.ok) {
+    if (!effectiveResult.ok && !outboundPausedLog) {
       logFailure(`DriverApp:tripStatus:${statusId}`, { status: effectiveResult.status, error: effectiveResult.error });
+    }
+
+    if (outboundPausedLog) {
+      return { ...effectiveResult, ok: false, skipped: true, outboundPaused: true };
     }
 
     return effectiveResult;
@@ -2035,13 +2058,16 @@ export default function DriverApp() {
           last_modified_at: trip?.lastModifiedAt || '',
           accepted_at: acceptedAt || trip?.acceptedAt || new Date().toISOString(),
         });
+        const acceptOutboundPaused = acceptResult.data?.reason === 'sandbox_outbound_paused';
         await supabase.from('sentry_sync_log').insert({
           sync_type: source === 'driver_accept' ? 'trip_accept' : 'trip_accept_retry',
           direction: 'export',
           record_type: 'trip',
           external_id: String(tripId),
-          status: acceptResult.ok ? 'success' : 'failed',
-          error_message: acceptResult.ok ? '' : (acceptResult.error || `HTTP ${acceptResult.status}`),
+          status: acceptOutboundPaused ? 'skipped' : (acceptResult.ok ? 'success' : 'failed'),
+          error_message: acceptOutboundPaused
+            ? 'sandbox_outbound_paused — turn off in Admin → Sentry'
+            : (acceptResult.ok ? '' : (acceptResult.error || `HTTP ${acceptResult.status}`)),
           payload: {
             driver_id: driverData?.id || null,
             source,
@@ -2053,15 +2079,22 @@ export default function DriverApp() {
       const statusResult = await sendSentryLifecycleStatus(tripId, 2, {
         last_modified_at: effectiveAcceptedAt,
       });
-      const ok = Boolean((acceptResult.ok || acceptResult.skipped) && (statusResult.ok || statusResult.skipped));
+      const statusOutboundPaused = statusResult.data?.reason === 'sandbox_outbound_paused';
+      const blockedByOutboundPause = Boolean(acceptResult.data?.reason === 'sandbox_outbound_paused' || statusOutboundPaused);
+      const syntheticOk = Boolean((acceptResult.ok || acceptResult.skipped) && (statusResult.ok || statusResult.skipped));
+      const ok = !blockedByOutboundPause && syntheticOk;
 
       if (!ok && notifyOnFailure) {
-        if (!acceptResult.ok) {
+        if (blockedByOutboundPause) {
+          showToast('Sentry outbound is paused in Admin. Turn it off, then we will re-sync this trip to Sentry.');
+        } else if (!acceptResult.ok) {
           showToast(`Trip accepted locally, but Sentry accept sync failed. ${acceptResult.error || `HTTP ${acceptResult.status}`}`);
         }
-        toastSentryLifecycleFailure('Trip accepted locally, but Sentry status update failed.', statusResult, {
-          isTestTrip: Boolean(trip?.isTestTrip),
-        });
+        if (!blockedByOutboundPause) {
+          toastSentryLifecycleFailure('Trip accepted locally, but Sentry status update failed.', statusResult, {
+            isTestTrip: Boolean(trip?.isTestTrip),
+          });
+        }
       }
 
       return { ok, acceptResult, statusResult };
@@ -2070,6 +2103,8 @@ export default function DriverApp() {
       retryState.lastAttemptMs = Date.now();
     }
   }
+
+  ensureSentryAcceptedSyncRef.current = ensureSentryAcceptedSync;
 
   function normalizeCompletionMeta(meta = {}) {
     const fareValue = meta.collectedFare;

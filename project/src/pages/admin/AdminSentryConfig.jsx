@@ -430,6 +430,7 @@ export default function AdminSentryConfig() {
                     </p>
                     <p className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
                       Stops POST and PUT requests from hitting Sentry sandbox while you test. Reads still work, so your setup stays visible without spamming their side.
+                      When you turn this off, the driver app automatically re-syncs accept + status (status 2) for the current STY- trip; switching back to the driver tab also reloads this setting.
                     </p>
                   </div>
                   <Toggle field="pause_sandbox_outbound" />
