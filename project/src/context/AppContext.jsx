@@ -609,6 +609,7 @@ export function AppProvider({ children }) {
 
         setCompany(comp);
         if (comp?.id && prof.company_id !== comp.id) {
+          selfProfileWriteRef.current = Date.now();
           supabase
             .from('profiles')
             .update({ company_id: comp.id, updated_at: new Date().toISOString() })
