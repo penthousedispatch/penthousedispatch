@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { sentryApi } from '../lib/sentryApi';
+import { sentryApi, extractSentryTripArray } from '../lib/sentryApi';
 import { isSyntheticMarketplaceTrip } from '../lib/sentrySyntheticTrips';
 import { getEdgeFunctionHeaders } from '../lib/edgeHeaders';
 import { handleSupabaseError, logFailure, toastError } from '../utils/errorHandler';
@@ -71,6 +71,48 @@ function mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId) {
 
 function ingestibleInboundMarketplaceRow(row = {}) {
   return Boolean(row.sentry_trip_id) && !isSyntheticMarketplaceTrip(row);
+}
+
+/** `getMarketplaceTrips`/`getAssignedTrips` unwrap to arrays; tolerate raw shapes anyway. */
+function normalizedSentryInboundTripArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  return extractSentryTripArray(payload || {});
+}
+
+function collectPreserveTripIdsFromInbound(rawTrips = [], scopedCompanyId) {
+  const ids = new Set();
+  for (const t of rawTrips || []) {
+    const row = mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId);
+    if (!ingestibleInboundMarketplaceRow(row)) continue;
+    if (row.sentry_trip_id) ids.add(row.sentry_trip_id);
+  }
+  return ids;
+}
+
+/**
+ * After a successful Sentry marketplace snapshot, drop stale `marketplace_trips` still marked
+ * `available`/unclaimed locally but absent from that pull (assigned ids merged when assigned pull succeeds).
+ * Webhooks re-upsert on ingest; trips only in webhook until next poll may disappear next reconcile.
+ */
+async function pruneOrphanUntakenMarketplaceRows(companyId, preserveTripIdSet = new Set()) {
+  if (!companyId) return;
+  const keep = [...preserveTripIdSet].map(String).filter(Boolean);
+  try {
+    let q = supabase
+      .from('marketplace_trips')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('status', 'available')
+      .is('taken_by', null);
+    if (keep.length > 0) {
+      const inList = keep.map(id => `"${String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',');
+      q = q.not('sentry_trip_id', 'in', `(${inList})`);
+    }
+    const { error } = await q;
+    if (error) logFailure('pruneOrphanUntakenMarketplaceRows', error);
+  } catch (e) {
+    logFailure('pruneOrphanUntakenMarketplaceRows', e);
+  }
 }
 
 const AppContext = createContext(null);
@@ -771,56 +813,57 @@ export function AppProvider({ children }) {
           const scopedCompanyId = sentryPollCompanyIdRef.current;
           if (!scopedCompanyId) return;
 
+          const preserveTripIds = new Set();
+          let marketplacePullOk = false;
           let newTripsArrived = false;
 
           if (sentryApi.features.marketplaceTrips) {
             const result = await sentryApi.getMarketplaceTrips();
-            if (result.ok) {
-              const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
-              if (rawTrips.length > 0) {
-                const mapped = rawTrips
-                  .map(t => mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId))
-                  .filter(ingestibleInboundMarketplaceRow);
-                if (mapped.length > 0) {
-                  const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-                  if (!error) {
-                    let refreshQuery = supabase
-                      .from('marketplace_trips')
-                      .select('*')
-                      .in('status', ['available', 'assigned', 'accepted', 'arrived', 'picked_up'])
-                      .order('loaded_at', { ascending: false });
-                    refreshQuery = refreshQuery.eq('company_id', scopedCompanyId);
-                    const { data } = await refreshQuery;
-                    if (data) {
-                      setTrips(
-                        (data || []).filter(
-                          trip =>
-                            !isSyntheticMarketplaceTrip(trip) && !isBrokerNonAcceptedMarketplaceRow(trip)
-                        )
-                      );
-                      newTripsArrived = true;
-                    }
-                  }
-                }
+            marketplacePullOk = result.ok;
+            if (marketplacePullOk) {
+              const rawTrips = normalizedSentryInboundTripArray(result.data);
+              for (const id of collectPreserveTripIdsFromInbound(rawTrips, scopedCompanyId)) {
+                preserveTripIds.add(id);
+              }
+              const mapped = rawTrips
+                .map(t => mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId))
+                .filter(ingestibleInboundMarketplaceRow);
+              if (mapped.length > 0) {
+                const { error } = await supabase
+                  .from('marketplace_trips')
+                  .upsert(mapped, { onConflict: 'sentry_trip_id' });
+                if (!error) newTripsArrived = true;
               }
             }
           }
 
           if (sentryApi.features.assignedTrips) {
             const result = await sentryApi.getAssignedTrips();
-            if (result.ok) {
-              const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
-              if (rawTrips.length > 0) {
-                const mapped = rawTrips
-                  .map(t => mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId))
-                  .filter(ingestibleInboundMarketplaceRow);
-                if (mapped.length > 0) {
-                  await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-                  newTripsArrived = true;
+            const assignedPullOk = result.ok;
+            if (assignedPullOk) {
+              const rawTrips = normalizedSentryInboundTripArray(result.data);
+              if (marketplacePullOk) {
+                for (const id of collectPreserveTripIdsFromInbound(rawTrips, scopedCompanyId)) {
+                  preserveTripIds.add(id);
                 }
+              }
+              const mapped = rawTrips
+                .map(t => mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId))
+                .filter(ingestibleInboundMarketplaceRow);
+              if (mapped.length > 0) {
+                const { error } = await supabase
+                  .from('marketplace_trips')
+                  .upsert(mapped, { onConflict: 'sentry_trip_id' });
+                if (!error) newTripsArrived = true;
               }
             }
           }
+
+          if (marketplacePullOk) {
+            await pruneOrphanUntakenMarketplaceRows(scopedCompanyId, preserveTripIds);
+          }
+
+          await loadTrips();
 
           if (newTripsArrived) {
             runAISchedulerPipeline();
@@ -1014,22 +1057,27 @@ export function AppProvider({ children }) {
       };
     }
 
+    const preserveTripIds = new Set();
+    let marketplacePullOk = false;
+
     if (sentryApi.features.marketplaceTrips) {
       const result = await sentryApi.getMarketplaceTrips();
-      if (result.ok) {
-        const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
-        if (rawTrips.length > 0) {
-          const mapped = rawTrips
-            .map(trip => mapSentryTrip(trip, scopedCompanyId))
-            .filter(ingestibleInboundMarketplaceRow);
-          if (mapped.length > 0) {
-            const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-            if (error) {
-              handleSupabaseError(error, 'refreshTripsFromSentry:marketplace', { fallback: 'Failed to save marketplace trips.' });
-              lastError = error.message;
-            } else {
-              totalCount += mapped.length;
-            }
+      marketplacePullOk = result.ok;
+      if (marketplacePullOk) {
+        const rawTrips = normalizedSentryInboundTripArray(result.data);
+        for (const id of collectPreserveTripIdsFromInbound(rawTrips, scopedCompanyId)) {
+          preserveTripIds.add(id);
+        }
+        const mapped = rawTrips
+          .map(trip => mapSentryTrip(trip, scopedCompanyId))
+          .filter(ingestibleInboundMarketplaceRow);
+        if (mapped.length > 0) {
+          const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
+          if (error) {
+            handleSupabaseError(error, 'refreshTripsFromSentry:marketplace', { fallback: 'Failed to save marketplace trips.' });
+            lastError = error.message;
+          } else {
+            totalCount += mapped.length;
           }
         }
       } else {
@@ -1039,18 +1087,26 @@ export function AppProvider({ children }) {
 
     if (sentryApi.features.assignedTrips) {
       const result = await sentryApi.getAssignedTrips();
-      if (result.ok) {
-        const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
-        if (rawTrips.length > 0) {
-          const mapped = rawTrips
-            .map(trip => mapSentryTrip(trip, scopedCompanyId))
-            .filter(ingestibleInboundMarketplaceRow);
-          if (mapped.length > 0) {
-            const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-            if (!error) totalCount += mapped.length;
+      const assignedPullOk = result.ok;
+      if (assignedPullOk) {
+        const rawTrips = normalizedSentryInboundTripArray(result.data);
+        if (marketplacePullOk) {
+          for (const id of collectPreserveTripIdsFromInbound(rawTrips, scopedCompanyId)) {
+            preserveTripIds.add(id);
           }
         }
+        const mapped = rawTrips
+          .map(trip => mapSentryTrip(trip, scopedCompanyId))
+          .filter(ingestibleInboundMarketplaceRow);
+        if (mapped.length > 0) {
+          const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
+          if (!error) totalCount += mapped.length;
+        }
       }
+    }
+
+    if (scopedCompanyId && marketplacePullOk) {
+      await pruneOrphanUntakenMarketplaceRows(scopedCompanyId, preserveTripIds);
     }
 
     await loadTrips();
