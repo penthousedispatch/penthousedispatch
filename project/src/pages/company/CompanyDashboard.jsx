@@ -12,6 +12,7 @@ import { clearGuideAudio, getGuideAudioRecord, saveGuideAudioFile, saveGuideAudi
 import AddDriverModal from '../../components/drivers/AddDriverModal';
 import CSVImportModal, { CSV_DRIVERS } from '../../components/drivers/CSVImportModal';
 import { isSyntheticMarketplaceTrip } from '../../lib/sentrySyntheticTrips';
+import { isBrokerNonAcceptedMarketplaceRow } from '../../lib/sentryTripInbound';
 import {
   Users, Navigation, FileText, Settings, LogOut,
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck, Trophy,
@@ -1301,7 +1302,9 @@ function CompanyMarketplace({ company }) {
       handleSupabaseError(error, 'CompanyMarketplace:load', { silent: true, fallback: 'Failed to load marketplace trips.' });
     }
 
-    return (data || []).filter(trip => !isSyntheticMarketplaceTrip(trip));
+    return (data || []).filter(
+      trip => !isSyntheticMarketplaceTrip(trip) && !isBrokerNonAcceptedMarketplaceRow(trip)
+    );
   }
 
   useEffect(() => {

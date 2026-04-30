@@ -120,6 +120,21 @@ export function deriveMarketplaceTripStatusFromStoredRow(row = {}) {
   return deriveMarketplaceTripStatus(merged);
 }
 
+/**
+ * Persisted marketplace_trips column + embedded Sentry snapshot.
+ * When brokers send acceptance_status_id=0 ("not yours"), the row must not look like claimable marketplace work.
+ */
+export function isBrokerNonAcceptedMarketplaceRow(row = {}) {
+  const raw = asJsonObject(row.raw_payload);
+  const nestedTrip = asJsonObject(raw.trip);
+  const id = Number(
+    row.acceptance_status_id ??
+    raw.acceptance_status_id ??
+    nestedTrip.acceptance_status_id
+  );
+  return Number.isFinite(id) && id === 0;
+}
+
 /** Short reference for dispatch / testing (not exhaustive — extend as Sentry documents codes). */
 export const SENTRY_ASSIGNMENT_TYPE_REFERENCE = [
   { code: 'STANDARD', meaning: 'Default single-leg assignment' },

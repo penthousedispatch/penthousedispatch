@@ -12,6 +12,7 @@ import { ensurePlatformAdminOrg } from '../lib/platformAdminOrg';
 import { APP_VARIANT } from '../lib/appVariant';
 import {
   deriveMarketplaceTripStatus,
+  isBrokerNonAcceptedMarketplaceRow,
   pickAssignmentTypeCode,
   pickExternalTripStatus,
 } from '../lib/sentryTripInbound';
@@ -791,7 +792,12 @@ export function AppProvider({ children }) {
                     refreshQuery = refreshQuery.eq('company_id', scopedCompanyId);
                     const { data } = await refreshQuery;
                     if (data) {
-                      setTrips((data || []).filter(trip => !isSyntheticMarketplaceTrip(trip)));
+                      setTrips(
+                        (data || []).filter(
+                          trip =>
+                            !isSyntheticMarketplaceTrip(trip) && !isBrokerNonAcceptedMarketplaceRow(trip)
+                        )
+                      );
                       newTripsArrived = true;
                     }
                   }
@@ -907,7 +913,9 @@ export function AppProvider({ children }) {
       handleSupabaseError(error, 'loadTrips', { silent: inAdminPreview, fallback: 'Failed to load trips.' });
       return [];
     }
-    const rows = (data || []).filter(trip => !isSyntheticMarketplaceTrip(trip));
+    const rows = (data || []).filter(
+      trip => !isSyntheticMarketplaceTrip(trip) && !isBrokerNonAcceptedMarketplaceRow(trip)
+    );
     setTrips(rows);
     return rows;
   }
