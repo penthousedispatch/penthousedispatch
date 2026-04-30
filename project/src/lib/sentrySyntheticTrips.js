@@ -17,8 +17,11 @@ export function isSyntheticMarketplaceTrip(trip = {}, options = {}) {
     raw?.assignment_type_code ||
     ''
   ).trim().toUpperCase();
-  const source = String(raw?.source || '').trim().toLowerCase();
+  const source = String(raw?.source || '').trim();
+  const sourceLc = source.toLowerCase();
   const externalStatus = String(trip?.external_trip_status || '').trim().toLowerCase();
+  const penthouseHarnessSource =
+    sourceLc.startsWith('penthouse_local') || sourceLc.startsWith('penthouse_test');
 
   return Boolean(
     options?.isTestTrip ||
@@ -27,9 +30,9 @@ export function isSyntheticMarketplaceTrip(trip = {}, options = {}) {
     looksLikeSyntheticMarketplaceTripId(trip?.sentry_trip_id) ||
     assignmentTypeCode === 'TEST' ||
     assignmentTypeCode === 'LOCAL_TEST' ||
-    source.includes('local_test') ||
-    source.includes('test_mode') ||
-    source.includes('sandbox') ||
+    sourceLc.includes('local_test') ||
+    sourceLc.includes('test_mode') ||
+    penthouseHarnessSource ||
     externalStatus === 'local_test'
   );
 }

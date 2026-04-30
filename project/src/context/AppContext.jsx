@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { sentryApi } from '../lib/sentryApi';
+import { isSyntheticMarketplaceTrip } from '../lib/sentrySyntheticTrips';
 import { getEdgeFunctionHeaders } from '../lib/edgeHeaders';
 import { handleSupabaseError, logFailure, toastError } from '../utils/errorHandler';
 import { runAutoScheduler } from '../utils/autoScheduler';
@@ -14,6 +15,62 @@ import {
   pickAssignmentTypeCode,
   pickExternalTripStatus,
 } from '../lib/sentryTripInbound';
+
+function inboundSentryTripId(t = {}) {
+  const v = t.trip_id ?? t.id;
+  if (v == null) return '';
+  return String(v).trim();
+}
+
+function mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId) {
+  const pickup = t.pick_up_location || {};
+  const dropoff = t.drop_off_location || {};
+  const prices = t.prices || {};
+  const extStatus = pickExternalTripStatus(t);
+  return {
+    sentry_trip_id: inboundSentryTripId(t),
+    sentry_last_modified_at: String(t.last_modified_at || ''),
+    date_val: t.date || t.schedule_date || '',
+    los: t.service_level_code || t.level_of_service || t.los || '',
+    passengers: String(
+      t.passenger_count ||
+      t.passengers ||
+      t.client_count ||
+      (t.client ? 1 : '') ||
+      '1'
+    ),
+    mileage: String(t.mileage || t.estimated_miles || ''),
+    pu_address: t.pickup_address || t.pu_address || pickup.address || '',
+    pu_city: t.pickup_city || t.pu_city || pickup.city || '',
+    pu_zip: String(t.pickup_zip || t.pu_zip || pickup.zip_code || ''),
+    pu_time: t.scheduled_pickup_time || t.scheduled_pick_up_timestamp || t.pu_time || '',
+    do_address: t.dropoff_address || t.do_address || dropoff.address || '',
+    do_city: t.dropoff_city || t.do_city || dropoff.city || '',
+    do_zip: String(t.dropoff_zip || t.do_zip || dropoff.zip_code || ''),
+    do_time: t.scheduled_dropoff_time || t.scheduled_drop_off_timestamp || t.do_time || '',
+    delivery_price: String(
+      t.total_amount ||
+      t.delivery_price ||
+      prices.delivery_cost ||
+      prices.actual_cost ||
+      ''
+    ),
+    status: deriveMarketplaceTripStatus(t),
+    assignment_type_code: pickAssignmentTypeCode(t),
+    external_trip_status: extStatus,
+    company_id: scopedCompanyId,
+    pu_lat: pickup.lat ?? null,
+    pu_lng: pickup.lng ?? null,
+    do_lat: dropoff.lat ?? null,
+    do_lng: dropoff.lng ?? null,
+    raw_payload: t,
+    loaded_at: new Date().toISOString(),
+  };
+}
+
+function ingestibleInboundMarketplaceRow(row = {}) {
+  return Boolean(row.sentry_trip_id) && !isSyntheticMarketplaceTrip(row);
+}
 
 const AppContext = createContext(null);
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -713,52 +770,6 @@ export function AppProvider({ children }) {
           const scopedCompanyId = sentryPollCompanyIdRef.current;
           if (!scopedCompanyId) return;
 
-          function mapTrip(t) {
-            const pickup = t.pick_up_location || {};
-            const dropoff = t.drop_off_location || {};
-            const prices = t.prices || {};
-            const extStatus = pickExternalTripStatus(t);
-            return {
-              sentry_trip_id: String(t.trip_id || t.id || Math.random()),
-              sentry_last_modified_at: String(t.last_modified_at || ''),
-              date_val: t.date || t.schedule_date || '',
-              los: t.service_level_code || t.level_of_service || t.los || '',
-              passengers: String(
-                t.passenger_count ||
-                t.passengers ||
-                t.client_count ||
-                (t.client ? 1 : '') ||
-                '1'
-              ),
-              mileage: String(t.mileage || t.estimated_miles || ''),
-              pu_address: t.pickup_address || t.pu_address || pickup.address || '',
-              pu_city: t.pickup_city || t.pu_city || pickup.city || '',
-              pu_zip: String(t.pickup_zip || t.pu_zip || pickup.zip_code || ''),
-              pu_time: t.scheduled_pickup_time || t.scheduled_pick_up_timestamp || t.pu_time || '',
-              do_address: t.dropoff_address || t.do_address || dropoff.address || '',
-              do_city: t.dropoff_city || t.do_city || dropoff.city || '',
-              do_zip: String(t.dropoff_zip || t.do_zip || dropoff.zip_code || ''),
-              do_time: t.scheduled_dropoff_time || t.scheduled_drop_off_timestamp || t.do_time || '',
-              delivery_price: String(
-                t.total_amount ||
-                t.delivery_price ||
-                prices.delivery_cost ||
-                prices.actual_cost ||
-                ''
-              ),
-              status: deriveMarketplaceTripStatus(t),
-              assignment_type_code: pickAssignmentTypeCode(t),
-              external_trip_status: extStatus,
-              company_id: scopedCompanyId,
-              pu_lat: pickup.lat ?? null,
-              pu_lng: pickup.lng ?? null,
-              do_lat: dropoff.lat ?? null,
-              do_lng: dropoff.lng ?? null,
-              raw_payload: t,
-              loaded_at: new Date().toISOString(),
-            };
-          }
-
           let newTripsArrived = false;
 
           if (sentryApi.features.marketplaceTrips) {
@@ -766,17 +777,24 @@ export function AppProvider({ children }) {
             if (result.ok) {
               const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
               if (rawTrips.length > 0) {
-                const mapped = rawTrips.map(mapTrip);
-                const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-                if (!error) {
-                  let refreshQuery = supabase
-                    .from('marketplace_trips')
-                    .select('*')
-                    .in('status', ['available', 'assigned', 'accepted', 'arrived', 'picked_up'])
-                    .order('loaded_at', { ascending: false });
-                  if (scopedCompanyId) refreshQuery = refreshQuery.eq('company_id', scopedCompanyId);
-                  const { data } = await refreshQuery;
-                  if (data) { setTrips(data); newTripsArrived = true; }
+                const mapped = rawTrips
+                  .map(t => mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId))
+                  .filter(ingestibleInboundMarketplaceRow);
+                if (mapped.length > 0) {
+                  const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
+                  if (!error) {
+                    let refreshQuery = supabase
+                      .from('marketplace_trips')
+                      .select('*')
+                      .in('status', ['available', 'assigned', 'accepted', 'arrived', 'picked_up'])
+                      .order('loaded_at', { ascending: false });
+                    refreshQuery = refreshQuery.eq('company_id', scopedCompanyId);
+                    const { data } = await refreshQuery;
+                    if (data) {
+                      setTrips((data || []).filter(trip => !isSyntheticMarketplaceTrip(trip)));
+                      newTripsArrived = true;
+                    }
+                  }
                 }
               }
             }
@@ -787,9 +805,13 @@ export function AppProvider({ children }) {
             if (result.ok) {
               const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
               if (rawTrips.length > 0) {
-                const mapped = rawTrips.map(mapTrip);
-                await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-                newTripsArrived = true;
+                const mapped = rawTrips
+                  .map(t => mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId))
+                  .filter(ingestibleInboundMarketplaceRow);
+                if (mapped.length > 0) {
+                  await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
+                  newTripsArrived = true;
+                }
               }
             }
           }
@@ -885,8 +907,9 @@ export function AppProvider({ children }) {
       handleSupabaseError(error, 'loadTrips', { silent: inAdminPreview, fallback: 'Failed to load trips.' });
       return [];
     }
-    setTrips(data || []);
-    return data || [];
+    const rows = (data || []).filter(trip => !isSyntheticMarketplaceTrip(trip));
+    setTrips(rows);
+    return rows;
   }
 
   async function loadAssignments(options = {}) {
@@ -962,49 +985,7 @@ export function AppProvider({ children }) {
   }
 
   function mapSentryTrip(t, scopedCompanyId = null) {
-    const pickup = t.pick_up_location || {};
-    const dropoff = t.drop_off_location || {};
-    const prices = t.prices || {};
-    const extStatus = pickExternalTripStatus(t);
-    return {
-      sentry_trip_id: String(t.trip_id || t.id || Math.random()),
-      sentry_last_modified_at: String(t.last_modified_at || ''),
-      date_val: t.date || t.schedule_date || '',
-      los: t.service_level_code || t.level_of_service || t.los || '',
-      passengers: String(
-        t.passenger_count ||
-        t.passengers ||
-        t.client_count ||
-        (t.client ? 1 : '') ||
-        '1'
-      ),
-      mileage: String(t.mileage || t.estimated_miles || ''),
-      pu_address: t.pickup_address || t.pu_address || pickup.address || '',
-      pu_city: t.pickup_city || t.pu_city || pickup.city || '',
-      pu_zip: String(t.pickup_zip || t.pu_zip || pickup.zip_code || ''),
-      pu_time: t.scheduled_pickup_time || t.scheduled_pick_up_timestamp || t.pu_time || '',
-      do_address: t.dropoff_address || t.do_address || dropoff.address || '',
-      do_city: t.dropoff_city || t.do_city || dropoff.city || '',
-      do_zip: String(t.dropoff_zip || t.do_zip || dropoff.zip_code || ''),
-      do_time: t.scheduled_dropoff_time || t.scheduled_drop_off_timestamp || t.do_time || '',
-      delivery_price: String(
-        t.total_amount ||
-        t.delivery_price ||
-        prices.delivery_cost ||
-        prices.actual_cost ||
-        ''
-      ),
-      status: deriveMarketplaceTripStatus(t),
-      assignment_type_code: pickAssignmentTypeCode(t),
-      external_trip_status: extStatus,
-      company_id: scopedCompanyId,
-      pu_lat: pickup.lat ?? null,
-      pu_lng: pickup.lng ?? null,
-      do_lat: dropoff.lat ?? null,
-      do_lng: dropoff.lng ?? null,
-      raw_payload: t,
-      loaded_at: new Date().toISOString(),
-    };
+    return mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId);
   }
 
   async function refreshTripsFromSentry() {
@@ -1030,13 +1011,17 @@ export function AppProvider({ children }) {
       if (result.ok) {
         const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
         if (rawTrips.length > 0) {
-          const mapped = rawTrips.map(trip => mapSentryTrip(trip, scopedCompanyId));
-          const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-          if (error) {
-            handleSupabaseError(error, 'refreshTripsFromSentry:marketplace', { fallback: 'Failed to save marketplace trips.' });
-            lastError = error.message;
-          } else {
-            totalCount += mapped.length;
+          const mapped = rawTrips
+            .map(trip => mapSentryTrip(trip, scopedCompanyId))
+            .filter(ingestibleInboundMarketplaceRow);
+          if (mapped.length > 0) {
+            const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
+            if (error) {
+              handleSupabaseError(error, 'refreshTripsFromSentry:marketplace', { fallback: 'Failed to save marketplace trips.' });
+              lastError = error.message;
+            } else {
+              totalCount += mapped.length;
+            }
           }
         }
       } else {
@@ -1049,9 +1034,13 @@ export function AppProvider({ children }) {
       if (result.ok) {
         const rawTrips = Array.isArray(result.data) ? result.data : (result.data?.trips || []);
         if (rawTrips.length > 0) {
-          const mapped = rawTrips.map(trip => mapSentryTrip(trip, scopedCompanyId));
-          const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
-          if (!error) totalCount += mapped.length;
+          const mapped = rawTrips
+            .map(trip => mapSentryTrip(trip, scopedCompanyId))
+            .filter(ingestibleInboundMarketplaceRow);
+          if (mapped.length > 0) {
+            const { error } = await supabase.from('marketplace_trips').upsert(mapped, { onConflict: 'sentry_trip_id' });
+            if (!error) totalCount += mapped.length;
+          }
         }
       }
     }
