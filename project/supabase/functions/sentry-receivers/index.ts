@@ -48,9 +48,19 @@ function extractLifecycleStatusId(t: Record<string, unknown>) {
   return Number.isFinite(statusId) ? statusId : null;
 }
 
+function extractAcceptanceStatusId(t: Record<string, unknown>) {
+  const nestedTrip = asJsonObject(t.trip);
+  const id = Number(
+    t.acceptance_status_id ?? nestedTrip.acceptance_status_id
+  );
+  return Number.isFinite(id) ? id : null;
+}
+
 function deriveMarketplaceTripStatus(t: Record<string, unknown>) {
   const s = pickExternalTripStatus(t).toLowerCase();
   const statusId = extractLifecycleStatusId(t);
+  const acceptanceId = extractAcceptanceStatusId(t);
+  const tpNotAccepted = acceptanceId === 0;
   if (statusId === 6 || ['completed', 'complete', 'done', 'closed'].includes(s)) return 'completed';
   if (statusId === 7 || statusId === 8) return 'cancelled';
   if (s.includes('rerout')) return 'cancelled';
@@ -72,7 +82,14 @@ function deriveMarketplaceTripStatus(t: Record<string, unknown>) {
   if (['completed', 'complete', 'done', 'closed'].includes(s)) return 'completed';
   if (statusId === 5 || ['picked_up', 'picked-up', 'on_trip', 'passenger_picked_up'].includes(s)) return 'picked_up';
   if (statusId === 4 || ['arrived', 'arrived_at_pickup'].includes(s)) return 'arrived';
-  if (statusId === 3 || statusId === 2 || ['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(s)) return 'accepted';
+  if (
+    !tpNotAccepted &&
+    (statusId === 3 ||
+      statusId === 2 ||
+      ['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(s))
+  ) {
+    return 'accepted';
+  }
   return 'available';
 }
 
