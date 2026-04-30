@@ -212,6 +212,12 @@ function deriveLifecycleStatusFromMarketplaceRow(row = {}) {
   const normalized = String(row?.status || row?.external_trip_status || '').toLowerCase().trim();
   const raw = asJsonObject(row?.raw_payload);
   const nestedTrip = asJsonObject(raw.trip);
+  const acceptanceId = Number(
+    row?.acceptance_status_id ??
+    raw?.acceptance_status_id ??
+    nestedTrip?.acceptance_status_id
+  );
+  const tpNotAccepted = Number.isFinite(acceptanceId) && acceptanceId === 0;
   const statusId = Number(
     row?.status_id ??
     row?.trip_status_id ??
@@ -226,7 +232,14 @@ function deriveLifecycleStatusFromMarketplaceRow(row = {}) {
   // Prefer numeric Sentry lifecycle over stale marketplace_trips.status (e.g. still "available" after webhook lag).
   if (statusId === 5 || ['picked_up', 'picked-up', 'passenger_picked_up'].includes(normalized)) return 'picked_up';
   if (statusId === 4 || ['arrived', 'arrived_at_pickup'].includes(normalized)) return 'arrived';
-  if (statusId === 3 || statusId === 2 || ['accepted', 'assigned', 'in_progress', 'in progress', 'en_route', 'en route'].includes(normalized)) return 'accepted';
+  if (
+    !tpNotAccepted &&
+    (statusId === 3 ||
+      statusId === 2 ||
+      ['accepted', 'assigned', 'in_progress', 'in progress', 'en_route', 'en route'].includes(normalized))
+  ) {
+    return 'accepted';
+  }
   if (['on_trip'].includes(normalized)) return 'on_trip';
   if (['completed', 'complete', 'done', 'closed'].includes(normalized)) return 'completed';
   if (['cancelled', 'canceled', 'no_show', 'rejected'].includes(normalized)) return 'cancelled';

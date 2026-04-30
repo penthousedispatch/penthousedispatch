@@ -95,6 +95,31 @@ export function deriveMarketplaceTripStatus(raw = {}) {
   return 'available';
 }
 
+/**
+ * `deriveMarketplaceTripStatus` for a persisted `marketplace_trips` row (columns + raw_payload snapshot).
+ */
+export function deriveMarketplaceTripStatusFromStoredRow(row = {}) {
+  const raw = asJsonObject(row.raw_payload);
+  const nestedTrip = asJsonObject(raw.trip);
+  const merged = {
+    ...raw,
+    trip_status: String(row.external_trip_status ?? raw.trip_status ?? ''),
+    status: String(row.status ?? raw.status ?? ''),
+    marketplace_status: String(row.marketplace_status ?? raw.marketplace_status ?? ''),
+    status_id: row.status_id ?? raw.status_id ?? nestedTrip.status_id,
+    trip_status_id: row.trip_status_id ?? raw.trip_status_id ?? nestedTrip.trip_status_id,
+    trip_processing_status_id:
+      row.trip_processing_status_id ??
+      raw.trip_processing_status_id ??
+      nestedTrip.trip_processing_status_id,
+    acceptance_status_id:
+      row.acceptance_status_id ??
+      raw.acceptance_status_id ??
+      nestedTrip.acceptance_status_id,
+  };
+  return deriveMarketplaceTripStatus(merged);
+}
+
 /** Short reference for dispatch / testing (not exhaustive — extend as Sentry documents codes). */
 export const SENTRY_ASSIGNMENT_TYPE_REFERENCE = [
   { code: 'STANDARD', meaning: 'Default single-leg assignment' },

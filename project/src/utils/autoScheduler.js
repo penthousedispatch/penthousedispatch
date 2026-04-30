@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import { geocodeAddress } from '../lib/geocode';
 import { AI_SCHED, haversine } from './ai_scheduler';
 import { logFailure } from './errorHandler';
+import { deriveMarketplaceTripStatusFromStoredRow } from '../lib/sentryTripInbound';
 
 async function enrichTripCoordinates(trip) {
   const pickupCoords = trip.coords || (
@@ -35,67 +36,8 @@ async function enrichTripsWithCoords(trips) {
   return Promise.all((trips || []).map(enrichTripCoordinates));
 }
 
-function asJsonObject(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-  if (typeof value === 'string' && value.trim()) {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
-
-function extractTripLifecycleStatusId(trip = {}) {
-  const raw = asJsonObject(trip.raw_payload);
-  const nestedTrip = asJsonObject(raw.trip);
-  const value = Number(
-    trip.status_id ??
-    trip.trip_status_id ??
-    trip.trip_processing_status_id ??
-    raw.status_id ??
-    raw.trip_status_id ??
-    raw.trip_processing_status_id ??
-    nestedTrip.status_id ??
-    nestedTrip.trip_status_id ??
-    nestedTrip.trip_processing_status_id
-  );
-  return Number.isFinite(value) ? value : null;
-}
-
 function deriveMarketplaceLifecycleStatus(trip = {}) {
-  const status = String(trip.status || '').toLowerCase().trim();
-  const external = String(trip.external_trip_status || '').toLowerCase().trim();
-  const statusId = extractTripLifecycleStatusId(trip);
-
-  if (statusId === 6 || ['completed', 'complete', 'done', 'closed'].includes(status) || ['completed', 'complete', 'done', 'closed'].includes(external)) {
-    return 'completed';
-  }
-  if (
-    statusId === 7 ||
-    statusId === 8 ||
-    ['cancelled', 'canceled', 'no_show', 'rejected'].includes(status) ||
-    ['cancelled', 'canceled', 'no_show', 'rejected'].includes(external)
-  ) {
-    return 'cancelled';
-  }
-  if (statusId === 5 || ['picked_up', 'picked-up', 'on_trip'].includes(status) || ['picked_up', 'picked-up', 'on_trip'].includes(external)) {
-    return 'picked_up';
-  }
-  if (statusId === 4 || ['arrived', 'arrived_at_pickup'].includes(status) || ['arrived', 'arrived_at_pickup'].includes(external)) {
-    return 'arrived';
-  }
-  if (
-    statusId === 3 ||
-    statusId === 2 ||
-    ['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(status) ||
-    ['accepted', 'assigned', 'locked', 'in_progress', 'in progress', 'en_route', 'en route'].includes(external)
-  ) {
-    return 'accepted';
-  }
-  return 'available';
+  return deriveMarketplaceTripStatusFromStoredRow(trip);
 }
 
 function isOfferableMarketplaceTrip(trip = {}) {
