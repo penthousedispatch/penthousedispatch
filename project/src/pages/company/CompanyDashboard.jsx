@@ -10,7 +10,7 @@ import ModuleBoundary from '../../components/app/ModuleBoundary';
 import { DEFAULT_COMPANY_SCHEDULER_PREFS, readCompanySchedulerPrefs, writeCompanySchedulerPrefs } from '../../lib/companySchedulerPrefs';
 import { clearGuideAudio, getGuideAudioRecord, saveGuideAudioFile, saveGuideAudioUrl } from '../../lib/guideAudio';
 import AddDriverModal from '../../components/drivers/AddDriverModal';
-import CSVImportModal from '../../components/drivers/CSVImportModal';
+import CSVImportModal, { CSV_DRIVERS } from '../../components/drivers/CSVImportModal';
 import { isSyntheticMarketplaceTrip } from '../../lib/sentrySyntheticTrips';
 import {
   Users, Navigation, FileText, Settings, LogOut,
@@ -34,6 +34,7 @@ function CompanyDrivers({ company }) {
   const [savingShiftDriverId, setSavingShiftDriverId] = useState(null);
   const [shiftDrafts, setShiftDrafts] = useState({});
   const [driverTaxInfo, setDriverTaxInfo] = useState({});
+  const cljFleetSeededRef = useRef(false);
   const driverAppUrl = `${window.location.origin}/driver`;
 
   async function syncProfileCompanyId(companyId) {
@@ -62,6 +63,84 @@ function CompanyDrivers({ company }) {
     } else {
       setDriverTaxInfo({});
     }
+  }
+
+  /**
+   * CLJ Express canonical fleet (CSV_DRIVERS) — real TLC roster, not test-mode synthetic data.
+   * Only runs when the active company is CLJExpress and the drivers table is empty (e.g. fresh org).
+   */
+  async function ensureCljExpressFleet(companyId) {
+    const normalizedCompanyName = String(company?.company_name || '').trim().toLowerCase();
+    const shouldSeedFleet =
+      normalizedCompanyName.includes('cljexpress') || normalizedCompanyName.includes('clj express');
+
+    if (!companyId || !shouldSeedFleet || cljFleetSeededRef.current) {
+      return false;
+    }
+
+    cljFleetSeededRef.current = true;
+    let changed = false;
+
+    for (const driver of CSV_DRIVERS) {
+      const tlcNumber = String(driver.tlc_number || '').trim();
+      const fullName = `${String(driver.first_name || '').trim()} ${String(driver.last_name || '').trim()}`.trim();
+      if (!tlcNumber || !fullName) continue;
+
+      const driverPayload = {
+        company_id: companyId,
+        full_name: fullName,
+        phone: String(driver.phone || '').trim() || '',
+        tlc_number: tlcNumber,
+        license_number: String(driver.license_number || '').trim() || '',
+        license_state: String(driver.license_state || '').trim() || '',
+        license_class: String(driver.license_class || '').trim() || '',
+        gender: String(driver.gender || '').trim() || '',
+        dob: String(driver.dob || '').trim() || '',
+        status: 'offline',
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: existingDriver, error: lookupError } = await supabase
+        .from('drivers')
+        .select('id, company_id')
+        .eq('tlc_number', tlcNumber)
+        .maybeSingle();
+
+      if (lookupError) {
+        handleSupabaseError(lookupError, 'CompanyDrivers:seedLookup', { silent: true });
+        continue;
+      }
+
+      if (existingDriver?.id) {
+        const { error: updateError } = await supabase
+          .from('drivers')
+          .update(driverPayload)
+          .eq('id', existingDriver.id);
+
+        if (updateError) {
+          handleSupabaseError(updateError, 'CompanyDrivers:seedUpdate', { silent: true });
+        } else {
+          changed = true;
+        }
+        continue;
+      }
+
+      const { error: insertError } = await supabase
+        .from('drivers')
+        .insert({
+          ...driverPayload,
+          driver_number: `CLJ-${tlcNumber}`,
+        });
+
+      if (insertError) {
+        handleSupabaseError(insertError, 'CompanyDrivers:seedInsert', { silent: true });
+      } else {
+        changed = true;
+      }
+    }
+
+    return changed;
   }
 
   async function loadCompanyDrivers() {
@@ -123,6 +202,23 @@ function CompanyDrivers({ company }) {
     }
 
     let nextDrivers = data || [];
+    if (nextDrivers.length === 0) {
+      const seeded = await ensureCljExpressFleet(companyId);
+      if (seeded) {
+        const { data: refreshedDrivers, error: refreshError } = await supabase
+          .from('drivers')
+          .select('*')
+          .eq('company_id', companyId)
+          .eq('is_active', true)
+          .order('full_name');
+
+        if (refreshError) {
+          handleSupabaseError(refreshError, 'CompanyDrivers:loadAfterSeed', { silent: true });
+        } else {
+          nextDrivers = refreshedDrivers || [];
+        }
+      }
+    }
 
     setDrivers(nextDrivers);
     await loadDriverTaxInfo(nextDrivers);
