@@ -12,7 +12,7 @@ import { ensurePlatformAdminOrg } from '../lib/platformAdminOrg';
 import { APP_VARIANT } from '../lib/appVariant';
 import {
   deriveMarketplaceTripStatus,
-  isBrokerNonAcceptedMarketplaceRow,
+  isDispatchQueueMarketplaceTrip,
   pickAssignmentTypeCode,
   pickExternalTripStatus,
 } from '../lib/sentryTripInbound';
@@ -146,6 +146,32 @@ function pickBestCompanyRecord(rows = []) {
   return sorted[0] || null;
 }
 
+function looksLikeSandboxDriverRow(row = {}) {
+  const driverNumber = String(row.driver_number || '').toUpperCase();
+  const loginUsername = String(row.login_username || '').toLowerCase();
+  const tlc = String(row.tlc_number || '').toUpperCase();
+  return (
+    (driverNumber.startsWith('TST-') && loginUsername.startsWith('tst')) ||
+    tlc.startsWith('DEMO-TLC-')
+  );
+}
+
+function looksLikeSyntheticTripId(tripId = '', companyId = null) {
+  const raw = String(tripId || '').trim();
+  if (!raw) return false;
+  if (raw.startsWith('LOCAL-TEST-')) return true;
+  if (companyId && raw.startsWith(`TST-MKT-${companyId}`)) return true;
+  return false;
+}
+
+function looksLikeSyntheticAssignmentRow(row = {}, companyId = null) {
+  const notes = String(row.notes || '');
+  return (
+    looksLikeSyntheticTripId(row.trip_id, companyId) ||
+    (companyId ? notes.includes(`TEST_MODE_SANDBOX:${companyId}`) : false)
+  );
+}
+
 export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -164,6 +190,8 @@ export function AppProvider({ children }) {
   const orgIdRef = useRef(null);
   /** Always-current company id for Sentry poll (interval closures were stale vs React state). */
   const sentryPollCompanyIdRef = useRef(null);
+  /** Avoids stale first paint + repeated Sentry pulls: bootstrap once per (user session × company id). */
+  const lastSentryTripBootstrapCompanyIdRef = useRef(null);
   const billingSyncRef = useRef(0);
   const liveChannelRef = useRef(null);
   const liveRefreshTimersRef = useRef({});
@@ -175,9 +203,10 @@ export function AppProvider({ children }) {
   const SELF_PROFILE_WRITE_ECHO_MS = 2500;
   /** Tracks prior pause_sandbox_outbound so we can notify driver clients to re-sync accept/status2. */
   const pauseSandboxOutboundPrevRef = useRef(null);
+  const hiddenSyntheticCompanyRef = useRef(new Set());
   const normalizedRole = normalizeAppRole(profile?.role);
   const activeCompany = normalizedRole === 'admin' && adminPreviewCompany ? adminPreviewCompany : company;
-  const isCompanyRole = normalizedRole === 'company';
+  const isCompanyRole = normalizedRole === 'company' || normalizedRole === 'dispatcher';
 
   useEffect(() => {
     if (normalizedRole === 'admin') {
@@ -188,6 +217,12 @@ export function AppProvider({ children }) {
       sentryPollCompanyIdRef.current = null;
     }
   }, [normalizedRole, isCompanyRole, company?.id, adminPreviewCompany?.id, profile?.company_id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      lastSentryTripBootstrapCompanyIdRef.current = null;
+    }
+  }, [user?.id]);
 
   async function resolveAuthRole(u) {
     const directRole =
@@ -748,9 +783,21 @@ export function AppProvider({ children }) {
         }
         if (comp) {
           setLoading(false);
+          const shouldBootstrapSentryTrips =
+            sentryApi.enabled &&
+            (sentryApi.features.marketplaceTrips || sentryApi.features.assignedTrips) &&
+            lastSentryTripBootstrapCompanyIdRef.current !== comp.id;
+          if (shouldBootstrapSentryTrips) {
+            lastSentryTripBootstrapCompanyIdRef.current = comp.id;
+            setTrips([]);
+          }
+          const tripLoad = shouldBootstrapSentryTrips
+            ? refreshTripsFromSentry({ companyId: comp.id })
+            : loadTrips({ companyId: comp.id });
+
           Promise.allSettled([
             loadDrivers({ companyId: comp.id }),
-            loadTrips({ companyId: comp.id }),
+            tripLoad,
             loadAssignments({ companyId: comp.id }),
           ]).then(results => {
             results.forEach((result, index) => {
@@ -863,7 +910,9 @@ export function AppProvider({ children }) {
             await pruneOrphanUntakenMarketplaceRows(scopedCompanyId, preserveTripIds);
           }
 
-          await loadTrips();
+          await loadTrips(
+            sentryPollCompanyIdRef.current ? { companyId: sentryPollCompanyIdRef.current } : {}
+          );
 
           if (newTripsArrived) {
             runAISchedulerPipeline();
@@ -924,8 +973,18 @@ export function AppProvider({ children }) {
       handleSupabaseError(error, 'loadDrivers', { silent: inAdminPreview, fallback: 'Failed to load drivers.' });
       return [];
     }
-    setDrivers(data || []);
-    return data || [];
+    let rows = data || [];
+    if (scopedCompanyId && !hiddenSyntheticCompanyRef.current.has(String(scopedCompanyId))) {
+      const syntheticRows = rows.filter(looksLikeSandboxDriverRow);
+      if (syntheticRows.length > 0) {
+        hiddenSyntheticCompanyRef.current.add(String(scopedCompanyId));
+      }
+    }
+    if (scopedCompanyId && hiddenSyntheticCompanyRef.current.has(String(scopedCompanyId))) {
+      rows = rows.filter(row => !looksLikeSandboxDriverRow(row));
+    }
+    setDrivers(rows);
+    return rows;
   }
 
   async function loadTrips(options = {}) {
@@ -948,7 +1007,7 @@ export function AppProvider({ children }) {
       .order('loaded_at', { ascending: false });
 
     if (scopedCompanyId) {
-      query = query.eq('company_id', scopedCompanyId).limit(250);
+      query = query.or(`company_id.eq.${scopedCompanyId},company_id.is.null`).limit(250);
     }
 
     const { data, error } = await query;
@@ -956,9 +1015,10 @@ export function AppProvider({ children }) {
       handleSupabaseError(error, 'loadTrips', { silent: inAdminPreview, fallback: 'Failed to load trips.' });
       return [];
     }
-    const rows = (data || []).filter(
-      trip => !isSyntheticMarketplaceTrip(trip) && !isBrokerNonAcceptedMarketplaceRow(trip)
-    );
+    let rows = (data || []).filter(isDispatchQueueMarketplaceTrip);
+    if (scopedCompanyId) {
+      rows = rows.filter(row => !looksLikeSyntheticTripId(row.sentry_trip_id, scopedCompanyId));
+    }
     setTrips(rows);
     return rows;
   }
@@ -1008,7 +1068,11 @@ export function AppProvider({ children }) {
       handleSupabaseError(error, 'loadAssignments', { silent: inAdminPreview, fallback: 'Failed to load assignments.' });
       return [];
     }
-    setAssignments(data || []);
+    let rows = data || [];
+    if (scopedCompanyId) {
+      rows = rows.filter(row => !looksLikeSyntheticAssignmentRow(row, scopedCompanyId));
+    }
+    setAssignments(rows);
 
     const now = Date.now();
     if (['admin', 'company'].includes(normalizedRole) && (now - billingSyncRef.current) > 120000) {
@@ -1032,28 +1096,33 @@ export function AppProvider({ children }) {
         .catch(err => logFailure('loadAssignments:syncCompletedTripBilling', err));
     }
 
-    return data || [];
+    return rows;
   }
 
   function mapSentryTrip(t, scopedCompanyId = null) {
     return mapInboundSentryTripToMarketplaceRow(t, scopedCompanyId);
   }
 
-  async function refreshTripsFromSentry() {
+  async function refreshTripsFromSentry(syncOptions = {}) {
+    const explicitCompanyId =
+      syncOptions.companyId !== undefined && syncOptions.companyId !== null ? syncOptions.companyId : null;
     let totalCount = 0;
     let lastError = null;
     const scopedCompanyId =
-      isCompanyRole
+      explicitCompanyId ||
+      (isCompanyRole
         ? activeCompany?.id || profile?.company_id || sentryPollCompanyIdRef.current || null
         : normalizedRole === 'admin'
           ? adminPreviewCompany?.id || null
-          : null;
+          : null);
 
-    if (isCompanyRole && !scopedCompanyId) {
-      await loadTrips();
+    if (!scopedCompanyId) {
+      await loadTrips({});
       return {
         count: 0,
-        error: 'Company scope is not ready (no company id). Reload the page or finish company onboarding.',
+        error: isCompanyRole
+          ? 'Company scope is not ready (no company id). Reload the page or finish company onboarding.'
+          : 'Select a company workspace to refresh Sentry trips.',
       };
     }
 
@@ -1109,7 +1178,7 @@ export function AppProvider({ children }) {
       await pruneOrphanUntakenMarketplaceRows(scopedCompanyId, preserveTripIds);
     }
 
-    await loadTrips();
+    await loadTrips({ companyId: scopedCompanyId });
     return { count: totalCount, error: lastError };
   }
 
@@ -1262,7 +1331,8 @@ export function AppProvider({ children }) {
         tripQuery = tripQuery.eq('company_id', activeCompany.id);
       }
 
-      const { data: availableTrips } = await tripQuery;
+      const { data: availableTripsRaw } = await tripQuery;
+      const availableTrips = (availableTripsRaw || []).filter(isDispatchQueueMarketplaceTrip);
 
       let currentAssignments = [];
       if ((isCompanyRole || normalizedRole === 'admin') && activeCompany?.id) {

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 export const GUIDE_AUDIO_SOURCES = {
-  driver_onboarding: '',
-  driver_guide: '',
-  company_guide: '',
-  admin_guide: '',
-  dispatcher_guide: '',
-  rider_guide: '',
+  driver_onboarding: '/guide-audio/driver-onboarding-aria.mp3',
+  driver_guide: '/guide-audio/driver-guide-guy.mp3',
+  company_guide: '/guide-audio/company-guide-ryan.mp3',
+  admin_guide: '/guide-audio/admin-guide-guy.mp3',
+  dispatcher_guide: '/guide-audio/dispatcher-guide-aria.mp3',
+  rider_guide: '/guide-audio/rider-guide-aria.mp3',
 };
 
 const GUIDE_AUDIO_STORAGE_PREFIX = 'pd_guide_audio:';

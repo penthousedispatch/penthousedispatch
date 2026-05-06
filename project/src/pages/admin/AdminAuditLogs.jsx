@@ -144,7 +144,15 @@ export default function AdminAuditLogs() {
     next.set('tab', tab);
     if (search) next.set('search', search);
     else next.delete('search');
-    setSearchParams(next, { replace: true });
+    const nextString = next.toString();
+    const currentString = searchParams.toString();
+    if (nextString === currentString) return;
+
+    const timer = window.setTimeout(() => {
+      setSearchParams(next, { replace: true });
+    }, 180);
+
+    return () => window.clearTimeout(timer);
   }, [tab, search, requestedTab, requestedSearch, searchParams, setSearchParams]);
 
   async function loadLogs() {

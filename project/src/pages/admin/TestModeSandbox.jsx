@@ -582,9 +582,9 @@ export default function TestModeSandbox() {
 
         if (!error) {
           assigned++;
-          addLog(`Assigned trip ${trip.sentry_trip_id?.slice(-8)} to ${plan.driver.full_name}`, 'success');
+          addLog(`Assigned trip ${trip.sentry_trip_id || '?'} to ${plan.driver.full_name}`, 'success');
         } else {
-          addLog(`Failed to assign ${trip.sentry_trip_id?.slice(-8)}: ${error.message}`, 'error');
+          addLog(`Failed to assign ${trip.sentry_trip_id || '?'}: ${error.message}`, 'error');
         }
       }
     }

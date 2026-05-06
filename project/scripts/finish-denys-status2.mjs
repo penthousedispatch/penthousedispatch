@@ -129,6 +129,22 @@ if (!driverRes.ok || !Array.isArray(driverRes.data) || !driverRes.data[0]) {
 const driver = driverRes.data[0];
 if (!driver.license_number) fail('Chosen local driver has no license_number', driver);
 
+if (String(driver.status || '').toLowerCase() !== 'online') {
+  const driverOnlineRes = await httpJson(
+    `${supabaseUrl}/rest/v1/drivers?id=eq.${encodeURIComponent(driver.id)}`,
+    {
+      method: 'PATCH',
+      headers: sbHeaders,
+      body: {
+        status: 'online',
+        updated_at: new Date().toISOString(),
+      },
+    }
+  );
+  if (!driverOnlineRes.ok) fail('Could not mark chosen local driver online', driverOnlineRes.status, driverOnlineRes.data);
+  driver.status = 'online';
+}
+
 let vehicleRow = null;
 if (driver.vehicle_id) {
   const vehicleUrl =
@@ -333,8 +349,6 @@ const versionLastModifiedAt =
 
 const status2Payload = {
   status_id: 2,
-  is_done_by_not_integrated_provider: 0,
-  is_confirmed: 0,
   last_modified_at: versionLastModifiedAt,
   driver: {
     id: Number(sentryDriver.id),

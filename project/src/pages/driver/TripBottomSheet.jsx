@@ -596,13 +596,14 @@ export default function TripBottomSheet({
                       </div>
                     )}
                     <button
+                      type="button"
                       onClick={onNoShow}
-                      disabled={waitRemaining > 0}
+                      disabled={typeof waitRemaining === 'number' && waitRemaining > 0}
                       className="w-full py-3.5 rounded-2xl text-sm font-700 flex items-center justify-center gap-2"
                       style={{
-                        background: waitRemaining > 0 ? 'rgba(255,255,255,0.05)' : 'rgba(255,71,87,0.1)',
-                        border: `1px solid ${waitRemaining > 0 ? 'rgba(255,255,255,0.08)' : 'rgba(255,71,87,0.2)'}`,
-                        color: waitRemaining > 0 ? 'rgba(255,255,255,0.35)' : '#ff4757',
+                        background: typeof waitRemaining === 'number' && waitRemaining > 0 ? 'rgba(255,255,255,0.05)' : 'rgba(255,71,87,0.1)',
+                        border: `1px solid ${typeof waitRemaining === 'number' && waitRemaining > 0 ? 'rgba(255,255,255,0.08)' : 'rgba(255,71,87,0.2)'}`,
+                        color: typeof waitRemaining === 'number' && waitRemaining > 0 ? 'rgba(255,255,255,0.35)' : '#ff4757',
                         fontWeight: 700,
                       }}
                     >
@@ -625,6 +626,28 @@ export default function TripBottomSheet({
                       </button>
                     )}
                     <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            'Release this trip back to dispatch? Only use this if you cannot complete the ride; dispatch can assign another driver.'
+                          )
+                        ) {
+                          return;
+                        }
+                        onReject();
+                      }}
+                      className="w-full py-3 rounded-xl text-xs font-600"
+                      style={{
+                        background: 'rgba(255,71,87,0.06)',
+                        border: '1px solid rgba(255,71,87,0.2)',
+                        color: '#ff8a95',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Release trip to dispatch
+                    </button>
+                    <button
                       onClick={onArrive}
                       disabled={!(routeStarted || trip?.enRouteAt)}
                       className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
@@ -642,17 +665,41 @@ export default function TripBottomSheet({
               )}
 
               {state === 'to_dropoff' && !confirmingComplete && (
-                <button
-                  onClick={() => setConfirmingComplete(true)}
-                  className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
-                  style={{
-                        background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
-                        color: '#ffffff',
-                        fontWeight: 700,
-                  }}
-                >
-                  <CheckCircle className="w-5 h-5" /> Rider Dropped Off
-                </button>
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          'Release this trip back to dispatch? Only use this if you cannot complete the ride; dispatch can assign another driver.'
+                        )
+                      ) {
+                        return;
+                      }
+                      onReject();
+                    }}
+                    className="w-full py-3 rounded-xl text-xs font-600"
+                    style={{
+                      background: 'rgba(255,71,87,0.06)',
+                      border: '1px solid rgba(255,71,87,0.2)',
+                      color: '#ff8a95',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Release trip to dispatch
+                  </button>
+                  <button
+                    onClick={() => setConfirmingComplete(true)}
+                    className="w-full py-4 rounded-2xl text-base font-700 flex items-center justify-center gap-2"
+                    style={{
+                          background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                          color: '#ffffff',
+                          fontWeight: 700,
+                    }}
+                  >
+                    <CheckCircle className="w-5 h-5" /> Rider Dropped Off
+                  </button>
+                </div>
               )}
 
               {state === 'to_dropoff' && confirmingComplete && (

@@ -53,9 +53,9 @@ const DRIVER_EMBED_SESSION_KEY = 'pd_driver_embed_session_v1';
 /** Persists direct driver-login sessions so refresh does not drop active trip context. */
 const DRIVER_LAST_SESSION_KEY = 'pd_driver_last_session_v1';
 /** Last accepted/active trip — survives refresh if DB row is slow or status string differs (e.g. in_progress). */
-const DRIVER_ACTIVE_TRIP_CACHE_PREFIX = 'pd_driver_active_trip_v1:';
+const DRIVER_ACTIVE_TRIP_CACHE_PREFIX = 'pd_driver_active_trip_v2:';
 /** Sticky local lifecycle lock so UI step progress does not roll back on transient sync jitter. */
-const DRIVER_LIFECYCLE_LOCK_PREFIX = 'pd_driver_lifecycle_lock_v1:';
+const DRIVER_LIFECYCLE_LOCK_PREFIX = 'pd_driver_lifecycle_lock_v2:';
 
 const DRIVER_TEST_TRIP_MARKER = '[TEST_TRIP]';
 const ACTIVE_DRIVER_ASSIGNMENT_STATUSES = ['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'];
@@ -64,12 +64,34 @@ const ACCEPTABLE_ASSIGNMENT_STATUSES = ['pending', 'assigned', 'accepted'];
 const OFFER_ASSIGNMENT_STATUSES = ['pending', 'assigned'];
 const RESUMABLE_ASSIGNMENT_STATUSES = [...ACTIVE_DRIVER_ASSIGNMENT_STATUSES, ...OFFER_ASSIGNMENT_STATUSES];
 
+function driverSessionOriginTag() {
+  if (typeof window === 'undefined') return 'ssr';
+  try {
+    return String(window.location.origin || 'null').replace(/[^a-z0-9]+/gi, '_').slice(0, 96) || 'host';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function isStySentryTripId(tripId) {
+  const value = String(tripId || '').trim();
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  if (normalized === 'null' || normalized === 'undefined') return false;
+  // Historically this gate only allowed STY-* sandbox ids; keep the helper name
+  // for compatibility, but accept any valid trip id so assigned trips never hide.
+  return true;
+}
+
+/** Trip assignments eligible for rider no-show (driver arrived at PU). */
+const NO_SHOW_FROM_ASSIGNMENT_STATUSES = ['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'];
+
 function driverActiveTripCacheKey(driverId) {
-  return `${DRIVER_ACTIVE_TRIP_CACHE_PREFIX}${driverId}`;
+  return `${DRIVER_ACTIVE_TRIP_CACHE_PREFIX}${driverSessionOriginTag()}:${driverId}`;
 }
 
 function driverLifecycleLockKey(driverId) {
-  return `${DRIVER_LIFECYCLE_LOCK_PREFIX}${driverId}`;
+  return `${DRIVER_LIFECYCLE_LOCK_PREFIX}${driverSessionOriginTag()}:${driverId}`;
 }
 
 function normalizeUiTripId(value) {
@@ -92,7 +114,7 @@ function applyTripAssignmentTarget(query, trip = {}, fallbackDriverId = null) {
 }
 
 function persistDriverActiveTripSnapshot(driverId, trip) {
-  if (!driverId || !trip?.tripId) return;
+  if (!driverId || !trip?.tripId || !isStySentryTripId(trip.tripId)) return;
   try {
     localStorage.setItem(
       driverActiveTripCacheKey(driverId),
@@ -180,7 +202,9 @@ function isLocalOnlyTestTripId(tripId) {
 }
 
 function shouldSkipUpstreamSentryForDriverTestTrip(trip) {
-  return Boolean(trip?.isTestTrip) || isLocalOnlyTestTripId(trip?.tripId || trip?.trip_id);
+  // Only true local-only synthetic ids should bypass Sentry sync.
+  // `[TEST_TRIP]` marker is for UI/testing context and must still sync upstream.
+  return isLocalOnlyTestTripId(trip?.tripId || trip?.trip_id);
 }
 
 function parseTripAssignmentNotesForOffer(notes = '') {
@@ -420,11 +444,10 @@ function buildLifecycleRetryPayload(payload = {}) {
   const safe = payload && typeof payload === 'object' ? payload : {};
   const driver = safe.driver && typeof safe.driver === 'object' ? safe.driver : null;
   const vehicle = safe.vehicle && typeof safe.vehicle === 'object' ? safe.vehicle : null;
+  const mta = safe.mta && typeof safe.mta === 'object' ? safe.mta : null;
   return Object.fromEntries(
     Object.entries({
       status_id: safe.status_id,
-      is_done_by_not_integrated_provider: safe.is_done_by_not_integrated_provider,
-      is_confirmed: safe.is_confirmed,
       last_modified_at: safe.last_modified_at,
       cancel_reason_id: safe.cancel_reason_id,
       cancel_note: safe.cancel_note,
@@ -434,13 +457,12 @@ function buildLifecycleRetryPayload(payload = {}) {
       pick_up_arrival_timestamp: safe.pick_up_arrival_timestamp,
       pick_up_timestamp: safe.pick_up_timestamp,
       drop_off_timestamp: safe.drop_off_timestamp,
-      collected_fare: safe.collected_fare,
-      collected_fare_amount: safe.collected_fare_amount,
       is_next_day: safe.is_next_day,
       next_day: safe.next_day,
       next_day_requested_at: safe.next_day_requested_at,
       driver: driver && Object.keys(driver).length ? driver : undefined,
       vehicle: vehicle && Object.keys(vehicle).length ? vehicle : undefined,
+      mta: mta && Object.keys(mta).length ? mta : undefined,
     }).filter(([, value]) => value !== null && value !== undefined && value !== '')
   );
 }
@@ -452,8 +474,6 @@ function buildStatus2RetryPayload(payload = {}) {
   return Object.fromEntries(
     Object.entries({
       status_id: safe.status_id,
-      is_done_by_not_integrated_provider: safe.is_done_by_not_integrated_provider,
-      is_confirmed: safe.is_confirmed,
       last_modified_at: safe.last_modified_at,
       driver: driver && Object.keys(driver).length ? driver : undefined,
       vehicle: vehicle && Object.keys(vehicle).length ? vehicle : undefined,
@@ -712,6 +732,7 @@ export default function DriverApp() {
   const lastMotivationRef = useRef(0);
   const sosTimerRef = useRef(null);
   const countdownRef = useRef(null);
+  const countdownDeadlineRef = useRef({ tripId: null, deadlineMs: 0 });
   const pickupWaitRef = useRef(null);
   const locationRef = useRef(location);
   const incentiveSnapshotRef = useRef([]);
@@ -750,7 +771,8 @@ export default function DriverApp() {
     function onOutboundResumed() {
       const trip = currentTripRef.current;
       const id = String(trip?.tripId || '').trim();
-      if (!id.startsWith('STY-')) return;
+      if (!id) return;
+      if (shouldSkipUpstreamSentryForDriverTestTrip(trip)) return;
       const fn = ensureSentryAcceptedSyncRef.current;
       if (typeof fn === 'function') {
         fn(trip, { source: 'outbound_resumed', throttleMs: 0, notifyOnFailure: true });
@@ -1031,6 +1053,7 @@ export default function DriverApp() {
       motivationTimerRef.current = null;
     }
     stopCountdown();
+    stopPickupWait();
 
     if (driverRecord?.id) {
       const { error } = await supabase
@@ -1436,6 +1459,10 @@ export default function DriverApp() {
       if (notif.type === 'daily_schedule') {
         setShowSchedule(true);
       } else if (notif.tripId && sheetStateRef.current === 'waiting') {
+        if (!isStySentryTripId(notif.tripId)) {
+          await fbSet(`driver_notifications/${driver.id}`, null);
+          return;
+        }
         const { data: taNotifGate } = await supabase
           .from('trip_assignments')
           .select('status')
@@ -1500,7 +1527,10 @@ export default function DriverApp() {
           commitDriverTrip(tripPayload, { source: 'firebase_notification', reason: 'driver_notification_trip' });
           setSheetState(deriveSheetStateFromAssignmentStatus(normalizedNotifStatus));
           if (normalizedNotifStatus === 'pending' || normalizedNotifStatus === 'assigned') {
-            startTripCountdown(15);
+            startTripCountdown(15, {
+              tripId: tripPayload.tripId || notif.tripId || null,
+              baseMs: notif.assignedAt || notif.assigned_at || Date.now(),
+            });
           } else if (driver?.id && tripPayload?.tripId) {
             persistDriverActiveTripSnapshot(driver.id, tripPayload);
           }
@@ -1562,6 +1592,7 @@ export default function DriverApp() {
               : null;
 
           if (!pendingRow?.trip_id) continue;
+          if (!isStySentryTripId(pendingRow.trip_id)) continue;
 
           if (!mtRow || !Object.keys(mtRow).length) {
             const { data: mtFetched } = await supabase
@@ -1700,7 +1731,10 @@ export default function DriverApp() {
           commitDriverTrip(mergedOffer, { source: 'poll_pending', reason: 'peek_or_pending_assignment_offer' });
           setSheetState(deriveSheetStateFromAssignmentStatus(mergedOfferLifecycle));
           if (mergedOfferLifecycle === 'pending' || mergedOfferLifecycle === 'assigned') {
-            startTripCountdown(15);
+            startTripCountdown(15, {
+              tripId: mergedOffer.tripId || pendingRow.trip_id || null,
+              baseMs: Date.now(),
+            });
           } else {
             persistDriverActiveTripSnapshot(driver.id, mergedOffer);
           }
@@ -1768,32 +1802,48 @@ export default function DriverApp() {
     }
   }
 
-  function startTripCountdown(seconds) {
-    setCountdown(seconds);
+  function startTripCountdown(seconds, options = {}) {
+    const tripId = options.tripId || currentTripRef.current?.tripId || null;
+    const now = Date.now();
+    const baseMsRaw = options.baseMs;
+    const baseMs = Number.isFinite(Number(baseMsRaw))
+      ? Number(baseMsRaw)
+      : (baseMsRaw ? new Date(baseMsRaw).getTime() : now);
+    const proposedDeadlineMs = (Number.isFinite(baseMs) ? baseMs : now) + Math.max(1, Number(seconds || 0)) * 1000;
+    const sameTrip = Boolean(tripId) && String(countdownDeadlineRef.current.tripId || '') === String(tripId || '');
+    const existingDeadlineMs = sameTrip ? Number(countdownDeadlineRef.current.deadlineMs || 0) : 0;
+    const effectiveDeadlineMs =
+      existingDeadlineMs > now ? existingDeadlineMs : proposedDeadlineMs;
+
+    countdownDeadlineRef.current = { tripId: tripId || null, deadlineMs: effectiveDeadlineMs };
+
     if (countdownRef.current) clearInterval(countdownRef.current);
-    let remaining = seconds;
-    countdownRef.current = setInterval(() => {
-      remaining -= 1;
+
+    const updateCountdown = () => {
+      const remainingMs = effectiveDeadlineMs - Date.now();
+      const remaining = Math.max(0, Math.ceil(remainingMs / 1000));
       setCountdown(remaining);
       if (remaining <= 0) {
         clearInterval(countdownRef.current);
+        countdownRef.current = null;
+        countdownDeadlineRef.current = { tripId: null, deadlineMs: 0 };
         setCountdown(null);
         if (sheetStateRef.current === 'new_trip') {
           (async () => {
-            const tripId = currentTripRef.current?.tripId || null;
+            const tripIdInner = currentTripRef.current?.tripId || null;
             const driverId = driverRecord?.id || driverData?.id || null;
-            if (!tripId || !driverId) return;
+            if (!tripIdInner || !driverId) return;
             const [{ data: row }, { data: mtRow }] = await Promise.all([
               supabase
                 .from('trip_assignments')
                 .select('status, accepted_at, actual_pickup_time, assigned_at')
-                .eq('trip_id', tripId)
+                .eq('trip_id', tripIdInner)
                 .eq('driver_id', driverId)
                 .maybeSingle(),
               supabase
                 .from('marketplace_trips')
                 .select('status, external_trip_status, raw_payload')
-                .eq('sentry_trip_id', String(tripId))
+                .eq('sentry_trip_id', String(tripIdInner))
                 .maybeSingle(),
             ]);
             const merged = resolveDriverLifecycleStatus(row || {}, mtRow || {});
@@ -1803,11 +1853,18 @@ export default function DriverApp() {
           })();
         }
       }
+    };
+
+    updateCountdown();
+    countdownRef.current = setInterval(() => {
+      updateCountdown();
     }, 1000);
   }
 
   function stopCountdown() {
     if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = null;
+    countdownDeadlineRef.current = { tripId: null, deadlineMs: 0 };
     setCountdown(null);
   }
 
@@ -1828,6 +1885,11 @@ export default function DriverApp() {
       if (remaining <= 0) stopPickupWait();
     }, 1000);
   }
+
+  useEffect(() => {
+    const tid = normalizeUiTripId(currentTrip?.tripId);
+    if (!tid) stopPickupWait();
+  }, [currentTrip?.tripId]);
 
   async function publishTripAlert(alertType, message, severity = 'info', extraPayload = {}) {
     const activeTripId = currentTrip?.tripId || currentTrip?.trip_id || null;
@@ -1947,19 +2009,35 @@ export default function DriverApp() {
       vehicle.location = locationPayload;
     }
 
-    return {
+    const payload = {
       status_id: statusId,
-      is_done_by_not_integrated_provider: 0,
-      is_confirmed: statusId >= 3 ? 1 : 0,
       last_modified_at: extra.last_modified_at || currentTrip?.lastModifiedAt || locationTimestamp,
       ...(Object.keys(driver).length ? { driver } : {}),
       ...(Object.keys(vehicle).length ? { vehicle } : {}),
       ...extra,
     };
+
+    const explicitFare =
+      extra?.mta?.collected_fare ??
+      extra?.collected_fare ??
+      null;
+    if ([5, 6].includes(Number(statusId)) && explicitFare !== null && explicitFare !== undefined && explicitFare !== '') {
+      payload.mta = {
+        ...(payload.mta && typeof payload.mta === 'object' ? payload.mta : {}),
+        collected_fare: Number(explicitFare),
+      };
+    }
+
+    delete payload.is_done_by_not_integrated_provider;
+    delete payload.is_confirmed;
+    delete payload.collected_fare;
+    delete payload.collected_fare_amount;
+
+    return payload;
   }
 
   async function sendSentryLifecycleStatus(tripId, statusId, extra = {}) {
-    if (!tripId || !sentryApi.enabled || !sentryApi.features.tripStatusUpdate) return { skipped: true };
+    if (!tripId || !sentryApi.enabled) return { skipped: true };
     if (shouldSkipUpstreamSentryForDriverTestTrip({ ...currentTrip, tripId })) {
       await supabase.from('sentry_sync_log').insert({
         sync_type: `trip_status_${statusId}_local_test_skipped`,
@@ -2044,7 +2122,6 @@ export default function DriverApp() {
   ) {
     const tripId = String(trip?.tripId || trip?.trip_id || '').trim();
     if (!tripId) return { skipped: true, reason: 'missing_trip_id' };
-    if (!tripId.startsWith('STY-')) return { skipped: true, reason: 'non_sentry_trip' };
     if (shouldSkipUpstreamSentryForDriverTestTrip(trip)) return { skipped: true, reason: 'local_test_trip' };
     if (!sentryApi.enabled) return { skipped: true, reason: 'sentry_disabled' };
 
@@ -2065,28 +2142,25 @@ export default function DriverApp() {
     retryState.inFlight = true;
 
     try {
-      let acceptResult = { ok: true, skipped: true };
-      if (sentryApi.features.tripAcceptReject) {
-        acceptResult = await sentryApi.acceptTrip(tripId, {
-          last_modified_at: trip?.lastModifiedAt || '',
-          accepted_at: acceptedAt || trip?.acceptedAt || new Date().toISOString(),
-        });
-        const acceptOutboundPaused = acceptResult.data?.reason === 'sandbox_outbound_paused';
-        await supabase.from('sentry_sync_log').insert({
-          sync_type: source === 'driver_accept' ? 'trip_accept' : 'trip_accept_retry',
-          direction: 'export',
-          record_type: 'trip',
-          external_id: String(tripId),
-          status: acceptOutboundPaused ? 'skipped' : (acceptResult.ok ? 'success' : 'failed'),
-          error_message: acceptOutboundPaused
-            ? 'sandbox_outbound_paused — turn off in Admin → Sentry'
-            : (acceptResult.ok ? '' : (acceptResult.error || `HTTP ${acceptResult.status}`)),
-          payload: {
-            driver_id: driverData?.id || null,
-            source,
-          },
-        });
-      }
+      let acceptResult = await sentryApi.acceptTrip(tripId, {
+        last_modified_at: trip?.lastModifiedAt || '',
+        accepted_at: acceptedAt || trip?.acceptedAt || new Date().toISOString(),
+      });
+      const acceptOutboundPaused = acceptResult.data?.reason === 'sandbox_outbound_paused';
+      await supabase.from('sentry_sync_log').insert({
+        sync_type: source === 'driver_accept' ? 'trip_accept' : 'trip_accept_retry',
+        direction: 'export',
+        record_type: 'trip',
+        external_id: String(tripId),
+        status: acceptOutboundPaused ? 'skipped' : (acceptResult.ok ? 'success' : 'failed'),
+        error_message: acceptOutboundPaused
+          ? 'sandbox_outbound_paused — turn off in Admin → Sentry'
+          : (acceptResult.ok ? '' : (acceptResult.error || `HTTP ${acceptResult.status}`)),
+        payload: {
+          driver_id: driverData?.id || null,
+          source,
+        },
+      });
 
       const effectiveAcceptedAt = acceptedAt || trip?.acceptedAt || new Date().toISOString();
       const statusResult = await sendSentryLifecycleStatus(tripId, 2, {
@@ -2350,16 +2424,46 @@ export default function DriverApp() {
           payload: { driver_id: driverData.id, trip_processing_status_id: 2, is_test_trip: Boolean(currentTrip?.isTestTrip) },
         });
       } else {
-        await ensureSentryAcceptedSync(currentTrip, {
+        if (!sentryApi.enabled || (!sentryApi.features.tripAcceptReject && !sentryApi.features.tripStatusUpdate)) {
+          showToast('Sentry accept/status sync is disabled. This trip cannot be accepted in live mode until Sentry sync is enabled.');
+          return;
+        }
+        const sentryAcceptSync = await ensureSentryAcceptedSync(currentTrip, {
           acceptedAt,
           source: 'driver_accept',
           notifyOnFailure: true,
         });
+        if (!sentryAcceptSync?.ok) {
+          // Prevent local "accepted" state when broker did not acknowledge.
+          let rollbackAssignment = supabase
+            .from('trip_assignments')
+            .update({ status: 'pending', trip_processing_status_id: 0, accepted_at: null });
+          rollbackAssignment = applyTripAssignmentTarget(rollbackAssignment, currentTrip, thisDriverId)
+            .in('status', ['accepted']);
+          await rollbackAssignment;
+          await supabase
+            .from('marketplace_trips')
+            .update({
+              status: 'assigned',
+              external_trip_status: 'assigned',
+              taken_by: thisDriverId || null,
+            })
+            .eq('sentry_trip_id', tripId);
+          if (currentTrip?.riderKey) {
+            await fbUpdate(`rider_tracking/${currentTrip.riderKey}`, {
+              status: 'assigned',
+              acceptedAt: null,
+            });
+          }
+          await fbSet(`trip_assignments/${tripId}`, { status: 'pending', driverId: thisDriverId || null });
+          showToast('Sentry did not confirm trip acceptance. Trip was kept in assigned state.');
+          return;
+        }
       }
 
       await publishTripAlert(
         'driver_accepted_trip',
-        `${driverData?.name || 'Driver'} accepted trip ${tripId.slice(-8) || 'current trip'}. Rider tracking link is ready.`,
+        `${driverData?.name || 'Driver'} accepted trip ${tripId || 'current trip'}. Rider tracking link is ready.`,
         'info',
         {
           status: 'accepted',
@@ -2448,7 +2552,7 @@ export default function DriverApp() {
 
     await publishTripAlert(
       'driver_started_route_to_pickup',
-      `${driverData?.name || 'Driver'} started driving to pickup for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      `${driverData?.name || 'Driver'} started driving to pickup for trip ${String(currentTrip?.tripId || '').trim() || 'current trip'}.`,
       'info',
       { status: 'en_route', en_route_at: enRouteAt }
     );
@@ -2475,9 +2579,67 @@ export default function DriverApp() {
 
   async function rejectTrip() {
     if (!currentTrip) return;
-    stopCountdown();
 
+    const tripId = currentTrip.tripId;
     const rejectedAt = new Date().toISOString();
+    const hasAccepted = Boolean(currentTrip?.acceptedAt);
+
+    const reachedPickupArrival =
+      Boolean(currentTrip?.arrivedAt) ||
+      Boolean(currentTrip?.pickedUpAt) ||
+      Boolean(lifecycleUiLock?.arrived) ||
+      Boolean(lifecycleUiLock?.pickedUp);
+
+    const sandboxOrLocalTrip = isLocalOnlyTestTripId(tripId);
+
+    /** Only block local release if broker integration must acknowledge (avoids orphan local rejects). */
+    const sentryHardGate =
+      Boolean(tripId) &&
+      sentryApi.enabled &&
+      !sandboxOrLocalTrip;
+
+    let sentryAttempted = false;
+    let sentryResult = { ok: true };
+
+    if (tripId && sentryApi.enabled) {
+      sentryAttempted = true;
+      sentryResult = await sentryApi.rejectTrip(
+        currentTrip.tripId,
+        1,
+        currentTrip.lastModifiedAt || null,
+        null
+      );
+
+      if (sentryAttempted) {
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'trip_reject',
+          direction: 'export',
+          record_type: 'trip',
+          external_id: String(currentTrip.tripId),
+          status: sentryResult.ok ? 'success' : 'failed',
+          error_message: sentryResult.ok ? '' : (sentryResult.error || `HTTP ${sentryResult.status}`),
+          payload: {
+            driver_id: driverData.id,
+            trip_processing_status_id: 2,
+            sentry_status_id: 1,
+            had_accepted_progress: hasAccepted,
+            reached_pickup_arrival: reachedPickupArrival,
+            driver_release: true,
+          },
+        });
+      }
+    }
+
+    if (sentryHardGate && sentryAttempted && !sentryResult.ok) {
+      const detail = sentryResult.error || `HTTP ${sentryResult.status}`;
+      logFailure('DriverApp:rejectTrip:sentry_blocked', { tripId, detail });
+      showToast(
+        `The broker did not confirm this release (${detail}). Your trip is still active — try again or contact dispatch.`
+      );
+      return;
+    }
+
+    stopCountdown();
 
     await fbSet(`trip_assignments/${currentTrip.tripId}`, { status: 'rejected', driverId: driverData.id });
     await fbSet(`driver_notifications/${driverData.id}`, null);
@@ -2489,53 +2651,22 @@ export default function DriverApp() {
       rejectUpdate = applyTripAssignmentTarget(rejectUpdate, currentTrip, driverRecord?.id || driverData?.id);
       await rejectUpdate;
 
-      if (currentTrip?.acceptedAt) {
-        await supabase
-          .from('marketplace_trips')
-          .update({
-            status: 'cancelled',
-            external_trip_status: 'cancelled',
-          })
-          .eq('sentry_trip_id', String(currentTrip.tripId));
-      }
+      await supabase
+        .from('marketplace_trips')
+        .update({
+          status: 'available',
+          external_trip_status: 'rejected',
+          taken_by: null,
+        })
+        .eq('sentry_trip_id', String(currentTrip.tripId));
+    }
 
-      if (sentryApi.enabled) {
-        // Align with Sentry lifecycle sheet:
-        // - no-show before arrival  -> status_id=7
-        // - no-show after arrival   -> status_id=8
-        // For pre-accept release, use reject endpoint status_id=1.
-        const hasAccepted = Boolean(currentTrip?.acceptedAt);
-        const hasArrived = Boolean(currentTrip?.arrivedAt);
-        const statusSyncResult = hasAccepted
-          ? await sentryApi.updateTripStatus(currentTrip.tripId, {
-              status_id: hasArrived ? 8 : 7,
-              cancel_reason_id: 1,
-              cancel_note: null,
-              pick_up_arrival_timestamp: hasArrived ? currentTrip.arrivedAt : null,
-              last_modified_at: currentTrip.lastModifiedAt || rejectedAt,
-            })
-          : await sentryApi.rejectTrip(
-              currentTrip.tripId,
-              1,
-              currentTrip.lastModifiedAt || null,
-              null
-            );
-
-        await supabase.from('sentry_sync_log').insert({
-          sync_type: hasAccepted ? 'trip_cancel_no_show' : 'trip_reject',
-          direction: 'export',
-          record_type: 'trip',
-          external_id: String(currentTrip.tripId),
-          status: statusSyncResult.ok ? 'success' : 'failed',
-          error_message: statusSyncResult.ok ? '' : (statusSyncResult.error || `HTTP ${statusSyncResult.status}`),
-          payload: {
-            driver_id: driverData.id,
-            trip_processing_status_id: 2,
-            sentry_status_id: hasAccepted ? (hasArrived ? 8 : 7) : 1,
-            cancel_reason_id: hasAccepted ? 1 : null,
-          },
-        });
-      }
+    if (driverData?.id) {
+      await supabase
+        .from('drivers')
+        .update({ status: 'online', updated_at: new Date().toISOString() })
+        .eq('id', driverData.id)
+        .eq('status', 'on_trip');
     }
 
     if (driverData?.id) clearDriverActiveTripSnapshot(driverData.id);
@@ -2623,7 +2754,7 @@ export default function DriverApp() {
     }
     await publishTripAlert(
       'driver_arrived_pickup',
-      `${driverData?.name || 'Driver'} arrived at pickup for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      `${driverData?.name || 'Driver'} arrived at pickup for trip ${String(currentTrip?.tripId || '').trim() || 'current trip'}.`,
       'info',
       { status: 'arrived', arrived_at: arrivedAt }
     );
@@ -2704,15 +2835,18 @@ export default function DriverApp() {
     const pickupResult = await sendSentryLifecycleStatus(tripId, 5, {
       pick_up_timestamp: pickedUpAt,
       pick_up_arrival_timestamp: currentTrip?.arrivedAt || pickedUpAt,
-      collected_fare: normalizedPickupMeta.collectedFare,
-      collected_fare_amount: normalizedPickupMeta.collectedFare,
+      ...(normalizedPickupMeta.collectedFare != null ? {
+        mta: {
+          collected_fare: normalizedPickupMeta.collectedFare,
+        },
+      } : {}),
     });
     if (pickupResult && !pickupResult.ok && !pickupResult.skipped) {
       showToast(`Pickup saved locally, but Sentry status update failed. ${pickupResult.error || `HTTP ${pickupResult.status}`}`);
     }
     await publishTripAlert(
       'driver_picked_up_rider',
-      `${driverData?.name || 'Driver'} picked up the rider for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      `${driverData?.name || 'Driver'} picked up the rider for trip ${String(currentTrip?.tripId || '').trim() || 'current trip'}.`,
       'info',
       { status: 'picked_up', picked_up_at: pickedUpAt }
     );
@@ -2720,9 +2854,21 @@ export default function DriverApp() {
   }
 
   async function markNoShow() {
-    if (!currentTrip) return;
+    if (!currentTrip?.tripId) {
+      showToast('No trip to mark as no-show.');
+      return;
+    }
     const thisDriverId = driverRecord?.id || driverData?.id;
-    if (thisDriverId && currentTrip?.tripId) {
+    if (!thisDriverId) {
+      showToast('Driver session missing. Refresh and try again.');
+      return;
+    }
+    if (!currentTrip.arrivedAt) {
+      showToast('Tap “Arrived at pickup” first, wait the required period, then mark no-show.');
+      return;
+    }
+
+    try {
       const nsClaim = await claimDriverTripIdempotency(supabase, {
         driverId: thisDriverId,
         tripId: currentTrip.tripId,
@@ -2731,74 +2877,93 @@ export default function DriverApp() {
       });
       if (!nsClaim.ok) {
         logFailure('DriverApp:markNoShow:idempotency', nsClaim.error);
+        showToast('Could not record no-show. Try again.');
         return;
       }
       if (!nsClaim.firstClaim) {
         showToast('No-show already recorded.');
         return;
       }
-    }
-    const noShowAt = new Date().toISOString();
 
-    await fbSet(`trip_assignments/${currentTrip?.tripId}`, { status: 'no_show', driverId: driverData.id, noShowAt: Date.now() });
-    await fbUpdate(`rider_tracking/${currentTrip?.riderKey}`, {
-      status: 'no_show',
-      driverId: driverData.id,
-      noShowAt: Date.now(),
-    });
-    await fbSet(`driver_notifications/${driverData.id}`, null);
+      const noShowAt = new Date().toISOString();
+      const tripIdStr = String(currentTrip.tripId);
 
-    if (currentTrip?.tripId) {
+      await fbSet(`trip_assignments/${tripIdStr}`, { status: 'no_show', driverId: driverData.id, noShowAt: Date.now() });
+
+      if (currentTrip?.riderKey) {
+        const rtl = await fbUpdate(`rider_tracking/${currentTrip.riderKey}`, {
+          status: 'no_show',
+          driverId: driverData.id,
+          noShowAt: Date.now(),
+        });
+        if (!rtl.ok) logFailure('DriverApp:markNoShow:rider_tracking', rtl.error);
+      }
+
+      if (driverData?.id) {
+        await fbSet(`driver_notifications/${driverData.id}`, null);
+      }
+
       let noShowUpdate = supabase
         .from('trip_assignments')
-        .update({ status: 'no_show' });
-      noShowUpdate = applyTripAssignmentTarget(noShowUpdate, currentTrip, driverRecord?.id || driverData?.id);
-      const { error } = await noShowUpdate;
-      if (error) logFailure('DriverApp:markNoShow:trip_assignments', error);
+        .update({ status: 'no_show' })
+        .in('status', NO_SHOW_FROM_ASSIGNMENT_STATUSES);
+      noShowUpdate = applyTripAssignmentTarget(noShowUpdate, currentTrip, thisDriverId);
+      const { data: updatedAssign, error: assignErr } = await noShowUpdate.select('id').maybeSingle();
+      if (assignErr) {
+        logFailure('DriverApp:markNoShow:trip_assignments', assignErr);
+        showToast('Could not update trip assignment. Refresh or contact dispatch.');
+        return;
+      }
+      if (!updatedAssign?.id) {
+        showToast('Could not save no-show (assignment missing or wrong status).');
+        return;
+      }
 
-      await supabase
+      const { error: mpErr } = await supabase
         .from('marketplace_trips')
         .update({
           status: 'cancelled',
           external_trip_status: 'no_show',
         })
-        .eq('sentry_trip_id', String(currentTrip.tripId));
-    }
+        .eq('sentry_trip_id', tripIdStr);
+      if (mpErr) logFailure('DriverApp:markNoShow:marketplace_trips', mpErr);
 
-    if (driverRecord?.id) {
-      const { error } = await supabase.from('drivers').update({ status: 'online' }).eq('id', driverRecord.id);
-      if (error) logFailure('DriverApp:markNoShow:drivers', error);
-    }
+      if (driverRecord?.id) {
+        const { error: drErr } = await supabase.from('drivers').update({ status: 'online' }).eq('id', driverRecord.id);
+        if (drErr) logFailure('DriverApp:markNoShow:drivers', drErr);
+      }
 
-    stopPickupWait();
-    const noShowResult = await sendSentryLifecycleStatus(currentTrip?.tripId, currentTrip?.arrivedAt ? 8 : 7, {
-      cancel_reason_id: 1,
-      cancelled_at: noShowAt,
-      ...(currentTrip?.arrivedAt ? { pick_up_arrival_timestamp: currentTrip.arrivedAt } : {}),
-    });
-    if (noShowResult && !noShowResult.ok && !noShowResult.skipped) {
-      showToast(`No-show saved locally, but Sentry status update failed. ${noShowResult.error || `HTTP ${noShowResult.status}`}`);
-    }
-    await publishTripAlert(
-      'driver_marked_no_show',
-      `${driverData?.name || 'Driver'} marked a rider as no-show for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
-      'warning',
-      { status: 'no_show', no_show_at: noShowAt, waited_mins: driverWaitMins }
-    );
-    if (driverData?.id) clearDriverActiveTripSnapshot(driverData.id);
-    if (driverData?.id) clearDriverLifecycleLock(driverData.id);
-    setLifecycleUiLock({ tripId: null, accepted: false, enRoute: false, arrived: false, pickedUp: false });
-    if (currentTrip?.tripId) {
-      telemetryLifecycleStage('DriverApp:mark_no_show', currentTrip.tripId, 'no_show', {
+      stopPickupWait();
+      const noShowResult = await sendSentryLifecycleStatus(tripIdStr, 8, {
+        cancel_reason_id: 1,
+        cancelled_at: noShowAt,
+        pick_up_arrival_timestamp: currentTrip.arrivedAt,
+      });
+      if (noShowResult && !noShowResult.ok && !noShowResult.skipped) {
+        showToast(`No-show saved locally, but Sentry status update failed. ${noShowResult.error || `HTTP ${noShowResult.status}`}`);
+      }
+
+      await publishTripAlert(
+        'driver_marked_no_show',
+        `${driverData?.name || 'Driver'} marked a rider as no-show for trip ${tripIdStr}.`,
+        'warning',
+        { status: 'no_show', no_show_at: noShowAt, waited_mins: driverWaitMins }
+      );
+
+      if (driverData?.id) clearDriverActiveTripSnapshot(driverData.id);
+      if (driverData?.id) clearDriverLifecycleLock(driverData.id);
+      setLifecycleUiLock({ tripId: null, accepted: false, enRoute: false, arrived: false, pickedUp: false });
+      telemetryLifecycleStage('DriverApp:mark_no_show', tripIdStr, 'no_show', {
         skipBackwardCheck: true,
         resetAfter: true,
         reason: 'driver_marked_no_show',
       });
-    } else {
-      lastCommittedLifecycleRef.current = { tripId: null, stage: '' };
+      commitDriverTrip(null, { source: 'mark_no_show', reason: 'driver_no_show' });
+      setSheetState('waiting');
+    } catch (err) {
+      logFailure('DriverApp:markNoShow', err);
+      showToast('No-show failed. Try again.');
     }
-    commitDriverTrip(null, { source: 'mark_no_show', reason: 'driver_no_show' });
-    setSheetState('waiting');
   }
 
   async function completeTrip(meta = {}) {
@@ -2835,11 +3000,14 @@ export default function DriverApp() {
       drop_off_timestamp: completedAt,
       pick_up_timestamp: currentTrip?.pickedUpAt || null,
       pick_up_arrival_timestamp: currentTrip?.arrivedAt || null,
-      collected_fare: effectiveCollectedFare,
-      collected_fare_amount: effectiveCollectedFare,
       is_next_day: completionMeta.isNextDay ? 1 : 0,
       next_day: completionMeta.isNextDay ? 1 : 0,
       next_day_requested_at: completionMeta.isNextDay ? completedAt : null,
+      ...(effectiveCollectedFare != null ? {
+        mta: {
+          collected_fare: effectiveCollectedFare,
+        },
+      } : {}),
     };
 
     await fbSet(`trip_assignments/${currentTrip?.tripId}`, { status: 'completed', driverId: driverData.id, completedAt: Date.now() });
@@ -2884,7 +3052,7 @@ export default function DriverApp() {
 
     await publishTripAlert(
       'driver_dropped_off_rider',
-      `${driverData?.name || 'Driver'} dropped off the rider for trip ${String(currentTrip?.tripId || '').slice(-8) || 'current trip'}.`,
+      `${driverData?.name || 'Driver'} dropped off the rider for trip ${String(currentTrip?.tripId || '').trim() || 'current trip'}.`,
       'info',
       {
         status: 'completed',
@@ -3012,7 +3180,9 @@ export default function DriverApp() {
       .order('accepted_at', { ascending: false, nullsFirst: false })
       .order('assigned_at', { ascending: false })
       .limit(25);
-    let activeRow = (primaryRows || []).find(row => isResumableStatus(row?.status)) || null;
+    let activeRow = (primaryRows || []).find(row => (
+      isResumableStatus(row?.status) && isStySentryTripId(row?.trip_id)
+    )) || null;
     if (!activeRow?.trip_id && !activeErr && driverCtx?.company_id && (driverCtx?.full_name || driverData?.name)) {
       const driverName = String(driverCtx.full_name || driverData?.name || '').trim();
       if (driverName) {
@@ -3027,7 +3197,9 @@ export default function DriverApp() {
         if (!activeErr) {
           const normalizeName = (value) => String(value || '').trim().toLowerCase();
           const expected = normalizeName(driverName);
-          const rows = (fallback.data || []).filter(row => isResumableStatus(row?.status));
+          const rows = (fallback.data || []).filter(row => (
+            isResumableStatus(row?.status) && isStySentryTripId(row?.trip_id)
+          ));
           activeRow = rows.find(row => normalizeName(row.driver_name) === expected) || null;
           if (!activeRow) {
             activeRow = rows.find(row => normalizeName(row.driver_name).includes(expected) || expected.includes(normalizeName(row.driver_name))) || null;
@@ -3072,7 +3244,9 @@ export default function DriverApp() {
             .order('assigned_at', { ascending: false })
             .limit(25);
           if (!aliasLookup.error) {
-            const aliasRow = (aliasLookup.data || []).find(row => isResumableStatus(row?.status));
+            const aliasRow = (aliasLookup.data || []).find(row => (
+              isResumableStatus(row?.status) && isStySentryTripId(row?.trip_id)
+            ));
             if (aliasRow?.trip_id) activeRow = aliasRow;
           }
         }
@@ -3082,123 +3256,28 @@ export default function DriverApp() {
       logFailure('DriverApp:restoreActiveTripFromDb', activeErr);
       return null;
     }
-    if (!activeRow?.trip_id && !activeErr && driverCtx?.id) {
-      const { data: marketplaceRow, error: marketplaceErr } = await supabase
-        .from('marketplace_trips')
-        .select('sentry_trip_id, status, external_trip_status, sentry_last_modified_at, raw_payload, assignment_type_code, pu_address, do_address, pu_time, delivery_price, mileage, loaded_at')
-        .eq('taken_by', driverCtx.id)
-        .in('status', ['assigned', 'accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'])
-        .order('loaded_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (marketplaceErr) {
-        logFailure('DriverApp:restoreActiveTripFromDb:marketplaceFallback', marketplaceErr);
-      } else if (marketplaceRow?.sentry_trip_id) {
-        const normalizedFallbackStatus = resolveDriverLifecycleStatusForDriver({}, marketplaceRow, driverCtx?.id);
-        const fbMpTs = extractMarketplaceLifecycleTimestamps(marketplaceRow);
-        const fallbackHasEnRouteProgress = hasMarketplaceEnRouteProgress(marketplaceRow);
-        const fallbackTrip = {
-          type: 'active_trip',
-          tripId: marketplaceRow.sentry_trip_id,
-          lastModifiedAt: marketplaceRow.sentry_last_modified_at || '',
-          puAddress: marketplaceRow.pu_address || '',
-          doAddress: marketplaceRow.do_address || '',
-          puTime: marketplaceRow.pu_time || '',
-          ...(perTripPay ? { deliveryPrice: marketplaceRow.delivery_price } : {}),
-          mileage: marketplaceRow.mileage,
-          acceptedAt: ['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(normalizedFallbackStatus)
-            ? (fbMpTs.acceptedAt || new Date().toISOString())
-            : null,
-          enRouteAt: fallbackHasEnRouteProgress
-            ? (fbMpTs.enRouteAt || fbMpTs.acceptedAt || new Date().toISOString())
-            : null,
-          arrivedAt: ['arrived', 'picked_up', 'on_trip'].includes(normalizedFallbackStatus)
-            ? (fbMpTs.arrivedAt || fbMpTs.pickedUpAt || new Date().toISOString())
-            : null,
-          pickedUpAt: ['picked_up', 'on_trip'].includes(normalizedFallbackStatus)
-            ? (fbMpTs.pickedUpAt || new Date().toISOString())
-            : null,
-          testingNote: '',
-          isTestTrip: false,
-          ...deriveMtaFareInfo(marketplaceRow || {}),
-        };
-        const mergedFallback = preserveTripProgressForSameTrip(
-          cachedSnapshotTrip || currentTripRef.current,
-          fallbackTrip
-        );
-        const mergedFallbackLifecycle = deriveLifecycleStatusFromTripSnapshot(mergedFallback, normalizedFallbackStatus);
-        telemetryLifecycleStage('DriverApp:restore_marketplace_fallback', marketplaceRow.sentry_trip_id, normalizedFallbackStatus, {
-          revision: marketplaceRow.sentry_last_modified_at ?? null,
-          reason: 'restore_active_trip_marketplace_fallback',
-        });
-        commitDriverTrip(mergedFallback, { source: 'restore_db', reason: 'marketplace_fallback_row' });
-        setSheetState(deriveSheetStateFromAssignmentStatus(mergedFallbackLifecycle));
-        if (openSheet) setSheetOpen(true);
-        return mergedFallback;
-      }
-    }
     if (!activeRow?.trip_id) {
       const cached = readDriverActiveTripSnapshot(driverCtx.id);
       const maxAgeMs = 72 * 3600000;
       const cacheFresh = Boolean(cached?.savedAt && Date.now() - Number(cached.savedAt) < maxAgeMs);
-      if (cacheFresh && cached?.tripId && String(cached.driverId || driverCtx.id) === String(driverCtx.id)) {
+      const cachedOk =
+        cached?.tripId &&
+        isStySentryTripId(cached.tripId) &&
+        String(cached.driverId || driverCtx.id) === String(driverCtx.id);
+      if (cacheFresh && cachedOk) {
         const { data: byTrip, error: byTripErr } = await supabase
           .from('trip_assignments')
           .select('id, trip_id, driver_id, pu_address, do_address, pu_time, delivery_price, mileage, notes, accepted_at, actual_pickup_time, status, assigned_at, driver_name, lifecycle_revision')
           .eq('trip_id', cached.tripId)
           .eq('driver_id', driverCtx.id)
           .maybeSingle();
-        if (!byTripErr && byTrip?.trip_id && isResumableStatus(byTrip.status)) {
+        if (
+          !byTripErr &&
+          byTrip?.trip_id &&
+          isResumableStatus(byTrip.status) &&
+          isStySentryTripId(byTrip.trip_id)
+        ) {
           activeRow = byTrip;
-        } else if (cached.tripId) {
-          const tripFromCache = {
-            type: 'active_trip',
-            tripId: cached.tripId,
-            assignmentRowId: cached.assignmentRowId || null,
-            assignmentDriverId: cached.assignmentDriverId || driverCtx.id,
-            lastModifiedAt: cached.lastModifiedAt || '',
-            puAddress: cached.puAddress || '',
-            doAddress: cached.doAddress || '',
-            puTime: cached.puTime || '',
-            ...(perTripPay && cached.deliveryPrice != null && cached.deliveryPrice !== ''
-              ? { deliveryPrice: cached.deliveryPrice }
-              : {}),
-            mileage: cached.mileage,
-            acceptedAt: cached.acceptedAt || new Date().toISOString(),
-            arrivedAt: cached.arrivedAt || null,
-            pickedUpAt: cached.pickedUpAt || null,
-            enRouteAt: cached.enRouteAt || null,
-            riderKey: cached.riderKey || undefined,
-            testingNote: '',
-            isTestTrip: Boolean(cached.isTestTrip),
-            ...deriveMtaFareInfo({ raw_payload: {} }),
-          };
-          const mergedCacheTrip = preserveTripProgressForSameTrip(
-            cachedSnapshotTrip || currentTripRef.current,
-            tripFromCache
-          );
-          const cacheStage = mergedCacheTrip.pickedUpAt
-            ? 'picked_up'
-            : mergedCacheTrip.arrivedAt
-              ? 'arrived'
-              : mergedCacheTrip.enRouteAt
-                ? 'in_progress'
-                : mergedCacheTrip.acceptedAt
-                  ? 'accepted'
-                  : 'assigned';
-          telemetryLifecycleStage('DriverApp:restore_local_cache', mergedCacheTrip.tripId, cacheStage, {
-            revision: mergedCacheTrip.lastModifiedAt || null,
-            reason: 'restore_active_trip_local_snapshot',
-          });
-          commitDriverTrip(mergedCacheTrip, { source: 'restore_cache', reason: 'local_snapshot_resumed' });
-          const nextSheet = mergedCacheTrip.pickedUpAt
-            ? 'to_dropoff'
-            : mergedCacheTrip.arrivedAt || mergedCacheTrip.acceptedAt || mergedCacheTrip.enRouteAt
-              ? 'navigation'
-              : 'new_trip';
-          setSheetState(nextSheet);
-          if (openSheet) setSheetOpen(true);
-          return mergedCacheTrip;
         }
       }
       if (!activeRow?.trip_id) return null;
@@ -3255,6 +3334,9 @@ export default function DriverApp() {
       reason: 'restore_active_trip_db_row',
     });
     commitDriverTrip(mergedRestored, { source: 'restore_db', reason: 'trip_assignment_row' });
+    if (mergedRestored?.arrivedAt && !mergedRestored?.pickedUpAt) {
+      startPickupWait(driverWaitMins);
+    }
     if (activeRow?.trip_id && activeRow?.lifecycle_revision != null) {
       const tk = String(activeRow.trip_id);
       assignmentRevisionByTripRef.current.set(
@@ -3417,10 +3499,10 @@ export default function DriverApp() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col mobile-safe-bottom" style={{ background: '#07090d', fontFamily: 'Inter,sans-serif' }}>
+    <div className="fixed inset-0 flex flex-col mobile-safe-bottom native-shell" style={{ background: '#07090d', fontFamily: 'Inter,sans-serif' }}>
       <div
-        className="relative z-[100] shrink-0 px-3 pt-[calc(var(--safe-top)+4px)] pb-2"
-        style={{ background: 'rgba(7,9,13,0.98)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+        className="relative z-[100] shrink-0 px-3 pt-[calc(var(--safe-top)+4px)] pb-2 native-glass"
+        style={{ background: 'rgba(7,9,13,0.92)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
       >
         <div className="flex items-center justify-between gap-2 min-w-0">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -3484,7 +3566,7 @@ export default function DriverApp() {
             <button
               type="button"
               onClick={() => setShowMenu(true)}
-              className="px-2.5 h-9 flex items-center justify-center gap-1.5 rounded-full"
+              className="px-3 h-10 flex items-center justify-center gap-1.5 rounded-full"
               style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
             >
               <Menu className="w-4 h-4" style={{ color: '#e5e7eb' }} />
@@ -3493,7 +3575,7 @@ export default function DriverApp() {
             <button
               type="button"
               onClick={endShiftAndLogout}
-              className="px-2.5 h-9 flex items-center justify-center gap-1.5 rounded-full"
+              className="px-3 h-10 flex items-center justify-center gap-1.5 rounded-full"
               style={{ background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.24)', color: '#ff7a7a' }}
             >
               <LogOut className="w-4 h-4" />
@@ -3583,7 +3665,7 @@ export default function DriverApp() {
         >
           <div className="flex flex-col sm:flex-row sm:items-stretch gap-2 pointer-events-auto">
             <div className="flex-1 flex items-start justify-between gap-2 px-3 py-2 rounded-xl text-xs min-w-0"
-              style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)' }}>
+              style={{ background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)', boxShadow: '0 10px 24px rgba(0,0,0,0.24)' }}>
               <div className="min-w-0 pr-1">
                 <p className="truncate" style={{ color: '#e5e7eb', fontWeight: 700 }}>{statusMeta.label}</p>
                 <p className="text-[11px] leading-snug line-clamp-2 sm:line-clamp-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{statusMeta.hint}</p>

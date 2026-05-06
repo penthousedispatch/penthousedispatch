@@ -44,6 +44,9 @@ export default function TripCard({
       ''
   ).trim();
   const isCancelled = String(trip.status || '').toLowerCase() === 'cancelled';
+  const loadedAtMs = trip?.loaded_at ? new Date(trip.loaded_at).getTime() : 0;
+  const justSentMins = loadedAtMs ? Math.max(0, Math.round((Date.now() - loadedAtMs) / 60000)) : null;
+  const wasJustSent = justSentMins != null && justSentMins <= 20;
 
   return (
     <div
@@ -56,8 +59,12 @@ export default function TripCard({
     >
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>
-            {(trip.sentry_trip_id || '').slice(-8)}
+          <span
+            className="text-xs font-mono px-1.5 py-0.5 rounded min-w-0 max-w-[min(280px,100%)] truncate inline-block align-bottom"
+            style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.5)', fontSize: 10 }}
+            title={trip.sentry_trip_id ? String(trip.sentry_trip_id) : undefined}
+          >
+            {trip.sentry_trip_id || '—'}
           </span>
           {isTestTrip && (
             <span
@@ -80,6 +87,15 @@ export default function TripCard({
           {assignCode && (
             <span className="text-xs px-1.5 py-0.5 rounded-full font-mono" style={{ background: 'rgba(201,168,76,0.12)', color: '#c9a84c', fontSize: 10 }} title="Sentry assignment_type_code">
               {assignCode}
+            </span>
+          )}
+          {wasJustSent && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded-full"
+              style={{ background: 'rgba(56,189,248,0.12)', color: '#38bdf8', fontSize: 10 }}
+              title={trip.loaded_at || 'Recently imported from Sentry'}
+            >
+              {justSentMins === 0 ? 'Just Sent' : `${justSentMins}m Ago`}
             </span>
           )}
           {syncMeta && (

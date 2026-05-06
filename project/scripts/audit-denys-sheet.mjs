@@ -86,6 +86,12 @@ function skip(name, details = {}) {
   return { name, status: 'skip', ...details };
 }
 
+function matchesRejectedTripShape(trip = {}) {
+  const lifecycleStatusId = Number(trip?.status_id);
+  const acceptanceStatusId = Number(trip?.acceptance_status_id);
+  return acceptanceStatusId === 0 && Number.isFinite(lifecycleStatusId) && lifecycleStatusId !== 1;
+}
+
 const HARNESS_DRIVER_LICENSE_POOL = [
   '273447679',
   '169418192',
@@ -114,7 +120,11 @@ function pickHarnessDriverLicense(rows = [], offset = 0) {
     const candidate = HARNESS_DRIVER_LICENSE_POOL[(i + offset) % HARNESS_DRIVER_LICENSE_POOL.length];
     if (!existing.has(candidate)) return candidate;
   }
-  return HARNESS_DRIVER_LICENSE_POOL[offset % HARNESS_DRIVER_LICENSE_POOL.length];
+  for (let i = 0; i < 50; i += 1) {
+    const candidate = String(100000000 + Math.floor(Math.random() * 900000000));
+    if (!existing.has(candidate)) return candidate;
+  }
+  return `${Date.now()}`.slice(-9);
 }
 
 const env = {
@@ -689,7 +699,8 @@ if (!copySourceTripId) {
 }
 
 report.sheet_checks.push(warn('reject_and_accept_rejected_trip', {
-  note: 'Still needs a fresh live broker-assigned trip to prove end to end without faking Sentry lifecycle state.',
+  note: 'Still needs a fresh live broker-assigned trip to prove end to end without faking Sentry lifecycle state. Expected rejected-trip shape is acceptance_status_id=0 while lifecycle status_id stays at the last broker lifecycle value, not status_id=1.',
+  expected_reject_shape_example: matchesRejectedTripShape({ status_id: 2, acceptance_status_id: 0 }),
 }));
 
 const failed = report.sheet_checks.filter(item => item.status === 'fail').length;

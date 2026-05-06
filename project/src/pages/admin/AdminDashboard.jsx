@@ -3,7 +3,7 @@ import { Routes, Route, NavLink, Link, useLocation, useNavigate, useParams } fro
 import {
   Building2, DollarSign, Zap, Settings, Cpu, FileText,
   Users, LogOut, LayoutGrid, ShieldCheck, Shield, Layers, Banknote, BookOpen,
-  Sun, Moon, Globe, Key, Car, FlaskConical, Bot, MessageSquare,
+  Sun, Moon, Globe, Key, Car, FlaskConical, Bot, MessageSquare, ClipboardList,
   Menu, X, RadioTower, Eye
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -41,6 +41,7 @@ const PRIMARY_TABS = [
 ];
 
 const PLATFORM_TABS = [
+  { path: '/admin/programs', label: 'Partner programs', icon: ClipboardList },
   { path: '/admin/billing', label: 'Billing', icon: DollarSign },
   { path: '/admin/sentry', label: 'Sentry', icon: Settings },
   { path: '/admin/testing', label: 'Testing', icon: Cpu },
@@ -96,6 +97,7 @@ function AdminPlatformHome() {
       items: [
         { path: '/admin/hub', label: 'Integration Hub', desc: 'Partner/provider health, credentials, and connection status.' },
         { path: '/admin/api-keys', label: 'API Keys', desc: 'Manage internal API access and downstream integrations.' },
+        { path: '/admin/programs', label: 'Partner programs', desc: 'Partner sites and child rosters per company—same workspace as Company → Programs, scoped from admin.' },
         { path: '/admin/incentives', label: 'Incentives', desc: 'Driver bonus goals, enrollments, and celebrations. Open a company preview first to scope programs to that fleet.' },
         { path: '/admin/sandbox', label: 'Test Mode', desc: 'Seed test trips, test drivers, and scheduler scenarios.' },
       ],
@@ -227,7 +229,14 @@ function MobileDrawer({ open, onClose }) {
 
 function AdminCompanyPreview() {
   const { companyId } = useParams();
-  const { loadDrivers, loadTrips, loadAssignments, adminPreviewCompany, setAdminPreviewCompany } = useApp();
+  const {
+    loadDrivers,
+    loadTrips,
+    loadAssignments,
+    refreshTripsFromSentry,
+    adminPreviewCompany,
+    setAdminPreviewCompany,
+  } = useApp();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -253,8 +262,8 @@ function AdminCompanyPreview() {
         setLoading(false);
         Promise.all([
           loadDrivers({ companyId: data.id }),
-          loadTrips({ companyId: data.id }),
           loadAssignments({ companyId: data.id }),
+          refreshTripsFromSentry({ companyId: data.id }),
         ]).catch(() => {});
         return;
       }
@@ -536,6 +545,7 @@ export default function AdminDashboard() {
           <Route path="/admin/platform" element={<AdminPlatformHome />} />
           <Route path="/admin/companies" element={renderAdminModule('companies')} />
           <Route path="/admin/company-preview/:companyId/*" element={<AdminCompanyPreview />} />
+          <Route path="/admin/programs" element={renderAdminModule('programs')} />
           <Route path="/admin/billing" element={renderAdminModule('billing')} />
           <Route path="/admin/payroll" element={renderAdminModule('payroll')} />
           <Route path="/admin/sentry" element={renderAdminModule('sentry')} />

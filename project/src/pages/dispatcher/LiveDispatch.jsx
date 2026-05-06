@@ -72,6 +72,13 @@ function deriveActiveTripCompletionEpoch(assignment) {
   return pickup + fallbackDurationMins * 60 * 1000;
 }
 
+const AI_RECOVERY_WINDOW_MS = 30 * 60 * 1000;
+const RELEASE_LOCK_RETRY_MS = 1200;
+
+async function waitMs(ms) {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function tripOfferFingerprintFromTrip(t) {
   if (!t) return '';
   return [
@@ -225,6 +232,270 @@ function buildMarketplaceTakePayload(tripId, driver) {
   return payload;
 }
 
+/** Broker may expect a different marketplace trip id than our row key (e.g. leg suffix STY-…-A vs base STY-…). */
+function collectMarketplaceTakeTripIdCandidates(trip = {}) {
+  const seen = new Set();
+  const ordered = [];
+  const push = (raw) => {
+    const s = String(raw ?? '').trim();
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    ordered.push(s);
+  };
+
+  push(trip.sentry_trip_id);
+  const raw = trip.raw_payload && typeof trip.raw_payload === 'object' ? trip.raw_payload : {};
+  push(raw.trip_id);
+  push(raw.id);
+  push(raw.marketplace_trip_id);
+  push(raw.sentry_trip_id);
+  push(raw.parent_trip_id);
+  push(raw.root_trip_id);
+  push(raw.base_trip_id);
+  push(raw.external_trip_id);
+  push(raw.broker_trip_id);
+  if (raw.trip && typeof raw.trip === 'object') {
+    push(raw.trip.trip_id);
+    push(raw.trip.id);
+    push(raw.trip.sentry_trip_id);
+  }
+  if (Array.isArray(raw.related_trips)) {
+    for (const rt of raw.related_trips) {
+      if (rt && typeof rt === 'object') {
+        push(rt.trip_id);
+        push(rt.id);
+        push(rt.sentry_trip_id);
+      }
+    }
+  }
+
+  const legBases = [];
+  for (const id of ordered) {
+    const m = String(id).match(/^(STY-\d+)(-[A-Z])$/i);
+    if (m?.[1] && m[1] !== id) legBases.push(m[1]);
+  }
+  for (const b of legBases) push(b);
+
+  return ordered;
+}
+
+function buildMarketplaceTakePayloadDriverOnly(tripId, driver) {
+  const payload = {
+    related_trips: [{ trip_id: tripId }],
+  };
+  const licenseNumber = String(driver?.license_number || '').trim();
+  const licenseState = String(driver?.license_state || 'NY').trim();
+  if (licenseNumber) {
+    payload.driver = {
+      dmv_license: {
+        license_number: licenseNumber,
+        state_code: licenseState || 'NY',
+      },
+    };
+  }
+  return payload;
+}
+
+function buildMarketplaceTakePayloadVehicleOnly(tripId, driver) {
+  const payload = {
+    related_trips: [{ trip_id: tripId }],
+  };
+  const vehiclePlate = String(driver?.vehicle_plate || '').trim();
+  if (vehiclePlate) {
+    payload.vehicle = {
+      dmv_registration: {
+        license_plate_number: vehiclePlate,
+      },
+    };
+  }
+  return payload;
+}
+
+/**
+ * Take marketplace trip with Sentry-friendly fallbacks (422 payload shapes, alternate ids, 409 conflict).
+ * Final fallback: reportTripProcessed when take still returns 422/409/404 (broker may still accept processed signal).
+ */
+async function executeMarketplaceTakeWithSentryRecoveries(trip, driver, lastModifiedAt) {
+  const candidates = collectMarketplaceTakeTripIdCandidates(trip);
+  let lastResult = { ok: false, status: 0 };
+
+  for (const takeUrlId of candidates) {
+    const payloadBuilders = [
+      { strategy: 'full', fn: () => buildMarketplaceTakePayload(takeUrlId, driver) },
+      { strategy: 'driver_only', fn: () => buildMarketplaceTakePayloadDriverOnly(takeUrlId, driver) },
+      { strategy: 'vehicle_only', fn: () => buildMarketplaceTakePayloadVehicleOnly(takeUrlId, driver) },
+      { strategy: 'related_trips_only', fn: () => ({ related_trips: [{ trip_id: takeUrlId }] }) },
+      { strategy: 'empty', fn: () => ({}) },
+      {
+        strategy: 'collection_post_full',
+        fn: () => sentryApi.takeMarketplaceTripCollectionBody(takeUrlId, buildMarketplaceTakePayload(takeUrlId, driver)),
+        isDirectResult: true,
+      },
+      {
+        strategy: 'collection_post_trip_id_only',
+        fn: () => sentryApi.takeMarketplaceTripCollectionBody(takeUrlId, {}),
+        isDirectResult: true,
+      },
+    ];
+
+    for (const entry of payloadBuilders) {
+      const { strategy, fn, isDirectResult } = entry;
+      lastResult = isDirectResult ? await fn() : await sentryApi.takeMarketplaceTrip(takeUrlId, fn());
+      if (lastResult.ok) {
+        return { ok: true, takeResult: lastResult, usedTakeUrlId: takeUrlId, recovery: null };
+      }
+
+      const st = Number(lastResult.status || 0);
+
+      if (st === 409) {
+        let conflictProcessed = await sentryApi.reportTripProcessed(takeUrlId, lastModifiedAt);
+        if (!conflictProcessed.ok && lastModifiedAt) {
+          conflictProcessed = await sentryApi.reportTripProcessed(takeUrlId, null);
+        }
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'marketplace_take_conflict_processed_retry',
+          direction: 'export',
+          record_type: 'trip',
+          external_id: takeUrlId,
+          status: conflictProcessed.ok ? 'success' : 'failed',
+          error_message: conflictProcessed.ok ? '' : extractSentryError(conflictProcessed),
+          payload: {
+            take_status: lastResult.status,
+            take_error: extractSentryError(lastResult),
+            retry_strategy: 'report_trip_processed_after_409',
+            payload_strategy: strategy,
+            driver_id: driver.id,
+            driver_name: driver.full_name,
+          },
+        });
+        if (conflictProcessed.ok) {
+          return {
+            ok: true,
+            takeResult: { ...lastResult, ok: true, recoveredBy: 'report_trip_processed_after_409' },
+            usedTakeUrlId: takeUrlId,
+            recovery: 'report_trip_processed_after_409',
+          };
+        }
+      }
+
+      if (st !== 422 && st !== 409 && st !== 404) {
+        break;
+      }
+    }
+  }
+
+  const failStProbe = Number(lastResult.status || 0);
+  let existedAfter404 = false;
+  let existenceProbeWinningId = '';
+  if (!lastResult.ok && failStProbe === 404 && candidates.length) {
+    for (const probeId of candidates) {
+      const mp = await sentryApi.getMarketplaceTripById(probeId);
+      if (mp.ok) {
+        existedAfter404 = true;
+        existenceProbeWinningId = probeId;
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'marketplace_take_404_get_marketplace_ok',
+          direction: 'export',
+          record_type: 'trip',
+          external_id: probeId,
+          status: 'success',
+          error_message: '',
+          payload: {
+            candidate_ids: candidates,
+            last_take_error: extractSentryError(lastResult),
+            driver_id: driver.id,
+            driver_name: driver.full_name,
+            note: 'Segment take returned 404 but marketplace GET succeeded; requiring report_trip_processed success before assign.',
+          },
+        });
+        break;
+      }
+      const tp = await sentryApi.getTripById(probeId);
+      if (tp.ok) {
+        existedAfter404 = true;
+        existenceProbeWinningId = probeId;
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'marketplace_take_404_get_trip_ok',
+          direction: 'export',
+          record_type: 'trip',
+          external_id: probeId,
+          status: 'success',
+          error_message: '',
+          payload: {
+            candidate_ids: candidates,
+            last_take_error: extractSentryError(lastResult),
+            driver_id: driver.id,
+            driver_name: driver.full_name,
+            note: 'Segment take returned 404 but trips GET succeeded; requiring report_trip_processed success before assign.',
+          },
+        });
+        break;
+      }
+    }
+  }
+
+  const failSt = Number(lastResult.status || 0);
+  const recoverableStatuses = new Set([422, 409, 404]);
+
+  if (!lastResult.ok && recoverableStatuses.has(failSt) && candidates.length) {
+    let lastProcessedErr = '';
+    for (const pid of candidates) {
+      let processed = await sentryApi.reportTripProcessed(pid, lastModifiedAt);
+      if (!processed.ok && lastModifiedAt) {
+        processed = await sentryApi.reportTripProcessed(pid, null);
+      }
+      lastProcessedErr = processed.ok ? '' : extractSentryError(processed);
+      if (processed.ok) {
+        await supabase.from('sentry_sync_log').insert({
+          sync_type: 'marketplace_take_processed_recovery_after_take_failure',
+          direction: 'export',
+          record_type: 'trip',
+          external_id: pid,
+          status: 'success',
+          error_message: '',
+          payload: {
+            candidate_ids: candidates,
+            winning_id: pid,
+            last_take_status: lastResult.status,
+            last_take_error: extractSentryError(lastResult),
+            had_404_existence_probe: existedAfter404,
+            existence_probe_winning_id: existenceProbeWinningId || null,
+            retry_strategy: 'report_trip_processed_per_candidate',
+            driver_id: driver.id,
+            driver_name: driver.full_name,
+          },
+        });
+        return {
+          ok: true,
+          takeResult: { ...lastResult, ok: true, recoveredBy: 'report_trip_processed_after_take_failures' },
+          usedTakeUrlId: pid,
+          recovery: 'report_trip_processed_after_take_failures',
+        };
+      }
+    }
+    await supabase.from('sentry_sync_log').insert({
+      sync_type: 'marketplace_take_processed_recovery_failed',
+      direction: 'export',
+      record_type: 'trip',
+      external_id: String(trip?.sentry_trip_id || '').trim() || candidates[0],
+      status: 'failed',
+      error_message: lastProcessedErr || extractSentryError(lastResult),
+      payload: {
+        candidate_ids: candidates,
+        last_take_status: lastResult.status,
+        last_take_error: extractSentryError(lastResult),
+        had_404_existence_probe: existedAfter404,
+        existence_probe_winning_id: existenceProbeWinningId || null,
+        driver_id: driver.id,
+        driver_name: driver.full_name,
+      },
+    });
+  }
+
+  const primaryTripId = String(existenceProbeWinningId || '').trim() || String(trip?.sentry_trip_id || '').trim() || candidates[0] || '';
+  return { ok: false, takeResult: lastResult, usedTakeUrlId: primaryTripId, recovery: null };
+}
+
 function buildLocalOnlyTestTrip({ companyId, driver, testingNote = '', scheduledPickupAt = null } = {}) {
   const now = new Date();
   const pickupEpoch = parseScheduleEpoch(scheduledPickupAt) || (now.getTime() + 10 * 60 * 1000);
@@ -327,6 +598,9 @@ export default function LiveDispatch() {
   const [testNoteDraft, setTestNoteDraft] = useState('');
   const [tripSyncMap, setTripSyncMap] = useState({});
   const [undoingTripId, setUndoingTripId] = useState(null);
+  const [releasingTripId, setReleasingTripId] = useState(null);
+  const [sentryActionTripId, setSentryActionTripId] = useState(null);
+  const [recoveringTripId, setRecoveringTripId] = useState(null);
   const [noteSavingTripId, setNoteSavingTripId] = useState(null);
   const [sendingInstructionDriverId, setSendingInstructionDriverId] = useState(null);
   const [copyingSteps, setCopyingSteps] = useState(false);
@@ -334,14 +608,20 @@ export default function LiveDispatch() {
   const [assignmentNoteDrafts, setAssignmentNoteDrafts] = useState({});
   const [allowMultiTripTake, setAllowMultiTripTake] = useState(false);
   const schedulerPrefs = readCompanySchedulerPrefs(company);
+  const handledRejectedTripIdsRef = React.useRef(new Map());
+  const tripRecoveryPrefs = {
+    tripCopyEnabled: schedulerPrefs.trip_copy_enabled !== false,
+    tripRerouteEnabled: schedulerPrefs.trip_reroute_enabled !== false,
+    tripReassignEnabled: schedulerPrefs.trip_reassign_enabled !== false,
+    aiAutoReassignAfterReject: Boolean(schedulerPrefs.ai_auto_reassign_after_reject),
+    aiAutoCopyAfterReject: Boolean(schedulerPrefs.ai_auto_copy_after_reject),
+  };
 
-  /** Mirrors AppContext normalization (e.g. dispatcher → company) so scoped test assigns always get isTestTrip. */
-  const isCompanyUser = isCompany;
+  /** Treat dispatcher/company roles as company workspace users for dispatch controls. */
+  const isCompanyUser = isCompany || role === 'company' || role === 'dispatcher';
   const isAdminCompanyPreview = role === 'admin' && !!adminPreviewCompany?.id;
-  /** Company workspace or admin previewing a company: manual assigns should still run locally when Sentry marketplace take fails (e.g. HTTP 409). */
-  const scopedDispatchTestMode = isCompanyUser || isAdminCompanyPreview;
-  const scopedTestAssignOptions = () =>
-    scopedDispatchTestMode ? { isTestTrip: true, testingNote: testNoteDraft } : {};
+  /** Regular dispatch assigns must stay production-like (not test-tagged). */
+  const scopedTestAssignOptions = () => ({});
 
   const canManageFleet = isCompanyUser;
   const scopedCompanyId = adminPreviewCompany?.id || company?.id || profile?.company_id || null;
@@ -412,6 +692,48 @@ export default function LiveDispatch() {
   function canAssignAnotherTrip(driverId) {
     if (!driverId) return false;
     return allowMultiTripTake || !driverHasLockConflict(driverId);
+  }
+
+  function scoreDriverForTrip(driver, trip) {
+    if (!driver) return Number.NEGATIVE_INFINITY;
+    let score = driver.status === 'online' ? 18 : 8;
+    const serviceZone = detectServiceZone(trip?.pu_address || '');
+
+    if (driver.current_lat && driver.current_lng && trip?.coords) {
+      const dist = haversineDistance(
+        parseFloat(driver.current_lat),
+        parseFloat(driver.current_lng),
+        trip.coords.lat,
+        trip.coords.lng
+      );
+      const driveTime = AI_SCHED.estimateDriveTime(dist, schedulerPrefs.traffic_buffer_pct || 20);
+      score += Math.max(0, 10 - dist) * Math.max(0.25, (schedulerPrefs.proximity_weight || 7) / 3.5);
+      score -= driveTime * Math.max(0.2, (schedulerPrefs.traffic_weight || 8) / 5);
+    }
+
+    score += getZonePreferenceBonus(
+      serviceZone,
+      normalizePreferredZones(driver?.preferred_zones),
+      schedulerPrefs.zone_weight || 10
+    );
+
+    return score;
+  }
+
+  function getBestDriverForTrip(trip, { excludeDriverId = null } = {}) {
+    const eligible = (drivers || []).filter(driver => {
+      if (!driver?.id) return false;
+      if (excludeDriverId != null && String(driver.id) === String(excludeDriverId)) return false;
+      if (driver.is_active === false) return false;
+      if (!canAssignAnotherTrip(driver.id)) return false;
+      return true;
+    });
+
+    if (!eligible.length) return null;
+
+    return eligible
+      .map(driver => ({ driver, score: scoreDriverForTrip(driver, trip) }))
+      .sort((a, b) => b.score - a.score)[0]?.driver || null;
   }
 
   useEffect(() => {
@@ -520,6 +842,317 @@ export default function LiveDispatch() {
     loadTripSyncStatus();
   }, [trips, assignments]);
 
+  function resolveTripLastModifiedForSentry(tripIdKey) {
+    const hit = trips.find(t => normalizeTripId(t.sentry_trip_id) === tripIdKey);
+    return hit?.sentry_last_modified_at || '';
+  }
+
+  /** When Sentry is enabled, callers must treat `ok: false` as a hard stop before mutating local assignment rows. */
+  async function syncDispatchSentryRelease(tripIdKey, assignmentRow, tripLastModifiedAt) {
+    if (!sentryApi.enabled) return { ok: true, skippedSentry: true };
+    const st = String(assignmentRow.status || '').toLowerCase();
+    const hasAcceptedProgress = ['accepted', 'arrived', 'picked_up', 'in_progress', 'on_trip'].includes(st);
+    const hasArrived = ['arrived', 'picked_up', 'in_progress', 'on_trip'].includes(st);
+    const lm = tripLastModifiedAt || new Date().toISOString();
+
+    let statusSyncResult = { ok: true };
+    let sentryAction = 'reject';
+    if (hasAcceptedProgress) {
+      sentryAction = 'cancel_status_update';
+      statusSyncResult = await sentryApi.updateTripStatus(tripIdKey, {
+        trip_processing_status_id: 2,
+        trip_status: 'cancelled',
+        cancel_reason_id: 1,
+        cancel_note: 'DISPATCH_RELEASE',
+        cancelled_at: new Date().toISOString(),
+      });
+      if (!statusSyncResult.ok) {
+        sentryAction = 'cancel_status_update_fallback_reject';
+        statusSyncResult = await sentryApi.rejectTrip(tripIdKey, 1, lm, 'DISPATCH_RELEASE');
+      }
+    } else {
+      statusSyncResult = await sentryApi.rejectTrip(tripIdKey, 1, lm, 'DISPATCH_RELEASE');
+    }
+    await supabase.from('sentry_sync_log').insert({
+      sync_type: hasAcceptedProgress ? 'trip_dispatch_release_cancel' : 'trip_reject',
+      direction: 'export',
+      record_type: 'trip',
+      external_id: String(tripIdKey),
+      status: statusSyncResult.ok ? 'success' : 'failed',
+      error_message: statusSyncResult.ok ? '' : extractSentryError(statusSyncResult),
+      payload: {
+        driver_id: assignmentRow.driver_id,
+        dispatch_release: true,
+        sentry_action: sentryAction,
+        prior_assignment_status: assignmentRow.status,
+        had_accepted_progress: hasAcceptedProgress,
+        reached_pickup_arrival: hasArrived,
+      },
+    });
+
+    if (!statusSyncResult.ok) {
+      logFailure('LiveDispatch:dispatchRelease:sentry', {
+        tripIdKey,
+        detail: extractSentryError(statusSyncResult),
+      });
+    }
+    return { ok: Boolean(statusSyncResult.ok), result: statusSyncResult };
+  }
+
+  async function releaseTripLocksForDispatch({ tripIdKey, keepDriverId, tripLastModifiedAt }) {
+    const { data: lockedRows, error } = await supabase
+      .from('trip_assignments')
+      .select('id, trip_id, driver_id, status, actual_pickup_time')
+      .eq('trip_id', tripIdKey)
+      .in('status', Array.from(TRIP_LOCK_STATUSES));
+
+    if (error) throw new Error(error.message);
+
+    const toRelease = (lockedRows || []).filter(
+      row => keepDriverId == null || String(row.driver_id || '') !== String(keepDriverId || '')
+    );
+
+    for (const row of toRelease) {
+      const rowStatus = String(row?.status || '').toLowerCase();
+      const rowHasProgress = IN_PROGRESS_TRIP_STATUSES.has(rowStatus);
+      const sentryRelease = await syncDispatchSentryRelease(tripIdKey, row, tripLastModifiedAt);
+      if (sentryApi.enabled && !sentryRelease.ok) {
+        throw new Error(
+          `Broker did not confirm release for trip ${tripIdKey} (driver ${row.driver_id || '?'}). ` +
+            `${extractSentryError(sentryRelease.result || {})}. ` +
+            `Local state was not updated for this step. If another driver on the same trip was already released in this session, refresh and retry.`
+        );
+      }
+
+      const { error: upErr } = await supabase
+        .from('trip_assignments')
+        .update({
+          status: rowHasProgress ? 'cancelled' : 'rejected',
+          trip_processing_status_id: 2,
+          rejected_at: new Date().toISOString(),
+        })
+        .eq('id', row.id);
+
+      if (upErr) throw new Error(upErr.message);
+
+      await fbSet(`driver_notifications/${row.driver_id}`, null);
+      await fbSet(`trip_assignments/${tripIdKey}`, {
+        status: rowHasProgress ? 'cancelled' : 'rejected',
+        driverId: row.driver_id,
+        releasedByDispatchAt: Date.now(),
+      });
+    }
+
+    if (toRelease.length) {
+      const { error: mErr } = await supabase
+        .from('marketplace_trips')
+        .update({
+          status: 'available',
+          taken_by: null,
+        })
+        .eq('sentry_trip_id', tripIdKey);
+
+      if (mErr) logFailure('LiveDispatch:dispatchRelease:marketplace', mErr);
+    }
+
+    return toRelease.length;
+  }
+
+  async function waitForTripUnlockAfterDispatchRelease(tripIdKey, driverId) {
+    await waitMs(RELEASE_LOCK_RETRY_MS);
+    const { data: lockedRows, error } = await supabase
+      .from('trip_assignments')
+      .select('id, driver_id, status')
+      .eq('trip_id', tripIdKey)
+      .in('status', Array.from(TRIP_LOCK_STATUSES));
+    if (error) throw new Error(error.message);
+    const stillLockedByOther = (lockedRows || []).find(
+      row => String(row?.driver_id || '') && String(row.driver_id) !== String(driverId || '')
+    );
+    return !stillLockedByOther;
+  }
+
+  function tripStubFromAssignment(assignment) {
+    const tid = normalizeTripId(assignment.trip_id);
+    const market = trips.find(t => normalizeTripId(t.sentry_trip_id) === tid);
+    const lm = resolveTripLastModifiedForSentry(tid);
+    if (market) {
+      return { ...market, taken_by: null, sentry_last_modified_at: market.sentry_last_modified_at || lm };
+    }
+    return {
+      id: tid,
+      sentry_trip_id: tid,
+      sentry_last_modified_at: lm,
+      pu_address: assignment.pu_address,
+      do_address: assignment.do_address,
+      pu_time: assignment.pu_time,
+      delivery_price: String(assignment.delivery_price ?? ''),
+      mileage: String(assignment.mileage ?? ''),
+      status: 'available',
+      taken_by: null,
+      company_id: assignment.company_id || scopedCompanyId,
+    };
+  }
+
+  async function handleDispatchReleaseTrip(assignment) {
+    const tripIdKey = normalizeTripId(assignment.trip_id);
+    if (!tripIdKey || !isTripLockStatus(assignment.status)) return;
+
+    if (
+      !window.confirm(
+        `Release trip ${tripIdKey} from ${assignment.driver_name || 'the assigned driver'}? It goes back to the open queue so another driver can take it.`
+      )
+    ) {
+      return;
+    }
+
+    setReleasingTripId(tripIdKey);
+    try {
+      const lm = resolveTripLastModifiedForSentry(tripIdKey);
+      const released = await releaseTripLocksForDispatch({
+        tripIdKey,
+        keepDriverId: null,
+        tripLastModifiedAt: lm,
+      });
+
+      if (!released) {
+        showToast('Nothing to release for this trip.', 'warning');
+        return;
+      }
+
+      await loadTrips();
+      await loadAssignments();
+      await loadTripSyncStatus();
+      showToast('Trip released to the queue.');
+    } catch (err) {
+      showToast(`Release failed: ${err.message}`, 'error');
+    } finally {
+      setReleasingTripId(null);
+    }
+  }
+
+  async function handleSentryCopyAction(assignment, mode = 'copy') {
+    const tripIdKey = normalizeTripId(assignment?.trip_id);
+    if (!tripIdKey) {
+      showToast('Trip id missing for Sentry action.', 'error');
+      return;
+    }
+    if (!sentryApi.enabled) {
+      showToast('Sentry integration is disabled.', 'error');
+      return;
+    }
+    const actionKey = `${mode}:${tripIdKey}`;
+    setSentryActionTripId(actionKey);
+    try {
+      const payload = {
+        source_trip_id: tripIdKey,
+        requested_action: mode === 'reroute' ? 'reroute' : 'trip_copy',
+        reason: mode === 'reroute' ? 'dispatch_reroute_request' : 'dispatch_trip_copy_request',
+      };
+      const copyResult = await sentryApi.copyTrip(tripIdKey, payload);
+      await supabase.from('sentry_sync_log').insert({
+        sync_type: mode === 'reroute' ? 'trip_reroute_copy' : 'trip_copy',
+        direction: 'export',
+        record_type: 'trip',
+        external_id: String(tripIdKey),
+        status: copyResult.ok ? 'success' : 'failed',
+        error_message: copyResult.ok ? '' : extractSentryError(copyResult),
+        payload: {
+          source_trip_id: tripIdKey,
+          requested_action: payload.requested_action,
+          dispatch_requested: true,
+        },
+      });
+      if (copyResult.ok) {
+        showToast(
+          mode === 'reroute'
+            ? 'Reroute request sent to Sentry. Refresh queue for any copied/re-routed trip.'
+            : 'Trip copy request sent to Sentry. Refresh queue to load the copy.',
+          'success'
+        );
+        await handleRefresh();
+      } else {
+        showToast(
+          `${mode === 'reroute' ? 'Reroute' : 'Trip copy'} failed: ${extractSentryError(copyResult)}`,
+          'error'
+        );
+      }
+    } catch (err) {
+      showToast(`${mode === 'reroute' ? 'Reroute' : 'Trip copy'} failed: ${err.message}`, 'error');
+    } finally {
+      setSentryActionTripId(null);
+    }
+  }
+
+function isRecentRejectedAssignment(assignment) {
+    if (String(assignment?.status || '').toLowerCase() !== 'rejected') return false;
+    const rejectedEpoch = toEpoch(
+      assignment?.rejected_at ||
+      assignment?.updated_at ||
+      assignment?.created_at
+    );
+    if (!rejectedEpoch) return false;
+    return Date.now() - rejectedEpoch <= AI_RECOVERY_WINDOW_MS;
+  }
+
+  async function handleAiRecoveryAction(assignment, strategy = 'smart', options = {}) {
+    const tripIdKey = normalizeTripId(assignment?.trip_id);
+    if (!tripIdKey) {
+      showToast('Trip id missing for AI recovery.', 'error');
+      return { ok: false, reason: 'missing_trip_id' };
+    }
+
+    const tripStub = tripStubFromAssignment(assignment);
+    const recoveryDriver = tripRecoveryPrefs.tripReassignEnabled
+      ? getBestDriverForTrip(tripStub, { excludeDriverId: assignment?.driver_id })
+      : null;
+
+    if (tripRecoveryPrefs.tripReassignEnabled && recoveryDriver && strategy !== 'copy') {
+      setRecoveringTripId(`reassign:${tripIdKey}`);
+      try {
+        await assignTrip(tripStub, recoveryDriver, scopedTestAssignOptions());
+        const { data: confirmedRecovery } = await supabase
+          .from('trip_assignments')
+          .select('id')
+          .eq('trip_id', tripIdKey)
+          .eq('driver_id', recoveryDriver.id)
+          .in('status', Array.from(TRIP_LOCK_STATUSES))
+          .limit(1)
+          .maybeSingle();
+        if (!confirmedRecovery?.id) {
+          showToast('AI reassign did not confirm on the active trip row.', 'warning');
+          return { ok: false, reason: 'reassign_not_confirmed' };
+        }
+        showToast(
+          options.auto
+            ? `AI reassigned ${tripIdKey} to ${recoveryDriver.full_name}.`
+            : `Trip reassigned to ${recoveryDriver.full_name}.`
+        );
+        return { ok: true, mode: 'reassign', driverId: recoveryDriver.id };
+      } catch (err) {
+        showToast(`AI reassign failed: ${err.message}`, 'error');
+      } finally {
+        setRecoveringTripId(null);
+      }
+    }
+
+    if (
+      tripRecoveryPrefs.tripCopyEnabled &&
+      (strategy === 'copy' || (strategy === 'smart' && tripRecoveryPrefs.aiAutoCopyAfterReject))
+    ) {
+      await handleSentryCopyAction(assignment, 'copy');
+      return { ok: true, mode: 'copy' };
+    }
+
+    if (strategy === 'reroute' && tripRecoveryPrefs.tripRerouteEnabled) {
+      await handleSentryCopyAction(assignment, 'reroute');
+      return { ok: true, mode: 'reroute' };
+    }
+
+    showToast('No safe AI recovery action is enabled for this trip.', 'warning');
+    return { ok: false, reason: 'no_enabled_action' };
+  }
+
   async function assignTrip(trip, driver, options = {}) {
     const tripIdKey = normalizeTripId(trip?.sentry_trip_id);
     if (!tripIdKey) {
@@ -527,24 +1160,63 @@ export default function LiveDispatch() {
       return;
     }
 
+    let dispatchReleasedOtherDriver = false;
+    const conflictingLock = (assignments || []).find(
+      a =>
+        normalizeTripId(a.trip_id) === tripIdKey &&
+        isTripLockStatus(a?.status) &&
+        String(a.driver_id || '') !== String(driver?.id || '')
+    );
+
+    if (conflictingLock) {
+      const priorName = conflictingLock.driver_name || conflictingLock.drivers?.full_name || 'another driver';
+      if (
+        !window.confirm(
+          `This trip is active on ${priorName}. Assign to ${driver.full_name} anyway? The current driver will be removed and Sentry will be notified (reject / cancel per trip stage).`
+        )
+      ) {
+        return;
+      }
+      try {
+        await releaseTripLocksForDispatch({
+          tripIdKey,
+          keepDriverId: null,
+          tripLastModifiedAt: trip.sentry_last_modified_at || resolveTripLastModifiedForSentry(tripIdKey),
+        });
+        const unlocked = await waitForTripUnlockAfterDispatchRelease(tripIdKey, driver?.id);
+        if (!unlocked) {
+          showToast('Trip release is still syncing. Please retry in a moment.', 'warning');
+          return;
+        }
+        dispatchReleasedOtherDriver = true;
+        await loadAssignments();
+        await loadTrips();
+      } catch (err) {
+        showToast(`Could not release prior assignment: ${err.message}`, 'error');
+        return;
+      }
+    }
+
     const claimedBy = trip?.taken_by != null && trip?.taken_by !== '' ? String(trip.taken_by) : '';
-    if (claimedBy && claimedBy !== String(driver?.id || '')) {
+    if (!dispatchReleasedOtherDriver && claimedBy && claimedBy !== String(driver?.id || '')) {
       showToast('This trip is already claimed on the marketplace by another driver or company.', 'error');
       return;
     }
 
-    const tripAlreadyLocked = (assignments || []).find(
-      a => normalizeTripId(a.trip_id) === tripIdKey && isTripLockStatus(a?.status)
-    );
-    if (tripAlreadyLocked) {
-      const sameDriver = String(tripAlreadyLocked.driver_id || '') === String(driver?.id || '');
-      showToast(
-        sameDriver
-          ? 'This trip is already active for that driver.'
-          : 'This trip is already assigned to another driver.',
-        'error'
+    if (!dispatchReleasedOtherDriver) {
+      const tripAlreadyLocked = (assignments || []).find(
+        a => normalizeTripId(a.trip_id) === tripIdKey && isTripLockStatus(a?.status)
       );
-      return;
+      if (tripAlreadyLocked) {
+        const sameDriver = String(tripAlreadyLocked.driver_id || '') === String(driver?.id || '');
+        showToast(
+          sameDriver
+            ? 'This trip is already active for that driver.'
+            : 'This trip is already assigned to another driver.',
+          'error'
+        );
+        return;
+      }
     }
 
     if (!allowMultiTripTake) {
@@ -632,7 +1304,11 @@ export default function LiveDispatch() {
       testingNote: options.testingNote || '',
     });
 
-    const lastModifiedAt = trip.sentry_last_modified_at || '';
+    let lastModifiedAt = trip.sentry_last_modified_at || '';
+    /** Fresh row + merged raw_payload for Sentry take / processed id fallbacks. */
+    let tripForSentryOps = trip;
+    /** Trip id Sentry accepted for take (may differ from row key, e.g. leg vs base id). */
+    let sentryTripIdWonTake = tripIdKey;
     let takeResult = { ok: true };
     let testTakeBypassed = false;
 
@@ -659,10 +1335,35 @@ export default function LiveDispatch() {
         },
       });
     } else if (sentryApi.enabled && sentryApi.features.marketplaceTrips) {
-      takeResult = await sentryApi.takeMarketplaceTrip(
-        trip.sentry_trip_id,
-        buildMarketplaceTakePayload(trip.sentry_trip_id, driver)
-      );
+      if (scopedCompanyId) {
+        try {
+          await refreshTripsFromSentry({ companyId: scopedCompanyId });
+        } catch (refreshErr) {
+          logFailure('LiveDispatch:assignTrip:refreshTripsFromSentry', refreshErr);
+        }
+      }
+      const { data: freshMarketplaceRow, error: freshMarketplaceErr } = await supabase
+        .from('marketplace_trips')
+        .select('*')
+        .eq('sentry_trip_id', tripIdKey)
+        .maybeSingle();
+      if (!freshMarketplaceErr && freshMarketplaceRow?.sentry_trip_id) {
+        const oldRaw = trip.raw_payload && typeof trip.raw_payload === 'object' ? trip.raw_payload : {};
+        const newRaw =
+          freshMarketplaceRow.raw_payload && typeof freshMarketplaceRow.raw_payload === 'object'
+            ? freshMarketplaceRow.raw_payload
+            : {};
+        tripForSentryOps = {
+          ...trip,
+          ...freshMarketplaceRow,
+          raw_payload: Object.keys(newRaw).length ? { ...oldRaw, ...newRaw } : trip.raw_payload || freshMarketplaceRow.raw_payload || {},
+        };
+        const lmFresh = String(freshMarketplaceRow.sentry_last_modified_at || '').trim();
+        if (lmFresh) lastModifiedAt = lmFresh;
+      }
+      const takeRecovery = await executeMarketplaceTakeWithSentryRecoveries(tripForSentryOps, driver, lastModifiedAt);
+      takeResult = takeRecovery.takeResult;
+      sentryTripIdWonTake = String(takeRecovery?.usedTakeUrlId || '').trim() || tripIdKey;
 
       const takeErrorMessage = takeResult.ok ? '' : extractSentryError(takeResult);
 
@@ -684,30 +1385,9 @@ export default function LiveDispatch() {
 
     if (!takeResult.ok) {
       const takeErrorMessage = extractSentryError(takeResult);
-      if (options.isTestTrip) {
-        testTakeBypassed = true;
-        await supabase.from('sentry_sync_log').insert({
-          sync_type: 'marketplace_take_test_local_bypass',
-          direction: 'internal',
-          record_type: 'trip',
-          external_id: trip.sentry_trip_id,
-          status: 'success',
-          error_message: takeErrorMessage,
-          payload: {
-            driver_id: driver.id,
-            driver_name: driver.full_name,
-            reason: 'isTestTrip',
-          },
-        });
-        showToast(
-          `Test mode: Sentry returned ${takeResult.status ? `HTTP ${takeResult.status}` : 'a sandbox response'}, so the app assigned the trip locally for driver testing.`,
-          'warning'
-        );
-      } else {
-        showToast(`Sentry did not confirm this trip take. ${takeErrorMessage}`, 'error');
-        setAssigning(null);
-        return;
-      }
+      showToast(`Sentry did not confirm this trip take. ${takeErrorMessage}`, 'error');
+      setAssigning(null);
+      return;
     }
 
     if (localOnlyTestTrip) {
@@ -751,7 +1431,7 @@ export default function LiveDispatch() {
       }
     }
 
-    const { error } = await supabase.from('trip_assignments').insert({
+    const { data: insertedAssignment, error } = await supabase.from('trip_assignments').insert({
       trip_id: tripIdKey,
       driver_id: driver.id,
       company_id: driver.company_id || scopedCompanyId || null,
@@ -765,7 +1445,7 @@ export default function LiveDispatch() {
       delivery_price: parseFloat(trip.delivery_price) || 0,
       mileage: parseFloat(trip.mileage) || 0,
       notes: assignmentNotes,
-    });
+    }).select('id').maybeSingle();
 
     if (error) {
       await supabase.from('sentry_sync_log').insert({
@@ -845,7 +1525,7 @@ export default function LiveDispatch() {
       );
     }
 
-    if (sentryApi.enabled && sentryApi.features.tripAcceptReject) {
+    if (sentryApi.enabled) {
       if (testTakeBypassed) {
         await supabase.from('sentry_sync_log').insert({
           sync_type: 'trip_processed_skipped',
@@ -857,9 +1537,30 @@ export default function LiveDispatch() {
           payload: { driver_id: driver.id, driver_name: driver.full_name },
         });
       } else {
-        let processedResult = await sentryApi.reportTripProcessed(trip.sentry_trip_id, lastModifiedAt);
+        let processedResult = await sentryApi.reportTripProcessed(sentryTripIdWonTake, lastModifiedAt);
         if (!processedResult.ok && lastModifiedAt) {
-          processedResult = await sentryApi.reportTripProcessed(trip.sentry_trip_id, null);
+          processedResult = await sentryApi.reportTripProcessed(sentryTripIdWonTake, null);
+        }
+        const procSt = Number(processedResult.status || 0);
+        if (!processedResult.ok && (procSt === 422 || procSt === 404)) {
+          for (const altId of collectMarketplaceTakeTripIdCandidates(tripForSentryOps)) {
+            if (String(altId) === String(sentryTripIdWonTake)) continue;
+            let altRes = await sentryApi.reportTripProcessed(altId, lastModifiedAt);
+            if (!altRes.ok && lastModifiedAt) {
+              altRes = await sentryApi.reportTripProcessed(altId, null);
+            }
+            if (altRes.ok) {
+              processedResult = altRes;
+              break;
+            }
+            processedResult = altRes;
+          }
+        }
+        const procStAfterAlts = Number(processedResult.status || 0);
+        let processedTreated409AsIdempotent = false;
+        if (!processedResult.ok && procStAfterAlts === 409) {
+          processedResult = { ...processedResult, ok: true };
+          processedTreated409AsIdempotent = true;
         }
         await supabase.from('sentry_sync_log').insert({
           sync_type: 'trip_processed',
@@ -868,21 +1569,47 @@ export default function LiveDispatch() {
           external_id: trip.sentry_trip_id,
           status: processedResult.ok ? 'success' : 'failed',
           error_message: processedResult.ok ? '' : (processedResult.error || `HTTP ${processedResult.status}`),
-          payload: { driver_id: driver.id, driver_name: driver.full_name, trip_processing_status_id: 0 },
+          payload: {
+            driver_id: driver.id,
+            driver_name: driver.full_name,
+            trip_processing_status_id: 0,
+            sentry_trip_id_used: sentryTripIdWonTake,
+            ...(processedTreated409AsIdempotent
+              ? { resolution: 'http_409_treated_as_idempotent_duplicate' }
+              : {}),
+          },
         });
         if (!processedResult.ok) {
           const detail = extractSentryError(processedResult);
-          if (options.isTestTrip) {
-            showToast(
-              `Trip assigned locally. Sentry processed sync failed (${detail}) — safe to ignore for sandbox test flows; the driver can still accept.`,
-              'warning'
-            );
+          // Strict assign flow: if Sentry does not confirm, rollback local assignment state.
+          if (insertedAssignment?.id) {
+            await supabase.from('trip_assignments').delete().eq('id', insertedAssignment.id);
           } else {
-            showToast(
-              `Trip was assigned locally, but Sentry did not confirm the processed status. ${detail}`,
-              'error'
-            );
+            await supabase
+              .from('trip_assignments')
+              .delete()
+              .eq('trip_id', tripIdKey)
+              .eq('driver_id', driver.id)
+              .eq('status', 'pending');
           }
+          await supabase
+            .from('marketplace_trips')
+            .update({
+              status: 'available',
+              external_trip_status: 'available',
+              taken_by: null,
+            })
+            .eq('sentry_trip_id', trip.sentry_trip_id);
+          await fbSet(`driver_notifications/${driver.id}`, null);
+          showToast(
+            `Assign was rolled back because Sentry did not confirm trip status sync. ${detail}`,
+            'error'
+          );
+          await loadTrips();
+          await loadAssignments();
+          await loadTripSyncStatus();
+          setAssigning(null);
+          return;
         }
       }
     }
@@ -1048,6 +1775,10 @@ export default function LiveDispatch() {
   }).sort((a, b) => b.score - a.score);
 
   const activeAssignments = assignments.filter(a => !['completed', 'cancelled', 'rejected'].includes(a.status));
+  const recentRejectedAssignments = assignments
+    .filter(isRecentRejectedAssignment)
+    .sort((a, b) => toEpoch(b.rejected_at || b.updated_at || b.created_at) - toEpoch(a.rejected_at || a.updated_at || a.created_at))
+    .slice(0, 5);
   const visibleAssignments = activeAssignments.filter(a => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -1066,6 +1797,47 @@ export default function LiveDispatch() {
     () => Boolean(getBestAvailableDriver()),
     [drivers, assignments, selectedDriver?.id, allowMultiTripTake]
   );
+
+  useEffect(() => {
+    if (!tripRecoveryPrefs.aiAutoReassignAfterReject && !tripRecoveryPrefs.aiAutoCopyAfterReject) return;
+    const now = Date.now();
+    for (const [k, ts] of handledRejectedTripIdsRef.current.entries()) {
+      if (now - Number(ts || 0) > AI_RECOVERY_WINDOW_MS) handledRejectedTripIdsRef.current.delete(k);
+    }
+    const nextCandidate = recentRejectedAssignments.find(assignment => {
+      const tripIdKey = normalizeTripId(assignment.trip_id);
+      if (!tripIdKey) return false;
+      if (lockedTripIdSet.has(tripIdKey)) return false;
+      const dedupeKey = `${tripIdKey}:${assignment.driver_id || ''}:${assignment.rejected_at || assignment.updated_at || assignment.id}`;
+      return !handledRejectedTripIdsRef.current.has(dedupeKey);
+    });
+
+    if (!nextCandidate) return;
+
+    const tripIdKey = normalizeTripId(nextCandidate.trip_id);
+    const dedupeKey = `${tripIdKey}:${nextCandidate.driver_id || ''}:${nextCandidate.rejected_at || nextCandidate.updated_at || nextCandidate.id}`;
+    handledRejectedTripIdsRef.current.set(dedupeKey, Date.now());
+
+    let cancelled = false;
+
+    (async () => {
+      const result = await handleAiRecoveryAction(nextCandidate, 'smart', { auto: true });
+      if (!result.ok && !cancelled) {
+        handledRejectedTripIdsRef.current.set(dedupeKey, Date.now());
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    recentRejectedAssignments,
+    lockedTripIdSet,
+    tripRecoveryPrefs.aiAutoReassignAfterReject,
+    tripRecoveryPrefs.aiAutoCopyAfterReject,
+    tripRecoveryPrefs.tripReassignEnabled,
+    tripRecoveryPrefs.tripCopyEnabled,
+  ]);
 
   function showToast(msg, type = 'success') {
     setDeleteToast({ msg, type });
@@ -1756,7 +2528,7 @@ export default function LiveDispatch() {
                   />
                 ))
               )
-            ) : visibleAssignments.length === 0 ? (
+            ) : visibleAssignments.length === 0 && recentRejectedAssignments.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">
                 <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(201,168,76,0.1)' }}>
                   <Navigation className="w-6 h-6" style={{ color: '#c9a84c' }} />
@@ -1768,107 +2540,294 @@ export default function LiveDispatch() {
                 </p>
               </div>
             ) : (
-              visibleAssignments.map(assignment => (
-                (() => {
-                  const parsedNotes = assignmentDraftNotes.get(assignment.id) || parseAssignmentNotes(assignment.notes);
-                  return (
-                    <div
-                  key={assignment.id}
-                  className="rounded-xl p-3"
-                  style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <p className="text-xs font-700 uppercase tracking-wider" style={{ color: '#c9a84c', fontWeight: 700 }}>
-                      {assignment.status || 'assigned'}
-                    </p>
-                    <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
-                      {assignment.driver_name || assignment.drivers?.full_name || 'Unassigned'}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap mb-2">
-                    {parsedNotes.isTestTrip && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(14,165,233,0.12)', color: '#38bdf8' }}>
-                        Test Mode
+              <>
+                {recentRejectedAssignments.length > 0 && (
+                  <div className="rounded-xl p-3 mb-3" style={{ background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.14)' }}>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <div>
+                        <p className="text-xs font-700 uppercase tracking-wider" style={{ color: '#ff8a95', fontWeight: 700 }}>
+                          Recovery Queue
+                        </p>
+                        <p className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
+                          Latest driver rejects in the last 30 minutes. Use manual recovery actions below; automatic reassign or copy after reject only runs when enabled in company scheduler prefs (off by default).
+                        </p>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.65)' }}>
+                        {recentRejectedAssignments.length} recent
                       </span>
-                    )}
-                    {tripSyncMap[String(assignment.trip_id || '')] && (
-                      <span
-                        className="text-[10px] px-2 py-0.5 rounded-full"
-                        style={{
-                          background: tripSyncMap[String(assignment.trip_id || '')]?.status === 'failed'
-                            ? 'rgba(255,71,87,0.1)'
-                            : 'rgba(0,229,160,0.1)',
-                          color: tripSyncMap[String(assignment.trip_id || '')]?.status === 'failed'
-                            ? '#ff4757'
-                            : '#00e5a0',
-                        }}
-                      >
-                        {tripSyncMap[String(assignment.trip_id || '')]?.status === 'failed' ? 'Sync Failed' : 'Sync OK'}
-                      </span>
-                    )}
+                    </div>
+                    <div className="space-y-3">
+                      {recentRejectedAssignments.map(assignment => {
+                        const tripIdKey = normalizeTripId(assignment.trip_id);
+                        const recoveryDriver = tripRecoveryPrefs.tripReassignEnabled
+                          ? getBestDriverForTrip(tripStubFromAssignment(assignment), { excludeDriverId: assignment.driver_id })
+                          : null;
+
+                        return (
+                          <div
+                            key={`rejected-${assignment.id}`}
+                            className="rounded-xl p-3"
+                            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-700 uppercase tracking-wider" style={{ color: '#ff8a95', fontWeight: 700 }}>
+                                  Rejected
+                                </p>
+                                <p className="text-sm mt-2" style={{ color: '#e5e7eb' }}>{assignment.pu_address || 'Unknown pickup'}</p>
+                                <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>{assignment.do_address || 'Unknown dropoff'}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>{tripIdKey || 'No trip id'}</p>
+                                <p className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                                  Last driver: {assignment.driver_name || assignment.drivers?.full_name || 'Unknown'}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mt-3">
+                              <button
+                                type="button"
+                                onClick={() => handleAiRecoveryAction(assignment, 'smart')}
+                                disabled={Boolean(recoveringTripId)}
+                                className="px-3 py-1.5 rounded-lg text-xs"
+                                style={{
+                                  background: 'rgba(0,229,160,0.12)',
+                                  border: '1px solid rgba(0,229,160,0.24)',
+                                  color: '#00e5a0',
+                                }}
+                              >
+                                {recoveringTripId === `reassign:${tripIdKey}` ? 'AI Recovering…' : recoveryDriver ? `AI Reassign → ${recoveryDriver.full_name}` : 'AI Recover'}
+                              </button>
+                              {tripRecoveryPrefs.tripCopyEnabled && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSentryCopyAction(assignment, 'copy')}
+                                  disabled={sentryActionTripId === `copy:${tripIdKey}`}
+                                  className="px-3 py-1.5 rounded-lg text-xs"
+                                  style={{
+                                    background: 'rgba(255,255,255,0.08)',
+                                    border: '1px solid rgba(255,255,255,0.16)',
+                                    color: '#e5e7eb',
+                                  }}
+                                >
+                                  {sentryActionTripId === `copy:${tripIdKey}` ? 'Copying…' : 'Trip Copy'}
+                                </button>
+                              )}
+                              {tripRecoveryPrefs.tripRerouteEnabled && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAiRecoveryAction(assignment, 'reroute')}
+                                  disabled={sentryActionTripId === `reroute:${tripIdKey}`}
+                                  className="px-3 py-1.5 rounded-lg text-xs"
+                                  style={{
+                                    background: 'rgba(14,165,233,0.12)',
+                                    border: '1px solid rgba(14,165,233,0.24)',
+                                    color: '#7dd3fc',
+                                  }}
+                                >
+                                  {sentryActionTripId === `reroute:${tripIdKey}` ? 'Rerouting…' : 'Reroute'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <p className="text-sm" style={{ color: '#e5e7eb' }}>{assignment.pu_address || 'Unknown pickup'}</p>
-                  <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>{assignment.do_address || 'Unknown dropoff'}</p>
-                  <textarea
-                    rows={2}
-                    value={parsedNotes.editingTestingNote}
-                    onChange={e => {
-                      const value = e.target.value;
-                      setAssignmentNoteDrafts(prev => ({ ...prev, [assignment.id]: value }));
-                    }}
-                    placeholder="Testing note for this trip"
-                    className="w-full mt-3 p-2 rounded-lg text-xs"
+                )}
+                {visibleAssignments.map(assignment => {
+                const noteMeta = parseAssignmentNotes(assignment.notes);
+                const draftTestingNote =
+                  assignmentNoteDrafts[assignment.id] !== undefined
+                    ? assignmentNoteDrafts[assignment.id]
+                    : noteMeta.testingNote;
+                const showDispatchActions =
+                  (isCompanyUser || isAdminCompanyPreview) && isTripLockStatus(assignment.status);
+
+                return (
+                  <div
+                    key={assignment.id}
+                    className="rounded-xl p-3"
                     style={{
                       background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.07)',
-                      color: '#e5e7eb',
+                      border: '1px solid rgba(255,255,255,0.06)',
                     }}
-                  />
-                  <div className="flex items-center justify-between mt-3 text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
-                    <span>{assignment.pu_time || 'No pickup time'}</span>
-                    <span>${parseFloat(assignment.delivery_price || 0).toFixed(2)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-3">
-                    <button
-                      onClick={() => handleSaveAssignmentNote(assignment)}
-                      disabled={noteSavingTripId === assignment.id}
-                      className="px-3 py-1.5 rounded-lg text-xs"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <p className="text-xs font-700 uppercase tracking-wider" style={{ color: '#c9a84c', fontWeight: 700 }}>
+                        {assignment.status || 'assigned'}
+                      </p>
+                      <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                        {assignment.driver_name || assignment.drivers?.full_name || 'Unassigned'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                      {noteMeta.isTestTrip && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(14,165,233,0.12)', color: '#38bdf8' }}>
+                          Test Mode
+                        </span>
+                      )}
+                      {tripSyncMap[String(assignment.trip_id || '')] && (
+                        <span
+                          className="text-[10px] px-2 py-0.5 rounded-full"
+                          style={{
+                            background: tripSyncMap[String(assignment.trip_id || '')]?.status === 'failed'
+                              ? 'rgba(255,71,87,0.1)'
+                              : 'rgba(0,229,160,0.1)',
+                            color: tripSyncMap[String(assignment.trip_id || '')]?.status === 'failed'
+                              ? '#ff4757'
+                              : '#00e5a0',
+                          }}
+                        >
+                          {tripSyncMap[String(assignment.trip_id || '')]?.status === 'failed' ? 'Sync Failed' : 'Sync OK'}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm" style={{ color: '#e5e7eb' }}>{assignment.pu_address || 'Unknown pickup'}</p>
+                    <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>{assignment.do_address || 'Unknown dropoff'}</p>
+                    <textarea
+                      rows={2}
+                      value={draftTestingNote}
+                      onChange={e => {
+                        const value = e.target.value;
+                        setAssignmentNoteDrafts(prev => ({ ...prev, [assignment.id]: value }));
+                      }}
+                      placeholder="Testing note for this trip"
+                      className="w-full mt-3 p-2 rounded-lg text-xs"
                       style={{
-                        background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid rgba(255,255,255,0.07)',
                         color: '#e5e7eb',
                       }}
-                    >
-                      {noteSavingTripId === assignment.id ? 'Saving...' : 'Save Note'}
-                    </button>
-                    {parsedNotes.isTestTrip && assignment.status === 'pending' && (
+                    />
+                    <div className="flex items-center justify-between mt-3 text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                      <span>{assignment.pu_time || 'No pickup time'}</span>
+                      <span>${parseFloat(assignment.delivery_price || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 mt-3">
                       <button
-                        onClick={() => handleUndoTestTake(assignment)}
-                        disabled={undoingTripId === assignment.trip_id}
-                        className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-1"
+                        type="button"
+                        onClick={() => handleSaveAssignmentNote(assignment)}
+                        disabled={noteSavingTripId === assignment.id}
+                        className="px-3 py-1.5 rounded-lg text-xs"
                         style={{
-                          background: 'rgba(255,71,87,0.08)',
-                          border: '1px solid rgba(255,71,87,0.18)',
-                          color: '#ff8a95',
+                          background: 'rgba(255,255,255,0.05)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: '#e5e7eb',
                         }}
                       >
-                        <RotateCcw className="w-3 h-3" />
-                        {undoingTripId === assignment.trip_id ? 'Undoing...' : 'Undo Test Take'}
+                        {noteSavingTripId === assignment.id ? 'Saving...' : 'Save Note'}
                       </button>
+                      {noteMeta.isTestTrip && assignment.status === 'pending' && (
+                        <button
+                          type="button"
+                          onClick={() => handleUndoTestTake(assignment)}
+                          disabled={undoingTripId === assignment.trip_id}
+                          className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-1"
+                          style={{
+                            background: 'rgba(255,71,87,0.08)',
+                            border: '1px solid rgba(255,71,87,0.18)',
+                            color: '#ff8a95',
+                          }}
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          {undoingTripId === assignment.trip_id ? 'Undoing...' : 'Undo Test Take'}
+                        </button>
+                      )}
+                      {showDispatchActions && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleDispatchReleaseTrip(assignment)}
+                            disabled={releasingTripId === normalizeTripId(assignment.trip_id)}
+                            className="px-3 py-1.5 rounded-lg text-xs"
+                            style={{
+                              background: 'rgba(255,71,87,0.1)',
+                              border: '1px solid rgba(255,71,87,0.22)',
+                              color: '#ff8a95',
+                            }}
+                          >
+                            {releasingTripId === normalizeTripId(assignment.trip_id) ? 'Rejecting…' : 'Reject + Release'}
+                          </button>
+                          {tripRecoveryPrefs.tripRerouteEnabled && (
+                            <button
+                              type="button"
+                              onClick={() => handleSentryCopyAction(assignment, 'reroute')}
+                              disabled={sentryActionTripId === `reroute:${normalizeTripId(assignment.trip_id)}`}
+                              className="px-3 py-1.5 rounded-lg text-xs"
+                              style={{
+                                background: 'rgba(14,165,233,0.12)',
+                                border: '1px solid rgba(14,165,233,0.24)',
+                                color: '#7dd3fc',
+                              }}
+                            >
+                              {sentryActionTripId === `reroute:${normalizeTripId(assignment.trip_id)}` ? 'Rerouting…' : 'Reroute'}
+                            </button>
+                          )}
+                          {tripRecoveryPrefs.tripCopyEnabled && (
+                            <button
+                              type="button"
+                              onClick={() => handleSentryCopyAction(assignment, 'copy')}
+                              disabled={sentryActionTripId === `copy:${normalizeTripId(assignment.trip_id)}`}
+                              className="px-3 py-1.5 rounded-lg text-xs"
+                              style={{
+                                background: 'rgba(255,255,255,0.08)',
+                                border: '1px solid rgba(255,255,255,0.16)',
+                                color: '#e5e7eb',
+                              }}
+                            >
+                              {sentryActionTripId === `copy:${normalizeTripId(assignment.trip_id)}` ? 'Copying…' : 'Trip Copy'}
+                            </button>
+                          )}
+                          {tripRecoveryPrefs.tripReassignEnabled &&
+                            selectedDriver &&
+                            String(selectedDriver.id) !== String(assignment.driver_id) &&
+                            canAssignAnotherTrip(selectedDriver.id) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                assignTrip(tripStubFromAssignment(assignment), selectedDriver, scopedTestAssignOptions())
+                              }
+                              disabled={normalizeTripId(assigning) === normalizeTripId(assignment.trip_id)}
+                              className="px-3 py-1.5 rounded-lg text-xs"
+                              style={{
+                                background: 'rgba(201,168,76,0.12)',
+                                border: '1px solid rgba(201,168,76,0.25)',
+                                color: '#c9a84c',
+                              }}
+                            >
+                              {normalizeTripId(assigning) === normalizeTripId(assignment.trip_id)
+                                ? 'Assigning…'
+                                : `Reassign → ${selectedDriver.full_name}`}
+                            </button>
+                          )}
+                          {tripRecoveryPrefs.tripReassignEnabled &&
+                            (!selectedDriver || String(selectedDriver.id) === String(assignment.driver_id)) && (
+                            <button
+                              type="button"
+                              disabled
+                              className="px-3 py-1.5 rounded-lg text-xs"
+                              style={{
+                                background: 'rgba(201,168,76,0.06)',
+                                border: '1px solid rgba(201,168,76,0.16)',
+                                color: 'rgba(201,168,76,0.6)',
+                              }}
+                            >
+                              Reassign (pick another driver)
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {tripSyncMap[String(assignment.trip_id || '')]?.errorMessage && (
+                      <p className="mt-2 text-[10px]" style={{ color: '#ff8a95' }}>
+                        {tripSyncMap[String(assignment.trip_id || '')].errorMessage}
+                      </p>
                     )}
                   </div>
-                  {tripSyncMap[String(assignment.trip_id || '')]?.errorMessage && (
-                    <p className="mt-2 text-[10px]" style={{ color: '#ff8a95' }}>
-                      {tripSyncMap[String(assignment.trip_id || '')].errorMessage}
-                    </p>
-                  )}
-                </div>
-                    );
-                })()
-              ))
+                );
+              })}
+              </>
             )
           ) : scoredTrips.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">

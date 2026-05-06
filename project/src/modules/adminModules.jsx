@@ -21,6 +21,7 @@ import PermissionsMatrix from '../pages/admin/PermissionsMatrix';
 import TenantManager from '../pages/admin/TenantManager';
 import TestModeSandbox from '../pages/admin/TestModeSandbox';
 import AdminRiderPreview from '../pages/admin/AdminRiderPreview';
+import AdminPrograms from '../pages/admin/AdminPrograms';
 
 export const adminModules = {
   dispatch: {
@@ -34,6 +35,10 @@ export const adminModules = {
   companies: {
     name: 'Companies',
     component: AdminCompanies,
+  },
+  programs: {
+    name: 'Partner programs',
+    component: AdminPrograms,
   },
   billing: {
     name: 'Billing',

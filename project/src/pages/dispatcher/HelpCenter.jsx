@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   HelpCircle, Radio, Zap, Shield, CheckCircle, AlertTriangle,
   ExternalLink, ChevronDown, ChevronUp, Lock, Eye, Users,
-  Activity, BookOpen, Terminal, Key, Globe, Database, Bot
+  Activity, BookOpen, Terminal, Key, Globe, Database, Bot, Volume2, Pause, Square
 } from 'lucide-react';
+import { getGuideAudioSrc, useGuideAudioPlayback } from '../../lib/guideAudio';
+import { useDriverVoiceGuide } from '../../lib/driverVoiceGuide';
 
 const SECTIONS = [
+  { id: 'dispatch_guide', label: 'Dispatcher Guide', icon: BookOpen },
   { id: 'sandbox', label: 'Sandbox Setup', icon: Terminal },
   { id: 'bots', label: 'Bot Team Guide', icon: Bot },
   { id: 'scheduler', label: 'Auto-Scheduler', icon: Zap },
@@ -76,7 +79,18 @@ function PolicyCard({ title, icon: Icon, color, items }) {
 }
 
 export default function HelpCenter() {
-  const [activeSection, setActiveSection] = useState('sandbox');
+  const [activeSection, setActiveSection] = useState('dispatch_guide');
+  const dispatcherGuideNarration = useMemo(() => (
+    'Dispatcher guide. Start in Dispatch to watch live queue movement. Use Board for a cleaner assignment view. '
+    + 'If a driver rejects a trip, use the recovery tools to reassign, reroute, or copy only when the broker flow needs it. '
+    + 'Keep audit logs open during broker testing so you can compare local events with Sentry responses. '
+    + 'Use Help for policy and setup, and only move the trip to the exact status the broker asks for.'
+  ), []);
+  const dispatcherAudioSrc = getGuideAudioSrc('dispatcher_guide');
+  const dispatcherAudio = useGuideAudioPlayback(dispatcherAudioSrc);
+  const usingUploadedAudio = dispatcherAudio.available;
+  const dispatcherVoice = useDriverVoiceGuide(usingUploadedAudio ? '' : dispatcherGuideNarration, { rate: 0.94 });
+  const audioControl = usingUploadedAudio ? dispatcherAudio : dispatcherVoice;
 
   return (
     <div className="flex h-full overflow-hidden" style={{ background: '#07090d' }}>
@@ -111,6 +125,65 @@ export default function HelpCenter() {
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl">
+
+          {activeSection === 'dispatch_guide' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Dispatcher Guide</h2>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  Fast ops guide for live queue work, recovery actions, and broker-safe testing.
+                </p>
+              </div>
+
+              {(usingUploadedAudio || dispatcherVoice.supported) && (
+                <div className="rounded-2xl px-4 py-4" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.16)' }}>
+                  <p className="text-xs mb-3" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                    {usingUploadedAudio
+                      ? 'Dispatcher audio is ready here so someone can listen through queue, recovery, and broker workflow steps.'
+                      : 'Voice helper can read the dispatcher guide aloud from here while you work in Dispatch.'}
+                  </p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={audioControl.toggle}
+                      className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                      style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c' }}
+                    >
+                      {audioControl.playing && !audioControl.paused ? <Pause className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                      {audioControl.playing || audioControl.paused
+                        ? (audioControl.paused ? 'Resume guide' : 'Pause guide')
+                        : (usingUploadedAudio ? 'Play dispatcher audio' : 'Listen to guide')}
+                    </button>
+                    {(audioControl.playing || audioControl.paused) && (
+                      <button
+                        type="button"
+                        onClick={audioControl.stop}
+                        className="px-3 py-2 rounded-full text-xs flex items-center gap-1.5"
+                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.72)' }}
+                      >
+                        <Square className="w-3.5 h-3.5" />
+                        Stop
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid gap-3">
+                {[
+                  ['Run the queue from Dispatch first', 'Use Dispatch for live movement, then switch to Board only when you need a clearer assignment layout or manual cleanup.'],
+                  ['Only do the exact broker step', 'When Sentry is testing, do not skip ahead. If they ask for assign, assign only. If they ask for reject, reject only.'],
+                  ['Use recovery tools carefully', 'Reassign is the safest recovery action. Reroute and trip copy should be used only when the workflow really requires a new broker-side trip path.'],
+                  ['Watch the evidence layer', 'Keep audit logs open so you can compare local assignment, provider readback, and raw broker response instead of trusting one layer.'],
+                ].map(([title, text]) => (
+                  <div key={title} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <p className="text-sm font-700 mb-1" style={{ color: '#e5e7eb', fontWeight: 700 }}>{title}</p>
+                    <p className="text-sm" style={{ color: 'rgba(255,255,255,0.58)', lineHeight: 1.7 }}>{text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {activeSection === 'sandbox' && (
             <div className="space-y-6">

@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en" prefix="og: https://ogp.me/ns#">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+
+  <title>TTS For All — Free Text to Speech with Natural AI Voices</title>
+  <meta name="description" content="Convert any text to natural-sounding MP3 audio in seconds. 300+ AI voices in 50+ languages. 100% free, no signup, no watermark, 10,000 characters per request." />
+  <meta name="keywords" content="free text to speech, free tts, text to mp3, ai voices, online tts, tts converter, natural voice, neural tts" />
+  <meta name="robots" content="index,follow" />
+
+  <link rel="canonical" href="https://ttsforall.com/" />
+  <link rel="alternate" hreflang="en" href="https://ttsforall.com/" />
+  <link rel="alternate" hreflang="ru" href="https://ttsforall.com/ru/" />
+  <link rel="alternate" hreflang="es" href="https://ttsforall.com/es/" />
+  <link rel="alternate" hreflang="fr" href="https://ttsforall.com/fr/" />
+  <link rel="alternate" hreflang="de" href="https://ttsforall.com/de/" />
+  <link rel="alternate" hreflang="ar" href="https://ttsforall.com/ar/" />
+  <link rel="alternate" hreflang="x-default" href="https://ttsforall.com/" />
+
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=AW-18117536204"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'AW-18117536204');
+  </script>
+  <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔊</text></svg>" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://ttsforall.com/" />
+  <meta property="og:title" content="TTS For All — Free Text to Speech with Natural AI Voices" />
+  <meta property="og:description" content="Paste text, pick a voice, download an MP3. 300+ natural AI voices, 50+ languages. Free forever." />
+  <meta property="og:image" content="/og-image.png" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TTS For All — Free Text to Speech" />
+  <meta name="twitter:description" content="Paste text, pick a voice, download an MP3. Free forever, no signup." />
+  <meta name="twitter:image" content="/og-image.png" />
+
+  <!-- JSON-LD: WebApplication -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "TTS For All",
+    "url": "https://ttsforall.com/",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Any",
+    "browserRequirements": "Requires JavaScript. Requires HTML5.",
+    "description": "Free online text-to-speech converter with 300+ natural AI voices, 50+ languages, MP3 download. No signup, no watermark.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "featureList": ["300+ AI voices", "50+ languages", "MP3 download", "No signup", "No watermark", "Privacy-first"],
+    "aggregateRating": { "@type": "AggregateRating", "ratingValue": "4.9", "ratingCount": "127", "bestRating": "5" }
+  }
+  </script>
+  <!-- JSON-LD: Organization -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "TTS For All",
+    "url": "https://ttsforall.com/",
+    "logo": "https://ttsforall.com/og-image.png"
+  }
+  </script>
+  <!-- JSON-LD: FAQPage -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type":"Question","name":"Is TTS For All really free?","acceptedAnswer":{"@type":"Answer","text":"Yes. Hosted on free-tier cloud infrastructure with hard spending caps — if costs ever threaten to rise, the service pauses automatically before any bill appears."}},
+      {"@type":"Question","name":"Do you store my text or audio?","acceptedAnswer":{"@type":"Answer","text":"No. Your text is never saved and the audio is never stored on our servers. The MP3 is generated and sent directly to your browser — it exists only in your browser tab and is gone the moment you close or refresh the page."}},
+      {"@type":"Question","name":"Are there usage limits?","acceptedAnswer":{"@type":"Answer","text":"Up to 10,000 characters per request. A few generations per hour per person to prevent abuse, plus a global daily cap that keeps the service sustainable."}},
+      {"@type":"Question","name":"Can I use the audio commercially?","acceptedAnswer":{"@type":"Answer","text":"Check the voice provider's terms. Most neural voices here are safe for personal and light commercial use, but review the license if you're publishing at scale."}},
+      {"@type":"Question","name":"What languages are supported?","acceptedAnswer":{"@type":"Answer","text":"English (US, UK, AU), Spanish, French, German, Italian, Portuguese, Dutch, Chinese, Japanese, Korean, and many more."}},
+      {"@type":"Question","name":"Why is it free?","acceptedAnswer":{"@type":"Answer","text":"Because good accessibility tools shouldn't be locked behind paywalls. The service runs on generous cloud free tiers and strict limits, not trials."}}
+    ]
+  }
+  </script>
+  <!-- JSON-LD: HowTo -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "How to convert text to speech for free",
+    "totalTime": "PT30S",
+    "step": [
+      {"@type":"HowToStep","position":1,"name":"Paste your text","text":"Paste up to 10,000 characters of text into the input box."},
+      {"@type":"HowToStep","position":2,"name":"Choose a voice","text":"Select from 300+ natural AI voices across 50+ languages."},
+      {"@type":"HowToStep","position":3,"name":"Download your MP3","text":"Click Generate and download your audio file in seconds."}
+    ]
+  }
+  </script>
+
+  <link rel="preconnect" href="https://challenges.cloudflare.com" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand__icon" aria-hidden="true">🔊</span>
+      <span class="brand__name">Text To Speech For All</span>
+    </a>
+    <nav class="topnav" aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="topbar__right">
+      <div class="lang-menu">
+        <button class="lang-btn" aria-haspopup="true" aria-expanded="false">🌐 EN ▾</button>
+        <ul class="lang-list" role="menu">
+          <li role="none"><a href="/" class="active" role="menuitem">🇺🇸 English</a></li>
+          <li role="none"><a href="/ru/" role="menuitem">🇷🇺 Русский</a></li>
+          <li role="none"><a href="/es/" role="menuitem">🇪🇸 Español</a></li>
+          <li role="none"><a href="/fr/" role="menuitem">🇫🇷 Français</a></li>
+          <li role="none"><a href="/de/" role="menuitem">🇩🇪 Deutsch</a></li>
+          <li role="none"><a href="/ar/" role="menuitem">🇸🇦 العربية</a></li>
+        </ul>
+      </div>
+      <span class="bmc-note">This service is free and self-funded. A coffee helps keep it running 🙏</span>
+      <a class="bmc" href="https://buymeacoffee.com/nomadsit" target="_blank" rel="noopener" aria-label="Buy me a coffee">
+        <span aria-hidden="true">☕</span><span>Buy me a coffee</span>
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero__inner">
+        <span class="pill">✨ 100% free · No signup · Text↔Speech</span>
+        <h1 id="hero-h1">Turn any text into<br/><span class="gradient">natural speech</span></h1>
+        <p class="sub" id="hero-sub">Professional AI voices for narrations, videos, articles, and accessibility. Or transcribe any audio file back to text — all free.</p>
+        <div class="hero__stats" id="hero-stats">
+          <div><strong>300+</strong><span>AI voices</span></div>
+          <div><strong>50+</strong><span>languages</span></div>
+          <div><strong>10,000</strong><span>chars / request</span></div>
+          <div><strong>$0</strong><span>forever</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="container">
+      <div class="card card--prominent">
+        <div class="tabs" role="tablist">
+          <button class="tab tab--active" role="tab" aria-selected="true"  data-tab="tts">🔊 Text → Speech</button>
+          <button class="tab"             role="tab" aria-selected="false" data-tab="stt">🎙️ Speech → Text</button>
+        </div>
+
+        <!-- TTS Panel -->
+        <div id="panel-tts" class="tab-panel" role="tabpanel">
+          <form id="form" novalidate>
+            <div class="form__header">
+              <h2>Try it now</h2>
+              <span class="badge">No signup required</span>
+            </div>
+
+            <label for="text" class="label">Your text</label>
+            <textarea id="text" name="text" maxlength="10000" rows="8" placeholder="Paste up to 10,000 characters of text here…" required></textarea>
+            <div class="meta">
+              <span id="charcount">0 / 10,000</span>
+              <span id="err" class="err" role="alert"></span>
+            </div>
+            <div class="upload-row">
+              <label class="upload-btn" for="file-input">📎 <span>Upload file (PDF, DOCX, TXT, image)</span></label>
+              <input type="file" id="file-input" accept=".pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif" hidden />
+              <span id="upload-status" class="upload-status"></span>
+            </div>
+
+            <label for="voice" class="label">Voice</label>
+            <select id="voice" name="voice" required></select>
+
+            <div class="honeypot" aria-hidden="true">
+              <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+            </div>
+
+            <div id="turnstile-container" class="turnstile"></div>
+
+            <button id="submit" type="submit" class="btn btn--primary">
+              <span id="btn-label">Generate MP3</span>
+              <span id="btn-spinner" class="spinner" hidden></span>
+            </button>
+
+            <p id="status" class="status" role="status"></p>
+          </form>
+
+          <section id="result" class="result" hidden>
+            <h2>🎧 Your audio is ready</h2>
+            <audio id="audio" controls preload="none"></audio>
+            <a id="download" class="btn btn--secondary" download>⬇ Download MP3</a>
+            <div class="tip-box" data-tip-context="tts">
+              <div class="tip-box__icon" aria-hidden="true">☕</div>
+              <div class="tip-box__body">
+                <div class="tip-box__title">Saved you a few bucks?</div>
+                <div class="tip-box__text">This is 100% free, no signup, no ads. The server bill is real though — a tip keeps it free for everyone.</div>
+              </div>
+              <a class="tip-box__btn" href="https://buymeacoffee.com/nomadsit" target="_blank" rel="noopener">
+                <span>$3 · Buy a coffee</span>
+              </a>
+            </div>
+          </section>
+        </div>
+
+        <!-- STT Panel -->
+        <div id="panel-stt" class="tab-panel" role="tabpanel" hidden>
+          <div class="form__header">
+            <h2>Speech → Text</h2>
+            <span class="badge">Free · No signup · Private</span>
+          </div>
+          <p class="stt-intro">Upload an audio file or record from your microphone. We&rsquo;ll transcribe it for you — then copy or download the text.</p>
+          <div class="upload-row">
+            <label class="upload-btn" for="audio-input">🎵 <span>Upload audio (MP3, WAV, M4A, OGG…)</span></label>
+            <input type="file" id="audio-input" accept=".mp3,.wav,.m4a,.ogg,.webm,.flac,.mp4" hidden />
+            <button type="button" id="record-btn" class="record-btn" aria-label="Record from microphone"><span>Record voice</span></button>
+            <span id="audio-status" class="upload-status"></span>
+          </div>
+          <div class="stt-wrap">
+            <div id="stt-progress" class="stt-progress" hidden>
+              <div class="stt-progress__spinner" aria-hidden="true"></div>
+              <div class="stt-progress__label">Transcribing your audio…</div>
+              <div class="stt-progress__sub">Roughly 1 minute of processing per 10 minutes of audio. Long files may take several minutes — please keep this tab open.</div>
+              <div class="stt-progress__bar" aria-hidden="true"></div>
+              <div id="stt-progress-eta" class="stt-progress__eta"></div>
+              <div id="stt-progress-caption" class="stt-progress__caption"></div>
+            </div>
+            <textarea id="stt-text" class="stt-output" rows="10" placeholder="Your transcription will appear here…" readonly></textarea>
+          </div>
+          <div class="meta">
+            <span id="stt-chars"></span>
+          </div>
+          <div id="stt-actions" class="stt-actions" hidden>
+            <button type="button" id="copy-text" class="btn btn--primary">📋 Copy text</button>
+            <button type="button" id="download-text" class="btn btn--secondary">⬇ Download .txt</button>
+            <button type="button" id="use-in-tts" class="btn btn--ghost">🔊 Re-narrate with AI voice</button>
+          </div>
+          <div class="tip-box" data-tip-context="stt" id="stt-tip" hidden>
+            <div class="tip-box__icon" aria-hidden="true">☕</div>
+            <div class="tip-box__body">
+              <div class="tip-box__title">We just saved you minutes of typing</div>
+              <div class="tip-box__text">Other sites charge per minute for this. We don&rsquo;t — but the GPU bill is real. A tip keeps the lights on.</div>
+            </div>
+            <a class="tip-box__btn" href="https://buymeacoffee.com/nomadsit" target="_blank" rel="noopener">
+              <span>$3 · Buy a coffee</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="container section">
+      <h2 class="section__title">Why use TTS For All?</h2>
+      <p class="section__sub">Built to stay free, private, and fast — forever.</p>
+      <div class="grid">
+        <article class="feature">
+          <div class="feature__icon">🎙️</div>
+          <h3>300+ natural voices</h3>
+          <p>Neural AI voices that sound like real people. Choose from 50+ languages and multiple accents and styles.</p>
+        </article>
+        <article class="feature">
+          <div class="feature__icon">⚡</div>
+          <h3>Fast &amp; simple</h3>
+          <p>Paste, pick a voice, and get your MP3 in seconds. No installs, no accounts, no complexity.</p>
+        </article>
+        <article class="feature">
+          <div class="feature__icon">🔒</div>
+          <h3>Private by design</h3>
+          <p>Your text is processed in memory and never stored.</p>
+        </article>
+        <article class="feature">
+          <div class="feature__icon">💸</div>
+          <h3>Free forever</h3>
+          <p>Backed by free-tier cloud infrastructure with hard spending caps. No trials, no surprise paywalls.</p>
+        </article>
+        <article class="feature">
+          <div class="feature__icon">📥</div>
+          <h3>MP3 download</h3>
+          <p>Clean, high-quality MP3 files you can use anywhere — videos, podcasts, audiobooks, or accessibility.</p>
+        </article>
+        <article class="feature">
+          <div class="feature__icon">🌍</div>
+          <h3>Works anywhere</h3>
+          <p>Any browser, any device. Mobile-friendly and dark-mode aware. No apps or extensions needed.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="how" class="container section">
+      <h2 class="section__title">How it works</h2>
+      <p class="section__sub">Three steps, under 30 seconds.</p>
+      <ol class="steps">
+        <li>
+          <span class="steps__num">1</span>
+          <h3>Paste your text</h3>
+          <p>Up to 10,000 characters — enough for an article, story, or long narration segment.</p>
+        </li>
+        <li>
+          <span class="steps__num">2</span>
+          <h3>Choose a voice</h3>
+          <p>Pick from curated natural voices across English, Spanish, French, German, and more.</p>
+        </li>
+        <li>
+          <span class="steps__num">3</span>
+          <h3>Download your MP3</h3>
+          <p>Hit Generate and your audio is ready to play or download in seconds.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="container section">
+      <h2 class="section__title">Perfect for</h2>
+      <div class="uses">
+        <div class="use">📹 Video voiceovers</div>
+        <div class="use">📚 Audiobooks &amp; stories</div>
+        <div class="use">🎙️ Podcast narration</div>
+        <div class="use">♿ Accessibility</div>
+        <div class="use">📰 Article listening</div>
+        <div class="use">🎓 Language learning</div>
+        <div class="use">📢 Announcements</div>
+        <div class="use">🤖 AI agent voices</div>
+      </div>
+    </section>
+
+    <section id="faq" class="container section">
+      <h2 class="section__title">Frequently asked</h2>
+      <details class="faq-item">
+        <summary>Is it really free?</summary>
+        <p>Yes. Hosted on free-tier cloud infrastructure with hard spending caps — if costs ever threaten to rise, the service pauses automatically before any bill appears.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Do you store my text or audio?</summary>
+        <p>No. Your text is never saved and the audio is never stored on our servers. The MP3 is generated and delivered directly to your browser — it exists only in your browser tab and disappears when you close or refresh the page.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Are there limits?</summary>
+        <p>Up to 10,000 characters per request. A few generations per hour per person to prevent abuse, plus a global daily cap that keeps the service sustainable.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I use the audio commercially?</summary>
+        <p>Check the voice provider's terms. Most neural voices here are safe for personal and light commercial use, but review the license if you're publishing at scale.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What languages are supported?</summary>
+        <p>English (US/UK/AU), Spanish, French, German, Italian, Portuguese, Dutch, Chinese, Japanese, Korean, and many more. Expanding over time.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Why is it free?</summary>
+        <p>Because good accessibility tools shouldn't be locked behind paywalls. The service runs on generous cloud free tiers and strict limits, not trials.</p>
+      </details>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p class="footer__legal"><a href="/">Home</a> · <a href="/privacy/">Privacy</a> · <a href="/terms/">Terms</a> · <a href="mailto:info@nomads-it.com">Contact</a></p>
+    <p>© <span id="year"></span> TTS For All · Free text to speech for everyone</p>
+    <p><a href="https://buymeacoffee.com/nomadsit" target="_blank" rel="noopener">☕ Buy me a coffee</a> if this saved you time.</p>
+  </footer>
+
+  <script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+  <script>
+    window.TTS_LANG = "en";
+    // Auto-redirect on first visit if browser language is supported
+    (function() {
+      if (localStorage.getItem("tts-lang")) return;
+      var lang = (navigator.language || "").slice(0,2).toLowerCase();
+      var supported = ["ru","es","fr","de","ar"];
+      if (supported.includes(lang)) { localStorage.setItem("tts-lang", lang); location.href = "/" + lang + "/"; }
+    })();
+  </script>
+  <script src="/config.js"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <script src="/app.js?v=brand6" defer></script>
+  <script src="/cookies.js" defer></script>
+</body>
+</html>

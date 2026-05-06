@@ -13,7 +13,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import CompanyDashboard from './pages/company/CompanyDashboard';
 import CompanyOnboarding from './pages/company/CompanyOnboarding';
 import ToastContainer from './components/ui/ToastContainer';
-import ChangeMyPassword from './pages/ChangeMyPassword'; 
+import ChangeMyPassword from './pages/ChangeMyPassword';
 import ProviderProgramPlatformPreview from './features/provider-program-platform/ProviderProgramPlatformPreview';
 import { LogOut, RefreshCw } from 'lucide-react';
 import { normalizeAppRole } from './lib/roles';

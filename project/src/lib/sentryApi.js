@@ -14,6 +14,11 @@ function cleanAuthValue(value) {
   return String(value || '').replace(/\u00a0/g, ' ').trim();
 }
 
+/** Broker paths use trip id as a URL segment; encode so STY-…-A and special chars match upstream. */
+function encodeTripPathSegment(tripId) {
+  return encodeURIComponent(String(tripId ?? '').trim());
+}
+
 function resolveAuthMode(authType, username, apiKey) {
   const normalized = cleanAuthValue(authType).toLowerCase();
   if (normalized === 'bearer' && apiKey) return 'bearer';
@@ -442,11 +447,36 @@ class SentryApiClient {
   }
 
   async takeMarketplaceTrip(tripId, data = {}) {
+    const id = encodeTripPathSegment(tripId);
     return this.request(
       'POST',
-      `/rest/transportation_provider_facade/v4.0/marketplace_trips/${tripId}/take`,
+      `/rest/transportation_provider_facade/v4.0/marketplace_trips/${id}/take`,
       data
     );
+  }
+
+  /** Some broker builds accept POST collection take with trip id in body only (no path segment). */
+  async takeMarketplaceTripCollectionBody(tripId, data = {}) {
+    const id = String(tripId ?? '').trim();
+    const merged =
+      data && typeof data === 'object' && !Array.isArray(data)
+        ? { trip_id: id, ...data }
+        : { trip_id: id, related_trips: [{ trip_id: id }] };
+    return this.request(
+      'POST',
+      '/rest/transportation_provider_facade/v4.0/marketplace_trips/take',
+      merged
+    );
+  }
+
+  async getMarketplaceTripById(tripId) {
+    const id = encodeTripPathSegment(tripId);
+    return this.request('GET', `/rest/transportation_provider_facade/v4.0/marketplace_trips/${id}.json`);
+  }
+
+  async getTripById(tripId) {
+    const id = encodeTripPathSegment(tripId);
+    return this.request('GET', `/rest/transportation_provider_facade/v4.0/trips/${id}.json`);
   }
 
   // ─── Trip Accept / Reject / Status ───────────────────────────────────────
@@ -462,36 +492,38 @@ class SentryApiClient {
     return this.request('POST', '/rest/transportation_provider_facade/v4.0/trips/accept', payload);
   }
 
-  // Rejection signals TP refuses the trip so it can be rerouted.
-  // status_id: 1 = rejected, last_modified_at helps avoid stale rejections.
-  async rejectTrip(tripId, statusId = 1, lastModifiedAt = null, rejectionNote = null) {
-    const params = new URLSearchParams({ status_id: statusId });
-    if (lastModifiedAt) params.set('last_modified_at', formatSentryDateTime(lastModifiedAt));
+  // Rejection must hit the plain trip reject endpoint so the whole trip is rejected,
+  // not a specific versioned change request.
+  async rejectTrip(tripId, _statusId = 1, _lastModifiedAt = null, rejectionNote = null) {
+    const id = encodeTripPathSegment(tripId);
     return this.request(
       'POST',
-      `/rest/transportation_provider_facade/v4.0/trips/${tripId}/reject?${params}`,
-      { rejection_note: rejectionNote }
+      `/rest/transportation_provider_facade/v4.0/trips/${id}/reject`,
+      rejectionNote ? { rejection_note: rejectionNote } : {}
     );
   }
 
   // Update trip status (e.g. status_id=6 = completed).
   async updateTripStatus(tripId, statusData) {
-    return this.request('POST', `/rest/transportation_provider_facade/v4.0/trips/${tripId}/update_status`, statusData);
+    const id = encodeTripPathSegment(tripId);
+    return this.request('POST', `/rest/transportation_provider_facade/v4.0/trips/${id}/update_status`, statusData);
   }
 
   // Report trip as "Processed" (trip_processing_status_id=0) — TP stored the
   // trip but has not yet decided to accept or reject.
   async reportTripProcessed(tripId, lastModifiedAt = null) {
+    const id = encodeTripPathSegment(tripId);
     const body = { trip_processing_status_id: 0 };
     if (lastModifiedAt) body.last_modified_at = formatSentryDateTime(lastModifiedAt);
-    return this.request('POST', `/rest/transportation_provider_facade/v4.0/trips/${tripId}/update_status`, body);
+    return this.request('POST', `/rest/transportation_provider_facade/v4.0/trips/${id}/update_status`, body);
   }
 
   // Request broker-side trip copy/clone behavior when supported by the TP API.
   async copyTrip(tripId, data = {}) {
+    const id = encodeTripPathSegment(tripId);
     return this.request(
       'POST',
-      `/rest/transportation_provider_facade/v4.0/trips/${tripId}/copy`,
+      `/rest/transportation_provider_facade/v4.0/trips/${id}/copy`,
       data
     );
   }
@@ -560,6 +592,12 @@ class SentryApiClient {
   // Retrieve all fleet vehicle locations from Sentry.
   async getAllVehicleLocations() {
     return this.request('GET', '/rest/gc/vehicle_locations.json');
+  }
+
+  // Retrieve one vehicle location from the provider readback endpoint.
+  async getVehicleLocation(licensePlateNumber) {
+    const qs = new URLSearchParams({ license_plate_number: String(licensePlateNumber || '') }).toString();
+    return this.request('GET', `/rest/gc/vehicle_location.json${qs ? `?${qs}` : ''}`);
   }
 
   // Push locations for all online drivers in bulk.

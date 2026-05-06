@@ -2,3 +2,11 @@ node_modules/
 .env
 .vercel
 .env*.local
+
+# OS / editor noise
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Non-dispatch experiments (GTA map lab, detached app snippets) live under
+# ~/Documents/penthouse-external-labs — not in this repo.

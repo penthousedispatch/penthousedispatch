@@ -13,6 +13,7 @@ Use this checklist when Sentry asks you to verify Penthouse Dispatch against the
 4. Keep a second tab open on `Admin -> Testing` or `Admin -> Audit Logs` so you can watch results.
 5. In `Dispatch`, pick the driver you want to test with before taking a trip.
 6. If you want, type a short testing note in the `Optional testing note for the next test trip` box.
+7. Real sheet/marketplace work should use the incoming Sentry marketplace trip IDs as-is; driver accept/status sync is no longer restricted to a specific trip-id prefix.
 
 ## Fill In These Sentry Sheet Fields
 

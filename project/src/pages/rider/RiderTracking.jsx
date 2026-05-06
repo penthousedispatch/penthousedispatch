@@ -70,6 +70,18 @@ const STATUS_HINTS = {
   rejected: "Hang tight. We're looking for a new driver for you.",
 };
 
+function normalizeCoords(coords) {
+  const lat = Number(coords?.lat);
+  const lng = Number(coords?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+function coordsDelta(a, b) {
+  if (!a || !b) return Number.POSITIVE_INFINITY;
+  return Math.max(Math.abs(a.lat - b.lat), Math.abs(a.lng - b.lng));
+}
+
 let mapsReady = false;
 let mapsPromise = null;
 function loadMaps() {
@@ -106,6 +118,7 @@ export default function RiderTracking() {
   const dropoffRouteRef = useRef(null);
   const animationFrameRef = useRef(null);
   const previousDriverCoordsRef = useRef(null);
+  const routeRenderKeyRef = useRef('');
   const riderGuideNarration = useMemo(() => {
     const statusKey = tracking?.status;
     const statusText = STATUS_LABELS[statusKey] || 'Your ride is being tracked';
@@ -173,18 +186,11 @@ export default function RiderTracking() {
     if (!riderKey) { setError('No trip key provided'); setLoading(false); return; }
 
     let cancelled = false;
-    let driverUnsub = null;
     fbGet(`rider_tracking/${riderKey}`).then(result => {
       if (cancelled) return;
       if (!result.ok || !result.data) { setError('Trip not found'); setLoading(false); return; }
       setTracking(result.data);
       setLoading(false);
-
-      if (result.data.driverId) {
-        driverUnsub = fbListen(`drivers/${result.data.driverId}/coords`, coords => {
-          if (coords) setDriverCoords(coords);
-        });
-      }
     });
 
     const trackingUnsub = fbListen(`rider_tracking/${riderKey}`, data => {
@@ -194,9 +200,23 @@ export default function RiderTracking() {
     return () => {
       cancelled = true;
       trackingUnsub?.();
-      driverUnsub?.();
     };
   }, [riderKey]);
+
+  useEffect(() => {
+    const driverId = String(tracking?.driverId || '').trim();
+    if (!driverId) {
+      setDriverCoords(null);
+      return undefined;
+    }
+
+    const driverUnsub = fbListen(`drivers/${driverId}/coords`, coords => {
+      const normalized = normalizeCoords(coords);
+      if (!normalized) return;
+      setDriverCoords(prev => (coordsDelta(prev, normalized) < 0.00001 ? prev : normalized));
+    });
+    return () => driverUnsub?.();
+  }, [tracking?.driverId]);
 
   useEffect(() => {
     if (!riderKey || !tracking) return;
@@ -244,7 +264,7 @@ export default function RiderTracking() {
         setMapsLoaded(false);
         setMapError('Live map is temporarily unavailable, but trip updates are still working.');
       });
-  }, [loading, driverCoords]);
+  }, [loading]);
 
   useEffect(() => () => {
     cancelDriverAnimation();
@@ -278,18 +298,26 @@ export default function RiderTracking() {
         zIndex: 100,
       });
     }
-    mapInstanceRef.current.panTo(driverCoords);
+    if (!previous || coordsDelta(previous, driverCoords) > 0.0025) {
+      mapInstanceRef.current.panTo(driverCoords);
+    }
   }, [driverCoords, mapsLoaded]);
 
   useEffect(() => {
     if (!mapsLoaded || !mapInstanceRef.current || !window.google || !tracking || !driverCoords) return;
 
-    if (pickupRouteRef.current) { pickupRouteRef.current.setMap(null); pickupRouteRef.current = null; }
-    if (dropoffRouteRef.current) { dropoffRouteRef.current.setMap(null); dropoffRouteRef.current = null; }
-
     const pickupAddress = tracking.puAddress || tracking.pu_address;
     const dropoffAddress = tracking.doAddress || tracking.do_address;
     const status = tracking.status || 'assigned';
+    const routeMode = ['picked_up', 'completed'].includes(status) ? 'dropoff_live' : 'pickup_live';
+    const coarseOrigin = `${driverCoords.lat.toFixed(2)},${driverCoords.lng.toFixed(2)}`;
+    const nextRouteKey = [pickupAddress || '', dropoffAddress || '', status, routeMode, coarseOrigin].join('|');
+    if (routeRenderKeyRef.current === nextRouteKey) return;
+    routeRenderKeyRef.current = nextRouteKey;
+
+    if (pickupRouteRef.current) { pickupRouteRef.current.setMap(null); pickupRouteRef.current = null; }
+    if (dropoffRouteRef.current) { dropoffRouteRef.current.setMap(null); dropoffRouteRef.current = null; }
+
     const ds = new window.google.maps.DirectionsService();
 
     if (pickupAddress && !['picked_up', 'completed'].includes(status)) {
@@ -399,13 +427,15 @@ export default function RiderTracking() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden mobile-safe-top mobile-safe-bottom" style={{ background: '#07090d' }}>
+    <div className="fixed inset-0 flex flex-col overflow-hidden mobile-safe-top mobile-safe-bottom native-shell" style={{ background: '#07090d' }}>
       <div
         ref={mapRef}
         className="flex-shrink-0 transition-all duration-300"
         style={{
           height: compactMap ? '28vh' : '42vh',
           minHeight: compactMap ? 190 : 280,
+          borderRadius: compactMap ? 22 : 28,
+          overflow: 'hidden',
         }}
       >
         {mapError && (
@@ -422,7 +452,7 @@ export default function RiderTracking() {
       </div>
 
       <div
-        className="rounded-t-3xl p-5 space-y-4 flex-1 overflow-y-auto"
+        className="rounded-t-3xl p-5 space-y-4 flex-1 overflow-y-auto native-scroll native-glass"
         style={{
           background: 'rgba(13,17,23,0.97)',
           backdropFilter: 'blur(20px)',
@@ -431,6 +461,7 @@ export default function RiderTracking() {
           boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
         }}
       >
+        <div className="native-handle" />
         <div className="flex items-center justify-end">
           <button
             type="button"
@@ -454,7 +485,7 @@ export default function RiderTracking() {
           <button
             type="button"
             onClick={() => setCompactMap(prev => !prev)}
-            className="px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 flex-shrink-0"
+            className="px-3 py-2.5 rounded-xl text-xs flex items-center gap-1.5 flex-shrink-0"
             style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
           >
             {compactMap ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
@@ -574,17 +605,17 @@ export default function RiderTracking() {
         </div>
 
         {trackingUrl && (
-          <div className="rounded-xl px-3 py-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="rounded-xl px-3 py-3 native-glass" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-wide" style={{ color: 'rgba(255,255,255,0.35)' }}>Tracking Link</p>
                 <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.62)' }}>{trackingUrl}</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <button
                   type="button"
                   onClick={() => navigator.clipboard?.writeText(trackingUrl).catch(() => {})}
-                  className="px-3 py-2 rounded-xl text-xs flex items-center gap-1.5"
+                  className="px-3 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 flex-1 sm:flex-none"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#e5e7eb' }}
                 >
                   <Copy className="w-3.5 h-3.5" />
@@ -593,7 +624,7 @@ export default function RiderTracking() {
                 <button
                   type="button"
                   onClick={handleShareTracking}
-                  className="px-3 py-2 rounded-xl text-xs flex items-center gap-1.5"
+                  className="px-3 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 flex-1 sm:flex-none"
                   style={{ background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.24)', color: '#c9a84c' }}
                 >
                   <Share2 className="w-3.5 h-3.5" />

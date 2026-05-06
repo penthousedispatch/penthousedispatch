@@ -168,8 +168,12 @@ export default function DispatchBoard() {
                     >
                       {cfg.label}
                     </span>
-                    <span className="text-xs font-mono" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                      {(a.trip_id || '').slice(-8)}
+                    <span
+                      className="text-xs font-mono min-w-0 max-w-[160px] truncate inline-block align-bottom text-right"
+                      style={{ color: 'rgba(255,255,255,0.3)' }}
+                      title={a.trip_id ? String(a.trip_id) : undefined}
+                    >
+                      {a.trip_id || '—'}
                     </span>
                   </div>
 

@@ -49,6 +49,12 @@ function extractSentryCollection(data, key) {
   return [];
 }
 
+function matchesRejectedTripShape(trip) {
+  const lifecycleStatusId = Number(trip?.status_id);
+  const acceptanceStatusId = Number(trip?.acceptance_status_id);
+  return acceptanceStatusId === 0 && Number.isFinite(lifecycleStatusId) && lifecycleStatusId !== 1;
+}
+
 const HARNESS_DRIVER_LICENSE_POOL = [
   '273447679',
   '169418192',
@@ -1005,7 +1011,11 @@ export default function AdminTestingCenter() {
       }
 
       addLog(testId, 'Replay any row from “Webhook Replay” to re-drive §18 with production-shaped payloads.', 'info');
-      addLog(testId, 'Reject / accept-earlier-rejected / reroute reassignment still need a real broker trip for full proof; this harness now covers the code path and receiver path without touching a live trip.', 'warn');
+      addLog(
+        testId,
+        'Reject / accept-earlier-rejected / reroute reassignment still need a real broker trip for full proof. For a rejected broker trip, expect acceptance_status_id=0 while lifecycle status_id stays on the last broker lifecycle step. Do not expect status_id=1.',
+        'warn'
+      );
       setResult(testId, allPassed ? 'pass' : 'fail');
     } finally {
       await cleanupHarnessAssets();

@@ -8,6 +8,11 @@ export const DEFAULT_COMPANY_SCHEDULER_PREFS = {
   traffic_buffer_pct: 20,
   shared_rides_enabled: true,
   preschedule_from_work_shifts: false,
+  trip_copy_enabled: true,
+  trip_reroute_enabled: true,
+  trip_reassign_enabled: true,
+  ai_auto_reassign_after_reject: false,
+  ai_auto_copy_after_reject: false,
 };
 
 export function readCompanySchedulerPrefs(company) {

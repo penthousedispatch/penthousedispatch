@@ -88,6 +88,8 @@ Status meanings:
   - Driver accepts trip in driver app
 - Expected Sentry-side result:
   - trip accepted / processed by transportation provider
+- Notes:
+  - outbound accept + `status_id=2` replay runs for real marketplace trip IDs regardless of prefix; only explicit local synthetic trip IDs (`LOCAL-TEST-*`) are skipped upstream by design.
 
 ### 10. Vehicle assigned
 

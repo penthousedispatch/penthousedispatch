@@ -104,6 +104,42 @@ const deriveDriverId = (row: Record<string, unknown>) =>
     row.id,
   );
 
+const normalizeStateCode = (value: unknown) => {
+  const raw = cleanText(value).toUpperCase();
+  if (!raw) return 'NY';
+  if (raw === 'NEW YORK') return 'NY';
+  return raw.slice(0, 2);
+};
+
+const SYNTHETIC_DRIVER_PATTERNS = [
+  /^TEST[-_]/i,
+  /^DEMO[-_]/i,
+  /^AUD/i,
+  /^HARNESS/i,
+];
+
+const looksSyntheticValue = (value: unknown) => {
+  const text = cleanText(value);
+  if (!text) return false;
+  return SYNTHETIC_DRIVER_PATTERNS.some(pattern => pattern.test(text));
+};
+
+const isSyntheticDriverRow = (row: Record<string, unknown>) => (
+  looksSyntheticValue(row.full_name) ||
+  looksSyntheticValue(row.driver_number) ||
+  looksSyntheticValue(row.sentry_driver_id) ||
+  looksSyntheticValue(row.sentry_vehicle_id) ||
+  looksSyntheticValue(row.vehicle_plate) ||
+  looksSyntheticValue(row.tlc_number) ||
+  looksSyntheticValue(row.license_number)
+);
+
+const hasUsableCoords = (row: Record<string, unknown>) => {
+  const lat = asNumber(row.current_lat, null);
+  const lng = asNumber(row.current_lng, null);
+  return lat != null && lng != null && !(lat === 0 && lng === 0);
+};
+
 const defaultVehicleLocationPayload = (licensePlateNumber = 'X777777C', driverLicenseNumber = '999999999') => ({
   license_plate_number: licensePlateNumber,
   driver_license_number: driverLicenseNumber,
@@ -134,23 +170,24 @@ const mapTripStatusId = (status: unknown) => {
 const defaultRetrieveTripPayload = (tripId: string) => ({
   trip_id: tripId,
   status_id: 6,
+  acceptance_status_id: 1,
   cancel_reason_id: null,
   cancel_note: null,
-  pick_up_arrival_timestamp: '2022-10-01T10:00:00-04:00',
-  pick_up_timestamp: '2022-10-01T10:00:00-04:00',
-  drop_off_timestamp: '2022-10-01T11:00:00-04:00',
+  pick_up_arrival_timestamp: '',
+  pick_up_timestamp: '',
+  drop_off_timestamp: '',
   notes_from_provider: null,
-  company_ein: 2343243,
+  company_ein: null,
   vehicle: {
-    id: 0,
+    id: null,
     dmv_registration: {
-      license_plate_number: 'X777777C',
+      license_plate_number: '',
     },
   },
   driver: {
-    id: 0,
+    id: null,
     dmv_license: {
-      license_number: '999999999',
+      license_number: '',
       state_code: 'NY',
     },
   },
@@ -163,8 +200,8 @@ const defaultRetrieveTripPayload = (tripId: string) => ({
     lng: -74.006,
   },
   mta: {
-    collected_fare: 1.8,
-    dispatch_base_ein: 777777777,
+    collected_fare: null,
+    dispatch_base_ein: null,
   },
 });
 
@@ -192,7 +229,7 @@ const normalizeTripSidePayload = (
       ? collectedFromAssignment
       : (collectedFromMta != null && Number.isFinite(collectedFromMta)
         ? collectedFromMta
-        : (fallback.mta.collected_fare as number));
+        : null);
   const assignmentTypeCode = firstText(
     normalizedRaw.assignment_type_code,
     tripRow?.assignment_type_code,
@@ -269,15 +306,24 @@ const normalizeTripSidePayload = (
   const nextDayFlag = Boolean(
     assignment?.is_next_day ?? normalizedRaw.next_day ?? normalizedRaw.is_next_day ?? false,
   );
-
-  return {
-    trip_id: tripId,
-    /** When a TP assignment row exists, lifecycle read-back follows Penthouse (not stale inbound raw.status_id). */
-    status_id: assignment
+  const assignmentStatus = cleanText(assignment?.status).toLowerCase();
+  const resolvedStatusId = assignmentStatus === 'rejected'
+    ? (asNumber(normalizedRaw.status_id, fallback.status_id) ?? fallback.status_id)
+    : (assignment
       ? mapTripStatusId(assignment.status)
-      : (asNumber(normalizedRaw.status_id, fallback.status_id) ?? fallback.status_id),
-    cancel_reason_id: normalizedRaw.cancel_reason_id ?? null,
-    cancel_note: normalizedRaw.cancel_note ?? null,
+      : (asNumber(normalizedRaw.status_id, fallback.status_id) ?? fallback.status_id));
+  const resolvedAcceptanceStatusId = assignmentStatus === 'rejected'
+    ? 0
+    : (asNumber(normalizedRaw.acceptance_status_id, fallback.acceptance_status_id) ?? fallback.acceptance_status_id);
+
+  const tripPayload = {
+    trip_id: tripId,
+    /**
+     * Rejection is a trip-acceptance state in Sentry, not a separate lifecycle status.
+     * Keep the last broker lifecycle status and expose acceptance_status_id=0 when rejected.
+     */
+    status_id: resolvedStatusId,
+    acceptance_status_id: resolvedAcceptanceStatusId,
     pick_up_arrival_timestamp: firstText(normalizedRaw.pick_up_arrival_timestamp, fallback.pick_up_arrival_timestamp),
     pick_up_timestamp: firstText(
       assignment?.actual_pickup_time,
@@ -320,7 +366,7 @@ const normalizeTripSidePayload = (
         ),
         state_code: firstText(
           rawDriverLicense.state_code,
-          driverRow?.license_state,
+          normalizeStateCode(driverRow?.license_state),
           fallback.driver.dmv_license.state_code,
         ),
       },
@@ -337,13 +383,6 @@ const normalizeTripSidePayload = (
       tripRow?.do_lat,
       tripRow?.do_lng,
     ),
-    mta: {
-      collected_fare: collectedFareResolved,
-      dispatch_base_ein: asNumber(
-        rawMta.dispatch_base_ein,
-        fallback.mta.dispatch_base_ein,
-      ),
-    },
     is_approved_for_mta: isApprovedForMta ? 1 : 0,
     delivery_price: deliveryPrice,
     total_amount: deliveryPrice,
@@ -355,11 +394,28 @@ const normalizeTripSidePayload = (
     pickup_window_end: willCallWindowEnd || null,
     rerouted_from_trip_id: reroutedFromTripId || null,
     reroute_group_id: rerouteGroupId || null,
-    collected_fare: collectedFareResolved,
-    collected_fare_amount: collectedFareResolved,
     is_next_day: nextDayFlag,
     next_day: nextDayFlag,
   };
+
+  if (normalizedRaw.cancel_reason_id != null) {
+    tripPayload.cancel_reason_id = normalizedRaw.cancel_reason_id;
+  }
+  if (normalizedRaw.cancel_note != null) {
+    tripPayload.cancel_note = normalizedRaw.cancel_note;
+  }
+  if (collectedFareResolved != null && Number.isFinite(collectedFareResolved)) {
+    tripPayload.mta = {
+      collected_fare: collectedFareResolved,
+      dispatch_base_ein: asNumber(
+        rawMta.dispatch_base_ein,
+        fallback.mta.dispatch_base_ein,
+      ),
+    };
+    tripPayload.collected_fare = collectedFareResolved;
+  }
+
+  return tripPayload;
 };
 
 Deno.serve(async (req: Request) => {
@@ -458,6 +514,8 @@ Deno.serve(async (req: Request) => {
         .in('status', ['online', 'on_trip']);
 
       const locations = (drivers || [])
+        .filter((d: Record<string, unknown>) => !isSyntheticDriverRow(d))
+        .filter((d: Record<string, unknown>) => hasUsableCoords(d))
         .map((d: Record<string, unknown>) => ({
           vehicle_id: deriveVehicleId(d),
           driver_id: deriveDriverId(d),
@@ -466,11 +524,9 @@ Deno.serve(async (req: Request) => {
           driver_license_number: firstText(d.license_number, d.tlc_number, d.sentry_driver_id),
           location: {
             ...deriveCoords(d.current_lat, d.current_lng),
-            address: '',
             timestamp: firstText(d.updated_at, new Date().toISOString()),
           },
           vehicle_status_id: mapVehicleStatusId(d.status),
-          expected_availability: null,
         }));
 
       return respond({
@@ -500,8 +556,8 @@ Deno.serve(async (req: Request) => {
         driver = fallback.data;
       }
 
-      if (!driver) {
-        return respond(defaultVehicleLocationPayload(normalizedPlate));
+      if (!driver || isSyntheticDriverRow(driver) || !hasUsableCoords(driver)) {
+        return docError(404, 'Not Found (vehicle is not found)');
       }
 
       return respond({
@@ -509,11 +565,9 @@ Deno.serve(async (req: Request) => {
         driver_license_number: firstText(driver.license_number, driver.tlc_number, driver.sentry_driver_id),
         location: {
           ...deriveCoords(driver.current_lat, driver.current_lng),
-          address: '4444 Example Blvd',
           timestamp: firstText(driver.updated_at, '2022-10-01T10:00:00-04:00'),
         },
         vehicle_status_id: mapVehicleStatusId(driver.status),
-        expected_availability: null,
       });
     }
 
@@ -589,12 +643,36 @@ Deno.serve(async (req: Request) => {
         (assignments || []).map((assignment: Record<string, unknown>) => [String(assignment.trip_id || ''), assignment])
       );
 
+      const driverIds = [...new Set(
+        (assignments || [])
+          .map((assignment: Record<string, unknown>) => String(assignment.driver_id || '').trim())
+          .filter(Boolean)
+      )];
+      const { data: driverRows, error: driverRowsError } = driverIds.length
+        ? await supabase
+            .from('drivers')
+            .select('id, sentry_driver_id, sentry_vehicle_id, license_number, license_state, vehicle_plate, tlc_number, driver_number')
+            .in('id', driverIds)
+        : { data: [], error: null };
+
+      if (driverRowsError) {
+        console.error('retrieve_trips driverRowsError', driverRowsError);
+        return docError(500, 'Internal server error');
+      }
+
+      const driverById = new Map(
+        (driverRows || []).map((driver: Record<string, unknown>) => [String(driver.id || ''), driver])
+      );
+
       const mapped = (trips || []).flatMap((t: Record<string, unknown>) => {
         try {
           const raw = asJsonObject(t.raw_payload);
           const assignment = assignmentByTrip.get(String(t.sentry_trip_id || '')) as Record<string, unknown> | undefined;
+          const driverRow = assignment
+            ? driverById.get(String(assignment.driver_id || '')) as Record<string, unknown> | undefined
+            : undefined;
           const tripId = firstText(raw.trip_id, t.sentry_trip_id);
-          return [normalizeTripSidePayload(tripId, raw, assignment, {}, t)];
+          return [normalizeTripSidePayload(tripId, raw, assignment, driverRow, t)];
         } catch (error) {
           console.error('retrieve_trips rowError', {
             trip_id: t.sentry_trip_id,
@@ -624,23 +702,26 @@ Deno.serve(async (req: Request) => {
         return docError(500, 'Internal server error');
       }
 
-      const shifts = (drivers || []).map((d: Record<string, unknown>) => {
+      const shifts = (drivers || [])
+        .filter((d: Record<string, unknown>) => !isSyntheticDriverRow(d))
+        .filter((d: Record<string, unknown>) => hasUsableCoords(d))
+        .map((d: Record<string, unknown>) => {
         const derivedShift = parseShiftHours(d.shift_hours, startTimestampMax);
         return {
-        driver: {
-          id: deriveDriverId(d) || 0,
-        },
-        vehicle: {
-          id: deriveVehicleId(d) || 0,
-        },
-        start_location: {
-          ...deriveCoords(d.current_lat, d.current_lng),
-        },
-        start_timestamp: firstText(derivedShift?.start, startTimestampMax),
-        end_timestamp: firstText(derivedShift?.end, endTimestampMin),
-        routing_criterion: Array.isArray(d.preferred_zones) && d.preferred_zones.length
-          ? d.preferred_zones.join('')
-          : 'BronxManhattanQueens',
+          driver: {
+            id: deriveDriverId(d) || 0,
+          },
+          vehicle: {
+            id: deriveVehicleId(d) || 0,
+          },
+          start_location: {
+            ...deriveCoords(d.current_lat, d.current_lng),
+          },
+          start_timestamp: firstText(derivedShift?.start, startTimestampMax),
+          end_timestamp: firstText(derivedShift?.end, endTimestampMin),
+          ...(Array.isArray(d.preferred_zones) && d.preferred_zones.length
+            ? { routing_criterion: d.preferred_zones.join('') }
+            : {}),
         };
       });
 

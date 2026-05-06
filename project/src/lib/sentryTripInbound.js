@@ -3,6 +3,8 @@
  * for marketplace_trips.status and assignment_type_code display.
  */
 
+import { isSyntheticMarketplaceTrip } from './sentrySyntheticTrips';
+
 export function pickAssignmentTypeCode(raw = {}) {
   return String(
     raw.assignment_type_code ||
@@ -133,6 +135,31 @@ export function isBrokerNonAcceptedMarketplaceRow(row = {}) {
     nestedTrip.acceptance_status_id
   );
   return Number.isFinite(id) && id === 0;
+}
+
+/**
+ * True when `raw_payload` carries the same trip id as `sentry_trip_id` (top-level or nested `trip`).
+ * Rows missing a matching snapshot (manual QA rows, truncated payloads) should not appear in dispatch.
+ */
+export function tripPayloadMirrorId(payload = {}) {
+  const nested = asJsonObject(payload.trip);
+  const cand = payload.trip_id ?? payload.id ?? nested.trip_id ?? nested.id;
+  if (cand == null) return '';
+  return String(cand).trim();
+}
+
+export function isMarketplaceTripSentryBackedRow(row = {}) {
+  const sid = String(row.sentry_trip_id || '').trim();
+  if (!sid) return false;
+  const raw = asJsonObject(row.raw_payload);
+  return tripPayloadMirrorId(raw) === sid;
+}
+
+/** Dispatch / scheduler: synthetic, broker-non-accepted, or non-Sentry-backed rows excluded. */
+export function isDispatchQueueMarketplaceTrip(row = {}) {
+  if (isSyntheticMarketplaceTrip(row)) return false;
+  if (isBrokerNonAcceptedMarketplaceRow(row)) return false;
+  return isMarketplaceTripSentryBackedRow(row);
 }
 
 /** Short reference for dispatch / testing (not exhaustive — extend as Sentry documents codes). */

@@ -11,8 +11,7 @@ import { DEFAULT_COMPANY_SCHEDULER_PREFS, readCompanySchedulerPrefs, writeCompan
 import { clearGuideAudio, getGuideAudioRecord, saveGuideAudioFile, saveGuideAudioUrl } from '../../lib/guideAudio';
 import AddDriverModal from '../../components/drivers/AddDriverModal';
 import CSVImportModal, { CSV_DRIVERS } from '../../components/drivers/CSVImportModal';
-import { isSyntheticMarketplaceTrip } from '../../lib/sentrySyntheticTrips';
-import { isBrokerNonAcceptedMarketplaceRow } from '../../lib/sentryTripInbound';
+import { isDispatchQueueMarketplaceTrip } from '../../lib/sentryTripInbound';
 import {
   Users, Navigation, FileText, Settings, LogOut,
   DollarSign, AlertTriangle, LayoutGrid, Bot, BookOpen, Palette, CreditCard, Layers, Pencil, Trash2, Plus, ShieldCheck, Trophy,
@@ -1028,41 +1027,60 @@ function CompanyTrips({ company }) {
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  async function loadCompanyTrips() {
+    if (!company?.id) {
+      setAssignments([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const { data: driverRows, error: driverError } = await supabase
+      .from('drivers')
+      .select('id')
+      .eq('company_id', company.id);
+
+    if (driverError) {
+      handleSupabaseError(driverError, 'CompanyTrips:loadDrivers', { silent: true });
+      setAssignments([]);
+      setLoading(false);
+      return;
+    }
+
+    const driverIds = (driverRows || []).map(row => row.id).filter(Boolean);
+    let tripQuery = supabase
+      .from('trip_assignments')
+      .select('*, drivers(full_name, is_active)')
+      .order('assigned_at', { ascending: false })
+      .limit(100);
+
+    if (driverIds.length) {
+      tripQuery = tripQuery.or(`company_id.eq.${company.id},driver_id.in.(${driverIds.join(',')})`);
+    } else {
+      tripQuery = tripQuery.eq('company_id', company.id);
+    }
+
+    const { data, error } = await tripQuery;
+    if (error) handleSupabaseError(error, 'CompanyTrips:load', { silent: true });
+    setAssignments(data || []);
+    setLoading(false);
+  }
+
   useEffect(() => {
     if (!company?.id) return;
+    loadCompanyTrips();
 
-    (async () => {
-      setLoading(true);
-      const { data: driverRows, error: driverError } = await supabase
-        .from('drivers')
-        .select('id')
-        .eq('company_id', company.id);
+    const channel = supabase
+      .channel(`company-trips-${company.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'trip_assignments' },
+        () => { loadCompanyTrips(); }
+      )
+      .subscribe();
 
-      if (driverError) {
-        handleSupabaseError(driverError, 'CompanyTrips:loadDrivers', { silent: true });
-        setAssignments([]);
-        setLoading(false);
-        return;
-      }
-
-      const driverIds = (driverRows || []).map(row => row.id).filter(Boolean);
-      let tripQuery = supabase
-        .from('trip_assignments')
-        .select('*, drivers(full_name, is_active)')
-        .order('assigned_at', { ascending: false })
-        .limit(100);
-
-      if (driverIds.length) {
-        tripQuery = tripQuery.or(`company_id.eq.${company.id},driver_id.in.(${driverIds.join(',')})`);
-      } else {
-        tripQuery = tripQuery.eq('company_id', company.id);
-      }
-
-      const { data, error } = await tripQuery;
-      if (error) handleSupabaseError(error, 'CompanyTrips:load', { silent: true });
-      setAssignments(data || []);
-      setLoading(false);
-    })();
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [company?.id]);
 
   const statusColor = {
@@ -1302,9 +1320,7 @@ function CompanyMarketplace({ company }) {
       handleSupabaseError(error, 'CompanyMarketplace:load', { silent: true, fallback: 'Failed to load marketplace trips.' });
     }
 
-    return (data || []).filter(
-      trip => !isSyntheticMarketplaceTrip(trip) && !isBrokerNonAcceptedMarketplaceRow(trip)
-    );
+    return (data || []).filter(isDispatchQueueMarketplaceTrip);
   }
 
   useEffect(() => {
@@ -1327,7 +1343,7 @@ function CompanyMarketplace({ company }) {
 
   async function handleRefreshMarketplace() {
     setRefreshing(true);
-    const result = await refreshTripsFromSentry();
+    const result = await refreshTripsFromSentry({ companyId: company?.id });
     const data = await loadMarketplaceTrips();
     setTrips(data);
     setRefreshing(false);
@@ -1495,7 +1511,7 @@ function createEmptyChildForm(programId = '') {
   };
 }
 
-function CompanyPrograms({ company }) {
+export function CompanyPrograms({ company }) {
   const [programs, setPrograms] = useState([]);
   const [children, setChildren] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1828,9 +1844,9 @@ function CompanyPrograms({ company }) {
     <div className="p-6 pb-48 max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Programs</h2>
+          <h2 className="text-lg font-700 mb-1" style={{ fontWeight: 700 }}>Partner programs</h2>
           <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
-            Track daycare, school, and program partners plus the children your dispatch team moves for them.
+            Partner sites your fleet serves (daycare, school, or similar). Each site has its own roster for dispatch.
           </p>
         </div>
         <button
@@ -1845,9 +1861,14 @@ function CompanyPrograms({ company }) {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {[
-          { label: 'Programs', value: programs.length, hint: `${activePrograms} active`, color: '#c9a84c' },
-          { label: 'Children On Roster', value: children.length, hint: `${activeChildren} active`, color: '#00e5a0' },
-          { label: 'Selected Program', value: selectedProgram ? childCountsByProgram[selectedProgram.id] || 0 : 0, hint: selectedProgram ? 'children assigned' : 'choose a program', color: '#0ea5e9' },
+          { label: 'Partner sites', value: programs.length, hint: `${activePrograms} active`, color: '#c9a84c' },
+          { label: 'Children on roster', value: children.length, hint: `${activeChildren} active`, color: '#00e5a0' },
+          {
+            label: 'Roster for selection',
+            value: selectedProgram ? childCountsByProgram[selectedProgram.id] || 0 : 0,
+            hint: selectedProgram ? 'children under this site' : 'pick a site in the directory',
+            color: '#0ea5e9',
+          },
         ].map(card => (
           <div key={card.label} className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
             <p className="text-xs uppercase tracking-wide mb-2" style={{ color: 'rgba(255,255,255,0.42)' }}>{card.label}</p>
@@ -1862,16 +1883,16 @@ function CompanyPrograms({ company }) {
           <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid rgba(255,255,255,0.07)' }}>
             <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
               <div>
-                <p className="text-sm font-600" style={{ fontWeight: 600 }}>Program Directory</p>
+                <p className="text-sm font-600" style={{ fontWeight: 600 }}>Directory</p>
                 <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
-                  Keep one record per daycare, school, or program you dispatch for.
+                  One row per partner site. Select a row to work with its roster and contacts.
                 </p>
               </div>
               <input
                 type="text"
                 value={search}
                 onChange={event => setSearch(event.target.value)}
-                placeholder="Search programs"
+                placeholder="Search partner sites"
                 className="w-full sm:w-72"
               />
             </div>
@@ -1885,8 +1906,8 @@ function CompanyPrograms({ company }) {
                 <ClipboardList className="w-8 h-8 mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.22)' }} />
                 <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
                   {search.trim()
-                    ? 'No programs match your current search.'
-                    : 'No programs yet. Create your first daycare or program account on the right.'}
+                    ? 'No partner sites match this search.'
+                    : 'No partner sites yet. Add the first one using the form on the right.'}
                 </p>
                 {search.trim() && (
                   <button
@@ -1989,7 +2010,9 @@ function CompanyPrograms({ company }) {
               <div>
                 <p className="text-sm font-600" style={{ fontWeight: 600 }}>Child Roster</p>
                 <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>
-                  {selectedProgram ? `Children assigned to ${selectedProgram.program_name}.` : 'Choose a program to manage its roster.'}
+                  {selectedProgram
+                    ? `Roster for ${selectedProgram.program_name}.`
+                    : 'Select a site in the directory to view or edit its roster.'}
                 </p>
               </div>
               {selectedProgram && (
@@ -2002,12 +2025,12 @@ function CompanyPrograms({ company }) {
             {!selectedProgram ? (
               <div className="rounded-xl p-6 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
                 <Users className="w-8 h-8 mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.2)' }} />
-                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Select a program first, then build its child roster.</p>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>Select a partner site in the directory first.</p>
               </div>
             ) : childrenForSelectedProgram.length === 0 ? (
               <div className="rounded-xl p-6 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
                 <Users className="w-8 h-8 mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.2)' }} />
-                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>No children added yet for this program.</p>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>No children on this roster yet.</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -2277,7 +2300,7 @@ function CompanyPrograms({ company }) {
                 className="w-full"
                 required
               >
-                <option value="">Select program...</option>
+                <option value="">Select partner site…</option>
                 {programs.map(program => (
                   <option key={program.id} value={program.id}>{program.program_name}</option>
                 ))}
@@ -2405,7 +2428,7 @@ function CompanyPrograms({ company }) {
             </button>
             {!programs.length && (
               <p className="text-xs text-center" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                Create a program first, then add children to the roster.
+                Add a partner site first, then add children to its roster.
               </p>
             )}
           </form>
@@ -2795,6 +2818,39 @@ function CompanyAIControls({ company, setCompany }) {
     },
   ];
 
+  const recoveryOptions = [
+    {
+      key: 'trip_reassign_enabled',
+      title: 'Allow Reassign In Dispatch',
+      description: 'Show reassign controls so dispatch can move a trip to another driver when needed.',
+      accent: '#c9a84c',
+    },
+    {
+      key: 'trip_copy_enabled',
+      title: 'Allow Trip Copy Requests',
+      description: 'Let dispatch request a broker-side trip copy from the live trip card.',
+      accent: '#e5e7eb',
+    },
+    {
+      key: 'trip_reroute_enabled',
+      title: 'Allow Reroute Requests',
+      description: 'Let dispatch send a reroute request when the current trip needs a broker-side route change.',
+      accent: '#7dd3fc',
+    },
+    {
+      key: 'ai_auto_reassign_after_reject',
+      title: 'AI Auto Reassign After Reject',
+      description: 'When a driver rejects a trip, let AI try to move that same trip to the next best free driver.',
+      accent: '#00e5a0',
+    },
+    {
+      key: 'ai_auto_copy_after_reject',
+      title: 'AI Auto Trip Copy After Reject',
+      description: 'If AI cannot safely find a new driver, it may request a broker-side trip copy as a recovery step.',
+      accent: '#ff8a95',
+    },
+  ];
+
   return (
     <div className="p-6 pb-48 max-w-3xl mx-auto space-y-4">
       <div>
@@ -2916,6 +2972,45 @@ function CompanyAIControls({ company, setCompany }) {
           </button>
         </div>
       </div>
+      <div className="rounded-xl p-4 space-y-4" style={{ background: '#0d1117', border: '1px solid rgba(0,229,160,0.14)' }}>
+        <div>
+          <p className="text-sm font-600" style={{ fontWeight: 600 }}>Trip Recovery Controls</p>
+          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            These settings control the live broker recovery tools inside dispatch. Keep the automatic options off unless you want the app to react on its own after a driver rejects a trip.
+          </p>
+        </div>
+        {recoveryOptions.map(option => (
+          <div
+            key={option.key}
+            className="flex items-center justify-between rounded-xl px-4 py-3"
+            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            <div>
+              <p className="text-sm font-600" style={{ fontWeight: 600 }}>{option.title}</p>
+              <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.42)' }}>{option.description}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSchedulerPrefs(prev => ({ ...prev, [option.key]: !prev[option.key] }))}
+              className="px-3 py-1.5 rounded-lg text-xs"
+              style={{
+                background: schedulerPrefs[option.key] ? `${option.accent}1f` : 'rgba(255,255,255,0.05)',
+                border: `1px solid ${schedulerPrefs[option.key] ? `${option.accent}3d` : 'rgba(255,255,255,0.08)'}`,
+                color: schedulerPrefs[option.key] ? option.accent : 'rgba(255,255,255,0.55)',
+                fontWeight: 600,
+              }}
+            >
+              {schedulerPrefs[option.key] ? 'Enabled' : 'Disabled'}
+            </button>
+          </div>
+        ))}
+        <div className="rounded-xl p-4" style={{ background: 'rgba(255,71,87,0.05)', border: '1px solid rgba(255,71,87,0.12)' }}>
+          <p className="text-xs font-700 uppercase tracking-wider" style={{ color: '#ff8a95', fontWeight: 700 }}>Recommended</p>
+          <p className="text-xs mt-2 leading-6" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            Reassign, trip copy, and reroute make the app better because they speed up dispatch recovery without leaving the dashboard. The only risky setting is <strong>AI Auto Trip Copy After Reject</strong>. I left it off by default because broker-side copy creates a new trip and should only happen when you trust that workflow.
+          </p>
+        </div>
+      </div>
       <div
         className="sticky bottom-4 z-10 pt-3"
         style={{
@@ -2938,6 +3033,8 @@ function CompanyGuides() {
     { key: 'driver_guide', title: 'Driver Guide Audio', desc: 'Full driver app instructions for shift, trip, and dispatch behavior.' },
     { key: 'rider_guide', title: 'Rider Guide Audio', desc: 'Optional rider tracking narration for pickup, wait, and arrival instructions.' },
     { key: 'company_guide', title: 'Company Guide Audio', desc: 'Optional narrated overview for company dashboard training.' },
+    { key: 'dispatcher_guide', title: 'Dispatcher Guide Audio', desc: 'Optional narrated training for queue, recovery, and broker-sync workflow.' },
+    { key: 'admin_guide', title: 'Admin Guide Audio', desc: 'Optional narrated overview for audits, testing, and admin control tasks.' },
   ];
   const guides = [
     {
@@ -3202,7 +3299,7 @@ export default function CompanyDashboard({ previewMode = false, companyOverride 
   const tabs = [
     { path: previewMode ? `${basePath}` : (basePath || '/'), routePath: '/', label: previewMode ? 'Company Dashboard' : 'Dispatch', icon: LayoutGrid, exact: true },
     { path: `${basePath}/marketplace`, routePath: 'marketplace', label: 'Marketplace', icon: Layers },
-    { path: `${basePath}/programs`, routePath: 'programs', label: 'Programs', icon: ClipboardList },
+    { path: `${basePath}/programs`, routePath: 'programs', label: 'Partner programs', icon: ClipboardList },
     { path: `${basePath}/drivers`, routePath: 'drivers', label: 'Drivers', icon: Users },
     { path: `${basePath}/trips`, routePath: 'trips', label: 'Trip History', icon: Navigation },
     { path: `${basePath}/invoices`, routePath: 'invoices', label: 'Invoices', icon: FileText },
